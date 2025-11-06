@@ -34,16 +34,20 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("عذرًا، لم يتم العثور على الكتاب.")
 
-async def main():
-    # بدء Telethon باستخدام توكن البوت (لا حاجة لإدخال رقم هاتف)
+# إنشاء البوت وتشغيله
+async def start_bot():
+    # بدء Telethon كبوت
     await client.start(bot_token=BOT_TOKEN)
     
-    # بدء بوت Telegram
+    # بدء البوت على Telegram
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
     
+    # تشغيل run_polling مباشرة داخل async
     await app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # استخدم حلقة asyncio لتشغيل البوت
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_bot())
