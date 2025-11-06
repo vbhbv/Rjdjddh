@@ -1,95 +1,64 @@
 import os
-import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import asyncpg
-from PyPDF2 import PdfReader
 import asyncio
-
-# -------------------------------
-# إعدادات اللوج
-# -------------------------------
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
 
-# -------------------------------
-# متغيرات البيئة
-# -------------------------------
-TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # الرقم الرقمي للقناة بدون @
-DATABASE_URL = os.getenv("DATABASE_URL")
+# ---------------------------------------------
+# تحميل متغيرات البيئة
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # ضع التوكن هنا أو في متغيرات البيئة
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # ضع الرقم الرقمي للقناة فقط: -100XXXXXXXXX
+# ---------------------------------------------
 
-# -------------------------------
-# إنشاء الاتصال بقاعدة البيانات
-# -------------------------------
-db_pool = None
-
-async def create_db_pool():
-    global db_pool
-    db_pool = await asyncpg.create_pool(DATABASE_URL)
-
-# -------------------------------
-# أوامر البوت
-# -------------------------------
+# ----------- دوال البوت -----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحبًا بك في مكتبة البوت! أرسل أي ملف PDF لأتمكن من فهرسته.")
-
-async def add_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.document:
-        await update.message.reply_text("الرجاء إرسال ملف بصيغة PDF.")
-        return
-
-    file = update.message.document
-    if not file.file_name.lower().endswith(".pdf"):
-        await update.message.reply_text("هذا الملف ليس PDF. أرسل ملف بصيغة PDF.")
-        return
-
-    # تحميل الملف مؤقتًا
-    file_path = f"/tmp/{file.file_name}"
-    await file.get_file().download_to_drive(file_path)
-
-    # قراءة محتوى الـ PDF
-    try:
-        reader = PdfReader(file_path)
-        text_content = ""
-        for page in reader.pages:
-            text_content += page.extract_text() or ""
-    except Exception as e:
-        await update.message.reply_text("حدث خطأ أثناء قراءة الملف.")
-        logging.error(e)
-        return
-
-    # حفظ البيانات في قاعدة البيانات
-    async with db_pool.acquire() as connection:
-        await connection.execute(
-            "INSERT INTO books(name, content) VALUES($1, $2)",
-            file.file_name, text_content
+    if update.message:
+        await update.message.reply_text(
+            "مرحبًا! أرسل لي ملف PDF لأضيفه إلى القناة."
         )
 
-    await update.message.reply_text(f"تم فهرسة الكتاب: {file.file_name}")
+async def add_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # حماية ضد NoneType
+    if update.message and update.message.document:
+        document = update.message.document
+        if document.mime_type == "application/pdf":
+            # تحميل الملف
+            file_path = f"./{document.file_name}"
+            await document.get_file().download_to_drive(file_path)
+            
+            # إرسال الملف إلى القناة
+            await context.bot.send_document(chat_id=int(CHANNEL_ID), document=open(file_path, "rb"))
+            
+            await update.message.reply_text(f"✅ تم إرسال الملف: {document.file_name}")
+        else:
+            await update.message.reply_text("❌ هذا ليس ملف PDF، الرجاء إرسال PDF فقط.")
+    else:
+        if update.message:
+            await update.message.reply_text("❌ الرجاء إرسال ملف PDF.")
 
-# -------------------------------
-# تشغيل البوت
-# -------------------------------
+# ------------------------------------
+
 async def main():
-    await create_db_pool()
+    # إنشاء التطبيق
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app = ApplicationBuilder().token(TOKEN).build()
+    # إضافة الهاندلرز
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.ALL, add_book))
 
-    # تشغيل البوت بدون asyncio.run()
+    # تهيئة وتشغيل البوت
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()  # Polling للبوت
-    await app.updater.wait_closed()    # انتظار الإغلاق
+    print("✅ البوت يعمل الآن...")
 
-# -------------------------------
-# نقطة البداية
-# -------------------------------
+    # إبقاء البوت شغالًا
+    await asyncio.Event().wait()
+
+# ----------- تشغيل البوت -----------
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    asyncio.run(main())
