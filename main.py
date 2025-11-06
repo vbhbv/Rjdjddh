@@ -10,10 +10,10 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 CHANNEL = os.getenv("CHANNEL_ID")  # @books921383837
 
-# إنشاء عميل Telethon للبوت
+# إنشاء Telethon للبوت
 client = TelegramClient('bot_session', API_ID, API_HASH)
 
-# البحث في القناة باستخدام Telethon
+# البحث في القناة
 async def search_book_telethon(book_name):
     book_name = book_name.lower()
     async for message in client.iter_messages(CHANNEL, limit=1000):
@@ -34,20 +34,25 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("عذرًا، لم يتم العثور على الكتاب.")
 
-# إنشاء البوت وتشغيله
+# تشغيل البوت
 async def start_bot():
-    # بدء Telethon كبوت
+    # تشغيل Telethon كبوت
     await client.start(bot_token=BOT_TOKEN)
     
-    # بدء البوت على Telegram
+    # إنشاء البوت على Telegram
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
     
-    # تشغيل run_polling مباشرة داخل async
-    await app.run_polling()
+    # تشغيل polling بشكل آمن في أي event loop
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await client.run_until_disconnected()  # Telethon يبقى متصلاً
 
-if __name__ == "__main__":
-    # استخدم حلقة asyncio لتشغيل البوت
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_bot())
+# هذا الجزء يعمل في أي حلقة موجودة مسبقًا
+loop = asyncio.get_event_loop()
+loop.create_task(start_bot())
+
+# لا ننهي الحلقة لأن Railway يحافظ عليها مفتوحة
+loop.run_forever()
