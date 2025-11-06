@@ -3,21 +3,26 @@ import asyncio
 from telethon import TelegramClient
 from telegram import Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import nest_asyncio
 
 # ======================================
-# 1️⃣ متغيرات البيئة
-# تأكد من ضبط هذه المتغيرات في Railway
+# 1️⃣ تفعيل nest_asyncio لتشغيل async في أي بيئة
+nest_asyncio.apply()
+# ======================================
+
+# ======================================
+# 2️⃣ متغيرات البيئة (تأكد من إضافتها في Railway)
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL = os.environ["CHANNEL_ID"]  # مثال: "@books921383837"
 
-# اسم ملف session
+# اسم ملف session الذي أنشأته مسبقًا
 SESSION_FILE = "user_session.session"
 # ======================================
 
 # ======================================
-# 2️⃣ إعداد Userbot
+# 3️⃣ إعداد Userbot
 client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
 
 async def start_userbot():
@@ -29,14 +34,16 @@ async def start_userbot():
 # ======================================
 
 # ======================================
-# 3️⃣ دالة البحث وإرسال الكتاب
-async def fetch_and_send(book_query: str, telegram_bot: Bot, user_chat_id: int, limit: int = 1000):
+# 4️⃣ دالة البحث وإرسال الكتاب
+async def fetch_and_send(book_query: str, telegram_bot, user_chat_id: int, limit: int = 1000):
     book_query = book_query.lower().strip()
 
     async for msg in client.iter_messages(CHANNEL, limit=limit):
         doc = msg.document
-        fname = msg.file.name.lower() if doc and msg.file.name else ""
-        caption = msg.caption.lower() if msg.caption else ""
+        fname = doc.name.lower() if doc and getattr(doc, "name", None) else ""
+        # في Telethon الحديث، استخدم msg.message بدل caption
+        caption = getattr(msg, "message", "")
+        caption = caption.lower() if caption else ""
 
         if (fname and book_query in fname) or (caption and book_query in caption):
             tmp_name = f"/tmp/{msg.id}_{(doc.name or 'file')}".replace("/", "_")
@@ -54,7 +61,7 @@ async def fetch_and_send(book_query: str, telegram_bot: Bot, user_chat_id: int, 
 # ======================================
 
 # ======================================
-# 4️⃣ بوت التليجرام الرسمي
+# 5️⃣ بوت التليجرام الرسمي
 async def start(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("مرحبًا! أرسل اسم الكتاب وسأبحث عنه لك.")
 
@@ -67,7 +74,7 @@ async def search_book(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.D
 # ======================================
 
 # ======================================
-# 5️⃣ تشغيل البوت + Userbot
+# 6️⃣ تشغيل البوت + Userbot
 async def start_bot():
     await start_userbot()
     
@@ -77,11 +84,13 @@ async def start_bot():
     
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
     print("✅ البوت بدأ العمل!")
     
+    # تشغيل البوت مع استمرار Userbot
     await client.run_until_disconnected()
+    await app.updater.stop()
+    await app.shutdown()
 
-# تشغيل البوت على أي بيئة (Railway أو VPS)
+# تشغيل البوت على أي بيئة
 asyncio.run(start_bot())
 # ======================================
