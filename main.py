@@ -1,88 +1,96 @@
-# main.py
 import os
-import asyncio
-import nest_asyncio
-import asyncpg
+import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import asyncpg
+from PyPDF2 import PdfReader
 
-# ===================== إعدادات =====================
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # ضع توكن البوت هنا في متغير البيئة
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # الرقم الرقمي للقناة بدون @
-DATABASE_URL = os.getenv("DATABASE_URL")  # رابط قاعدة البيانات PostgreSQL
+# -------------------------------
+# إعدادات اللوج
+# -------------------------------
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-nest_asyncio.apply()  # لتجنب مشاكل حلقة asyncio في Railway/Colab
+# -------------------------------
+# متغيرات البيئة
+# -------------------------------
+TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # فقط الرقم بدون @
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ===================== قاعدة البيانات =====================
-async def init_db():
-    conn = await asyncpg.connect(DATABASE_URL)
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS books (
-            id SERIAL PRIMARY KEY,
-            file_id TEXT NOT NULL,
-            file_name TEXT NOT NULL,
-            caption TEXT,
-            added_by BIGINT
-        )
-    """)
-    return conn
+# -------------------------------
+# إنشاء الاتصال بقاعدة البيانات
+# -------------------------------
+async def create_db_pool():
+    return await asyncpg.create_pool(DATABASE_URL)
 
-# ===================== أوامر البوت =====================
+db_pool = None  # سيتم تهيئته لاحقاً
+
+# -------------------------------
+# أوامر البوت
+# -------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحباً! أرسل /add لإضافة كتاب أو ابحث باسم الكتاب.")
+    await update.message.reply_text("مرحبًا بك في مكتبة البوت! أرسل لي أي ملف PDF لأتمكن من فهرسته.")
 
-# ===================== إضافة الكتب =====================
+# -------------------------------
+# فهرسة الملفات
+# -------------------------------
 async def add_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.document:
         await update.message.reply_text("الرجاء إرسال ملف بصيغة PDF.")
         return
 
-    document = update.message.document
-    file_id = document.file_id
-    file_name = document.file_name
-    caption = update.message.caption or file_name
+    file = update.message.document
+    if not file.file_name.lower().endswith(".pdf"):
+        await update.message.reply_text("هذا الملف ليس PDF. أرسل ملف بصيغة PDF.")
+        return
 
-    async with context.bot_data["db"].transaction():
-        await context.bot_data["db"].execute(
-            "INSERT INTO books(file_id, file_name, caption, added_by) VALUES($1,$2,$3,$4)",
-            file_id, file_name, caption, update.message.from_user.id
+    # تحميل الملف مؤقتًا
+    file_path = f"/tmp/{file.file_name}"
+    await file.get_file().download_to_drive(file_path)
+
+    # قراءة محتوى الـ PDF
+    try:
+        reader = PdfReader(file_path)
+        text_content = ""
+        for page in reader.pages:
+            text_content += page.extract_text() or ""
+    except Exception as e:
+        await update.message.reply_text("حدث خطأ أثناء قراءة الملف.")
+        logging.error(e)
+        return
+
+    # حفظ البيانات في قاعدة البيانات
+    async with db_pool.acquire() as connection:
+        await connection.execute(
+            "INSERT INTO books(name, content) VALUES($1, $2)",
+            file.file_name, text_content
         )
-    await update.message.reply_text(f"تمت إضافة الكتاب: {file_name}")
 
-# ===================== البحث عن الكتب =====================
-async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = " ".join(context.args)
-    if not query:
-        await update.message.reply_text("اكتب اسم الكتاب بعد /search")
-        return
+    await update.message.reply_text(f"تم فهرسة الكتاب: {file.file_name}")
 
-    rows = await context.bot_data["db"].fetch(
-        "SELECT file_id, file_name FROM books WHERE caption ILIKE $1", f"%{query}%"
-    )
-    if not rows:
-        await update.message.reply_text("لم يتم العثور على الكتاب.")
-        return
-
-    for row in rows:
-        await context.bot.send_document(chat_id=update.message.chat_id, document=row["file_id"], caption=row["file_name"])
-
-# ===================== دالة تشغيل البوت =====================
+# -------------------------------
+# تشغيل البوت
+# -------------------------------
 async def main():
-    db_conn = await init_db()
+    global db_pool
+    db_pool = await create_db_pool()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.bot_data["db"] = db_conn
+    # إنشاء التطبيق
+    app = ApplicationBuilder().token(TOKEN).build()
 
+    # إضافة الهاندلرز
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("add", add_book))
-    app.add_handler(CommandHandler("search", search_book))
-    app.add_handler(MessageHandler(filters.Document.PDF, add_book))  # لإضافة الكتب مباشرة بصيغة PDF
+    app.add_handler(MessageHandler(filters.Document.ALL, add_book))
 
-    # تشغيل البوت بشكل صحيح داخل حلقة asyncio الحالية
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await app.updater.idle()
+    # تشغيل البوت على Polling
+    await app.run_polling()
 
-# ===================== تشغيل البوت =====================
-asyncio.get_event_loop().run_until_complete(main())
+# -------------------------------
+# نقطة البداية
+# -------------------------------
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
