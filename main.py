@@ -1,67 +1,100 @@
 import os
-import json
+import asyncpg
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# تحميل متغيرات البيئة
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
-BOOKS_FILE = "books.json"
+# ==========================
+# 1️⃣ متغيرات البيئة
+# ==========================
+BOT_TOKEN = os.getenv("BOT_TOKEN")              # توكن البوت
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")  # اسم القناة: @books921383837
+DB_URL = os.getenv("DATABASE_URL")              # رابط قاعدة البيانات PostgreSQL من Railway
 
-# تحميل قاعدة البيانات أو إنشاء جديدة
-if os.path.exists(BOOKS_FILE):
-    try:
-        with open(BOOKS_FILE, "r", encoding="utf-8") as f:
-            books_db = json.load(f)
-    except json.JSONDecodeError:
-        books_db = {}
-else:
-    books_db = {}
+# ==========================
+# 2️⃣ إنشاء جدول قاعدة البيانات
+# ==========================
+async def init_db():
+    """
+    إنشاء اتصال بقاعدة البيانات PostgreSQL
+    وإنشاء جدول الكتب إذا لم يكن موجودًا
+    """
+    conn = await asyncpg.connect(DB_URL)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS books (
+            book_name TEXT PRIMARY KEY,
+            file_id TEXT NOT NULL
+        )
+    """)
+    return conn
 
-# أمر البدء
+# ==========================
+# 3️⃣ أمر /start
+# ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📚 أهلاً بك في مكتبة الكتب!\n"
         "أرسل اسم الكتاب الذي تبحث عنه وسأرسله لك إذا كان متوفرًا."
     )
 
-# مراقبة القناة عند وصول كتاب جديد
+# ==========================
+# 4️⃣ مراقبة القناة عند وصول كتاب جديد
+# ==========================
 async def channel_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = context.bot_data.get("db_conn")
     message = update.channel_post
-    if not message:
+    if not message or not message.document:
         return
 
-    # الحصول على اسم الكتاب من caption أو اسم الملف
-    book_name = (message.caption or getattr(message.document, 'file_name', None) or "").strip()
+    # اسم الكتاب: caption إذا موجود أو اسم الملف
+    book_name = (message.caption or message.document.file_name or "").strip()
     if not book_name:
         return
 
-    # حفظ في قاعدة البيانات مع file_id
-    file_id = message.document.file_id if message.document else None
-    if file_id:
-        books_db[book_name.lower()] = file_id
-        with open(BOOKS_FILE, "w", encoding="utf-8") as f:
-            json.dump(books_db, f, ensure_ascii=False, indent=2)
-        print(f"✅ تم فهرسة الكتاب: {book_name}")
+    file_id = message.document.file_id
 
-# البحث عن الكتاب عند الطلب
+    # حفظ أو تحديث الكتاب في قاعدة البيانات
+    await conn.execute("""
+        INSERT INTO books(book_name, file_id) 
+        VALUES($1, $2)
+        ON CONFLICT (book_name) DO UPDATE
+        SET file_id = EXCLUDED.file_id
+    """, book_name.lower(), file_id)
+
+    print(f"✅ تم فهرسة الكتاب: {book_name}")
+
+# ==========================
+# 5️⃣ البحث عن الكتاب عند الطلب
+# ==========================
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = context.bot_data.get("db_conn")
     query = update.message.text.strip().lower()
-    file_id = books_db.get(query)
-    if file_id:
-        await update.message.reply_document(document=file_id)
+    row = await conn.fetchrow("SELECT file_id FROM books WHERE book_name = $1", query)
+    if row:
+        await update.message.reply_document(document=row["file_id"])
     else:
         await update.message.reply_text("❌ لم أجد هذا الكتاب في المكتبة.")
 
-# إعداد التطبيق والبوت
-def main():
+# ==========================
+# 6️⃣ تشغيل البوت
+# ==========================
+async def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    # مراقبة الرسائل الجديدة في القناة
-    app.add_handler(MessageHandler(filters.ALL & filters.ChatType.CHANNEL, channel_listener))
-    # البحث عند إرسال اسم كتاب
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
-    app.run_polling()
 
+    # اتصال قاعدة البيانات
+    db_conn = await init_db()
+    app.bot_data["db_conn"] = db_conn
+
+    # إضافة الـ handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.ALL & filters.ChatType.CHANNEL, channel_listener))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
+
+    # تشغيل البوت
+    await app.run_polling()
+
+# ==========================
+# 7️⃣ تشغيل البرنامج
+# ==========================
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
