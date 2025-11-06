@@ -4,6 +4,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import asyncpg
 from PyPDF2 import PdfReader
+import asyncio
 
 # -------------------------------
 # إعدادات اللوج
@@ -17,26 +18,24 @@ logging.basicConfig(
 # متغيرات البيئة
 # -------------------------------
 TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # فقط الرقم بدون @
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # الرقم الرقمي للقناة بدون @
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # -------------------------------
 # إنشاء الاتصال بقاعدة البيانات
 # -------------------------------
-async def create_db_pool():
-    return await asyncpg.create_pool(DATABASE_URL)
+db_pool = None
 
-db_pool = None  # سيتم تهيئته لاحقاً
+async def create_db_pool():
+    global db_pool
+    db_pool = await asyncpg.create_pool(DATABASE_URL)
 
 # -------------------------------
 # أوامر البوت
 # -------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحبًا بك في مكتبة البوت! أرسل لي أي ملف PDF لأتمكن من فهرسته.")
+    await update.message.reply_text("مرحبًا بك في مكتبة البوت! أرسل أي ملف PDF لأتمكن من فهرسته.")
 
-# -------------------------------
-# فهرسة الملفات
-# -------------------------------
 async def add_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.document:
         await update.message.reply_text("الرجاء إرسال ملف بصيغة PDF.")
@@ -75,22 +74,22 @@ async def add_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # تشغيل البوت
 # -------------------------------
 async def main():
-    global db_pool
-    db_pool = await create_db_pool()
+    await create_db_pool()
 
-    # إنشاء التطبيق
     app = ApplicationBuilder().token(TOKEN).build()
-
-    # إضافة الهاندلرز
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.ALL, add_book))
 
-    # تشغيل البوت على Polling
-    await app.run_polling()
+    # تشغيل البوت بدون asyncio.run()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()  # Polling للبوت
+    await app.updater.wait_closed()    # انتظار الإغلاق
 
 # -------------------------------
 # نقطة البداية
 # -------------------------------
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())
+    loop.run_forever()
