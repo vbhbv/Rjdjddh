@@ -10,8 +10,11 @@ BOOKS_FILE = "books.json"
 
 # تحميل قاعدة البيانات أو إنشاء جديدة
 if os.path.exists(BOOKS_FILE):
-    with open(BOOKS_FILE, "r", encoding="utf-8") as f:
-        books_db = json.load(f)
+    try:
+        with open(BOOKS_FILE, "r", encoding="utf-8") as f:
+            books_db = json.load(f)
+    except json.JSONDecodeError:
+        books_db = {}
 else:
     books_db = {}
 
@@ -28,15 +31,18 @@ async def channel_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message:
         return
 
-    # الحصول على اسم الكتاب من caption أو نص الرسالة
-    book_name = (message.caption or message.text or "").strip()
+    # الحصول على اسم الكتاب من caption أو اسم الملف
+    book_name = (message.caption or getattr(message.document, 'file_name', None) or "").strip()
     if not book_name:
         return
 
     # حفظ في قاعدة البيانات مع file_id
-    books_db[book_name.lower()] = message.document.file_id if message.document else None
-    with open(BOOKS_FILE, "w", encoding="utf-8") as f:
-        json.dump(books_db, f, ensure_ascii=False, indent=2)
+    file_id = message.document.file_id if message.document else None
+    if file_id:
+        books_db[book_name.lower()] = file_id
+        with open(BOOKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(books_db, f, ensure_ascii=False, indent=2)
+        print(f"✅ تم فهرسة الكتاب: {book_name}")
 
 # البحث عن الكتاب عند الطلب
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
