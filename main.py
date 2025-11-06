@@ -2,58 +2,82 @@ import os
 import asyncio
 from telethon import TelegramClient
 from telegram import Bot
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import nest_asyncio
 
 nest_asyncio.apply()
 
+# ===== إعداد المتغيرات =====
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHANNEL = os.environ["CHANNEL_ID"]
 SESSION_FILE = "user_session.session"
 
-# Userbot
+# قناة المكتبة العامة
+CHANNEL = "https://t.me/freebooksf"
+
+# إنشاء عميل المستخدم (Userbot)
 client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
 
+
+# ===== تشغيل Userbot =====
 async def start_userbot():
     await client.start()
-    print("✅ Userbot جاهز!")
+    print("✅ Userbot جاهز ومتصل.")
 
-# البحث وإرسال الكتاب
-async def fetch_and_send(book_query: str, telegram_bot, user_chat_id: int, limit: int = 1000):
+
+# ===== البحث عن الكتاب وإرساله =====
+async def fetch_and_send(book_query: str, telegram_bot, user_chat_id: int, limit: int = 1500):
     book_query = book_query.lower().strip()
+    found = False
+
+    print(f"🔍 جاري البحث عن: {book_query}")
+
     async for msg in client.iter_messages(CHANNEL, limit=limit):
-        doc = msg.document
-        fname = doc.name.lower() if doc and getattr(doc, "name", None) else ""
-        caption = getattr(msg, "message", "")
-        caption = caption.lower() if caption else ""
-        if (fname and book_query in fname) or (caption and book_query in caption):
-            tmp_name = f"/tmp/{msg.id}_{(doc.name or 'file')}".replace("/", "_")
+        text_content = ""
+        if getattr(msg, "message", None):
+            text_content += msg.message.lower()
+        if getattr(msg, "caption", None):
+            text_content += msg.caption.lower()
+
+        filename = ""
+        if msg.document and getattr(msg.document, "attributes", None):
+            try:
+                filename = msg.file.name.lower()
+            except Exception:
+                filename = ""
+
+        # المطابقة
+        if book_query in text_content or book_query in filename:
+            found = True
+            tmp_name = f"/tmp/{msg.id}_{filename or 'book.pdf'}".replace("/", "_")
             path = await client.download_media(msg, file=tmp_name)
+            print(f"📚 تم العثور على {filename}, يتم الإرسال للمستخدم...")
             try:
                 with open(path, "rb") as f:
                     await telegram_bot.send_document(chat_id=user_chat_id, document=f)
                 return True
+            except Exception as e:
+                print(f"⚠️ خطأ أثناء الإرسال: {e}")
             finally:
-                try:
+                if os.path.exists(path):
                     os.remove(path)
-                except Exception:
-                    pass
-    return False
+    return found
 
-# البوت الرسمي
-async def start(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحبًا! أرسل اسم الكتاب وسأبحث عنه لك.")
 
-async def search_book(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.DEFAULT_TYPE):
+# ===== أوامر البوت الرسمي =====
+async def start(update, context):
+    await update.message.reply_text("مرحبًا في مكتبة البوت 📚\nأرسل اسم الكتاب وسأبحث عنه في قناة FreeBooksF.")
+
+async def search_book(update, context):
     book_name = update.message.text
-    await update.message.reply_text("جاري البحث عن الكتاب... ⏳")
+    await update.message.reply_text(f"🔎 جاري البحث عن: {book_name}")
     found = await fetch_and_send(book_name, context.bot, update.message.chat_id)
     if not found:
-        await update.message.reply_text("لم يتم العثور على الكتاب.")
+        await update.message.reply_text("❌ لم يتم العثور على هذا الكتاب، حاول كتابة الاسم الكامل أو بلغة أخرى.")
 
-# تشغيل البوت + Userbot معًا
+
+# ===== التشغيل المتزامن للبوتين =====
 async def main():
     await start_userbot()
 
@@ -61,13 +85,11 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
 
-    # إنشاء مهمة asyncio للبوت الرسمي
     bot_task = asyncio.create_task(app.run_polling())
-    # إنشاء مهمة asyncio لتشغيل Userbot في الخلفية
     userbot_task = asyncio.create_task(client.run_until_disconnected())
 
-    # انتظار كل المهام معًا
     await asyncio.gather(bot_task, userbot_task)
 
-# تشغيل كل شيء
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
