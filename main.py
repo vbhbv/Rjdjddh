@@ -1,99 +1,84 @@
 import os
 import asyncio
 import asyncpg
-from telegram import Update, Document
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-DB_URL = os.environ.get("DATABASE_URL")
+# قراءة المتغيرات من البيئة
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # تأكد من وضع الرقم فقط بدون @
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ---------- قاعدة البيانات ----------
+# التأكد من وجود المتغيرات
+if not all([BOT_TOKEN, CHANNEL_ID, DATABASE_URL]):
+    raise ValueError("تأكد من تعيين BOT_TOKEN وCHANNEL_ID وDATABASE_URL في متغيرات البيئة")
+
+# تهيئة قاعدة البيانات
 async def init_db():
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
             id SERIAL PRIMARY KEY,
-            chat_id BIGINT,
-            file_id TEXT,
-            title TEXT
-        )
+            title TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            added_at TIMESTAMP DEFAULT NOW()
+        );
     """)
     return conn
 
-# ---------- أوامر البوت ----------
+# إضافة كتاب إلى قاعدة البيانات
+async def add_book_to_db(conn, title, file_id):
+    await conn.execute("INSERT INTO books(title, file_id) VALUES($1, $2)", title, file_id)
+
+# أمر /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً! سأقوم بفهرسة أي كتاب PDF يتم إرساله أو إعادة توجيهه إلى هذه القناة.")
+    await update.message.reply_text("مرحبًا! أرسل اسم الكتاب للبحث عنه.")
 
-# ---------- التعامل مع ملفات PDF ----------
-async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+# استقبال الكتب من المستخدم أو القناة وإدخالها في قاعدة البيانات
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.document:
+        await update.message.reply_text("الرجاء إرسال ملف بصيغة PDF.")
         return
 
-    doc: Document = update.message.document
-    # قد يكون المستند ملف PDF
-    if doc and doc.file_name.lower().endswith(".pdf"):
-        title = doc.file_name
-        file_id = doc.file_id
-        chat_id = update.message.chat_id
+    document = update.message.document
+    title = document.file_name
+    file_id = document.file_id
 
-        # تحقق إن كان الكتاب موجودًا مسبقًا
-        exists = await context.bot_data["db"].fetchval(
-            "SELECT 1 FROM books WHERE chat_id=$1 AND file_id=$2",
-            chat_id, file_id
-        )
-        if exists:
-            return  # لا تضيفه مرتين
+    # الاتصال بقاعدة البيانات
+    conn = await init_db()
+    await add_book_to_db(conn, title, file_id)
+    await conn.close()
 
-        # حفظ في قاعدة البيانات
-        await context.bot_data["db"].execute(
-            "INSERT INTO books(chat_id, file_id, title) VALUES($1, $2, $3)",
-            chat_id, file_id, title
-        )
-        await update.message.reply_text(f"تم فهرسة الكتاب: {title}")
+    await update.message.reply_text(f"تم فهرسة الكتاب: {title}")
 
-# ---------- البحث ----------
+# البحث عن كتاب
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    if not context.args:
+        await update.message.reply_text("اكتب اسم الكتاب بعد الأمر /search")
         return
-    query = update.message.text.lower()
-    rows = await context.bot_data["db"].fetch(
-        "SELECT file_id, title FROM books WHERE LOWER(title) LIKE $1 LIMIT 1",
-        f"%{query}%"
-    )
+
+    query = " ".join(context.args).lower()
+    conn = await init_db()
+    rows = await conn.fetch("SELECT title, file_id FROM books WHERE LOWER(title) LIKE $1", f"%{query}%")
+    await conn.close()
+
     if not rows:
-        await update.message.reply_text("لم أجد الكتاب.")
+        await update.message.reply_text("لم يتم العثور على الكتاب.")
         return
-    file_id, title = rows[0]["file_id"], rows[0]["title"]
-    await update.message.reply_document(file_id, caption=title)
 
-# ---------- التشغيل ----------
+    for row in rows:
+        await context.bot.send_document(chat_id=update.message.chat_id, document=row["file_id"], caption=row["title"])
+
+# إنشاء التطبيق وتشغيل البوت
 async def main():
-    db_conn = await init_db()
-
-    app = ApplicationBuilder().token(os.environ.get("BOT_TOKEN")).build()
-    app.bot_data["db"] = db_conn
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    # أي مستند PDF يتم استقباله أو إعادة توجيهه
-    app.add_handler(MessageHandler(filters.Document.FileExtension("pdf") | filters.FORWARDED, handle_pdf))
-    # البحث عن الكتب
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
+    app.add_handler(CommandHandler("search", search_book))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    print("البوت يعمل الآن على فهرسة جميع ملفات PDF تلقائيًا!")
-    await app.updater.idle()
-    await app.stop()
-    await app.shutdown()
-    await db_conn.close()
+    print("البوت جاهز للعمل...")
+    await app.run_polling()
 
-# ---------- حل مشكلة حلقة الأحداث ----------
-try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
-    loop = None
-
-if loop and loop.is_running():
-    asyncio.ensure_future(main())
-else:
+if __name__ == "__main__":
     asyncio.run(main())
