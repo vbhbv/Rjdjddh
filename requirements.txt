@@ -1,3 +1,2 @@
 python-telegram-bot==20.8
 asyncpg>=0.30.0
-PyPDF2>=3.0.1
