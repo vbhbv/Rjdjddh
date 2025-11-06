@@ -1,121 +1,139 @@
 import os
-import asyncio
 import asyncpg
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# متغيرات البيئة
-TOKEN = os.getenv("BOT_TOKEN")
-# CHANNEL_ID لم يعد يستخدم بشكل مباشر في المعالج (سيتم الاستماع لجميع القنوات التي فيها البوت)
-# لكن سنحتفظ به للتأكد من ربط البوت بالقناة الصحيحة.
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-# اتصال قاعدة البيانات (سيتم تخزينه في ContextTypes لتجنب إعادة الاتصال)
-DB_CONN = None
-
-# 1. إنشاء اتصال مع قاعدة البيانات
-async def init_db():
-    global DB_CONN
-    if DB_CONN is None:
-        DB_CONN = await asyncpg.connect(DATABASE_URL)
-        # إنشاء جدول للكتب إذا لم يكن موجودًا
-        await DB_CONN.execute("""
+# 1. تهيئة قاعدة البيانات والاتصال
+async def init_db(app_context: ContextTypes):
+    """تهيئة اتصال قاعدة البيانات وتخزينه في سياق التطبيق."""
+    try:
+        conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+        # إنشاء جدول الكتب
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
-                file_id TEXT UNIQUE, -- إضافة UNIQUE لمنع تكرار الملفات في الفهرسة
+                file_id TEXT UNIQUE,
                 file_name TEXT,
                 uploaded_at TIMESTAMP DEFAULT NOW()
             )
         """)
-    return DB_CONN
+        # تخزين الاتصال في سياق التطبيق لاستخدامه في المعالجات
+        app_context.bot_data['db_conn'] = conn
+        print("✅ تم الاتصال بقاعدة البيانات وتهيئة الجدول بنجاح.")
+    except Exception as e:
+        print(f"❌ خطأ في الاتصال بقاعدة البيانات: {e}")
+        # إنهاء التطبيق إذا فشل الاتصال بالقاعدة
+        raise RuntimeError("فشل تهيئة قاعدة البيانات")
 
-# 2. معالج رسائل PDF (للفهرسة التلقائية)
+# 2. إغلاق اتصال قاعدة البيانات
+async def close_db(app: Application):
+    """إغلاق اتصال قاعدة البيانات عند إيقاف تشغيل البوت."""
+    conn = app.bot_data.get('db_conn')
+    if conn:
+        await conn.close()
+        print("✅ تم إغلاق اتصال قاعدة البيانات.")
+
+# 3. معالج رسائل PDF (للفهرسة التلقائية)
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # التأكد من أن الرسالة تأتي من قناة (ChatType.CHANNEL) وأنها تحتوي على ملف PDF
+    """يفهرس أي ملف PDF جديد يصل إلى القناة."""
+    # نتحقق من وجود الرسالة في القناة وأنها PDF
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         
         document = update.channel_post.document
-        conn = await init_db() # جلب اتصال قاعدة البيانات
+        conn = context.bot_data.get('db_conn') # جلب الاتصال من السياق
         
-        try:
-            # فهرسة في قاعدة البيانات
-            await conn.execute(
-                "INSERT INTO books(file_id, file_name) VALUES($1, $2) ON CONFLICT (file_id) DO NOTHING", 
-                document.file_id, 
-                document.file_name
-            )
-            print(f"تمت فهرسة الكتاب: {document.file_name}")
-        except Exception as e:
-            print(f"خطأ في فهرسة الكتاب: {e}")
+        if conn:
+            try:
+                # فهرسة في قاعدة البيانات، مع تجاهل التكرار
+                await conn.execute(
+                    "INSERT INTO books(file_id, file_name) VALUES($1, $2) ON CONFLICT (file_id) DO NOTHING", 
+                    document.file_id, 
+                    document.file_name
+                )
+                print(f"تمت فهرسة الكتاب: {document.file_name}")
+            except Exception as e:
+                # لا ينبغي أن يحدث هذا طالما الاتصال مفتوح
+                print(f"خطأ في فهرسة الكتاب: {e}")
 
-# 3. أمر /search (لإعادة توجيه الملف للمستخدم)
+# 4. أمر /search (لإرسال الملف للمستخدم)
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """البحث عن كتاب وإرسال الملف للمستخدم."""
     
-    # التحقق من أن الطلب ليس من القناة نفسها لتجنب تكرار الردود
+    # تأكد أن الطلب ليس من القناة نفسها
     if update.effective_chat.type == "channel":
         return
 
     if not context.args:
-        await update.message.reply_text("الرجاء إرسال اسم الكتاب الذي تبحث عنه بعد الأمر. مثال: /search اسم الكتاب")
+        await update.message.reply_text("الرجاء إرسال اسم الكتاب. مثال: /search اسم الكتاب")
         return
     
     search_term = " ".join(context.args)
-    conn = await init_db()
-    
-    # البحث في قاعدة البيانات (يمكن تحسين استعلام البحث)
-    result = await conn.fetchrow(
-        "SELECT file_id, file_name FROM books WHERE file_name ILIKE $1 LIMIT 1",
-        f"%{search_term}%" # استخدام ILIKE للبحث غير الحساس لحالة الأحرف
-    )
+    conn = context.bot_data.get('db_conn')
 
-    if result:
-        file_id = result['file_id']
-        book_name = result['file_name']
-        
-        # إعادة توجيه الملف للمستخدم مباشرة
-        # **ملاحظة:** لضمان عمل إعادة التوجيه/الإرسال، يجب أن يكون البوت يمتلك صلاحية الوصول للملف.
-        await update.message.reply_document(
-            document=file_id, 
-            caption=f"✅ تم العثور على الكتاب: **{book_name}**"
+    if conn:
+        # البحث في قاعدة البيانات (ILKE للبحث الجزئي وغير الحساس لحالة الأحرف)
+        result = await conn.fetchrow(
+            "SELECT file_id, file_name FROM books WHERE file_name ILIKE $1 LIMIT 1",
+            f"%{search_term}%" 
         )
-    else:
-        await update.message.reply_text(f"❌ لم يتم العثور على كتاب باسم '{search_term}'.")
 
-# 4. أمر /start
+        if result:
+            file_id = result['file_id']
+            book_name = result['file_name']
+            
+            try:
+                # إرسال الملف
+                await update.message.reply_document(
+                    document=file_id, 
+                    caption=f"✅ تم العثور على الكتاب: **{book_name}**"
+                )
+            except Exception:
+                 # في حالة فشل الإرسال (قد يكون الملف ضخمًا جدًا أو تم حذفه من سيرفرات تيليجرام)
+                await update.message.reply_text("❌ لم أتمكن من إرسال الملف. قد يكون الملف غير صالح أو واجهت مشكلة في تيليجرام.")
+        else:
+            await update.message.reply_text(f"❌ لم يتم العثور على كتاب يطابق '{search_term}'.")
+    else:
+        await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً. حاول لاحقاً.")
+
+# 5. أمر /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "مرحبًا بك في مكتبة البوت! \n"
-        "كل ملف PDF يتم إرساله للقناة يتم فهرسته تلقائيًا.\n"
+        "مرحبًا بك في مكتبة البوت! 📚\n"
         "للبحث عن كتاب، استخدم الأمر: /search اسم الكتاب"
     )
 
-# 5. الدالة الرئيسية
-async def main():
-    await init_db() # تهيئة قاعدة البيانات مرة واحدة
-    
-    app = Application.builder().token(TOKEN).build()
+# 6. دالة التشغيل الرئيسية
+def run_bot():
+    """هذه الدالة تستخدم run_polling وهي آمنة للاستخدام في Railway."""
+    # متغيرات البيئة مطلوبة
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        raise ValueError("BOT_TOKEN غير متوفر في متغيرات البيئة.")
+
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(init_db)     # يتم تنفيذها قبل تشغيل البوت (للاتصال بالقاعدة)
+        .post_shutdown(close_db) # يتم تنفيذها عند إيقاف البوت (لإغلاق الاتصال)
+        .build()
+    )
     
     # إضافة المعالجات
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_book)) # المعالج الجديد للبحث
+    app.add_handler(CommandHandler("search", search_book))
     
-    # 🌟 المعالج الضروري لمراقبة رسائل القناة
+    # المعالج الخاص بأرشفة القناة (يستمع فقط لـ PDF في القنوات)
     app.add_handler(MessageHandler(
-        filters.Document.PDF & filters.ChatType.CHANNEL, # استمع فقط لملفات PDF في القنوات
+        filters.Document.PDF & filters.ChatType.CHANNEL,
         handle_pdf
     ))
 
-    # تشغيل البوت
-    print("البوت يعمل...")
-    await app.run_polling()
+    print("🤖 البوت يعمل الآن...")
+    # استخدام run_polling لحلقة الأحداث، وهو أكثر موثوقية في بيئات الاستضافة
+    app.run_polling(poll_interval=1.0) 
 
 if __name__ == "__main__":
     try:
-        # استخدام asyncio.run لتشغيل الدالة الرئيسية بشكل صحيح
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("تم إيقاف البوت.")
-    finally:
-        # إغلاق اتصال قاعدة البيانات عند الخروج
-        if DB_CONN:
-            asyncio.run(DB_CONN.close())
+        run_bot()
+    except Exception as e:
+        print(f"حدث خطأ فادح: {e}")
