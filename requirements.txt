@@ -1,2 +1,2 @@
-python-telegram-bot==20.8
-asyncpg
+import nest_asyncio
+nest_asyncio.apply()
