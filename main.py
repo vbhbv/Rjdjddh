@@ -1,81 +1,71 @@
 import os
 import asyncio
+import asyncpg
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-import asyncpg
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
-DATABASE_URL = os.getenv("DATABASE_URL")
+# --- إعداد متغيرات البيئة ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+DB_URL = os.environ.get("DATABASE_URL")
 
-# ----------------- قاعدة البيانات -----------------
+# --- قاعدة البيانات ---
 async def init_db():
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(DB_URL)
+    # إنشاء جدول إذا لم يكن موجودًا
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
             id SERIAL PRIMARY KEY,
-            file_id TEXT NOT NULL,
-            file_name TEXT NOT NULL
+            name TEXT NOT NULL,
+            file_id TEXT NOT NULL
         )
     """)
     return conn
 
-# ----------------- حفظ الكتاب -----------------
-async def save_book(conn, file_id, file_name):
-    await conn.execute(
-        "INSERT INTO books(file_id, file_name) VALUES($1, $2)",
-        file_id, file_name
-    )
-
-# ----------------- البحث عن كتاب -----------------
-async def search_book(conn, book_name):
-    rows = await conn.fetch(
-        "SELECT file_id, file_name FROM books WHERE LOWER(file_name) LIKE $1",
-        f"%{book_name.lower()}%"
-    )
-    return rows
-
-# ----------------- استلام الملفات -----------------
-async def handle_channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.channel_post and update.channel_post.document:
-        file = update.channel_post.document
-        file_id = file.file_id
-        file_name = file.file_name
-        # حفظ الكتاب في قاعدة البيانات
-        await save_book(context.bot_data["db_conn"], file_id, file_name)
-        print(f"تم فهرسة الكتاب: {file_name}")
-
-# ----------------- أمر البحث -----------------
+# --- أوامر البوت ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("مرحباً! أرسل اسم الكتاب للبحث عنه.")
 
-async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    book_name = update.message.text
-    results = await search_book(context.bot_data["db_conn"], book_name)
-    if not results:
-        await update.message.reply_text("لم يتم العثور على الكتاب.")
+async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    book_name = " ".join(context.args) if context.args else update.message.text
+    if not book_name:
+        await update.message.reply_text("الرجاء كتابة اسم الكتاب بعد الأمر أو في الرسالة.")
         return
-    for row in results:
-        await context.bot.send_document(
-            chat_id=update.message.chat_id,
-            document=row['file_id'],
-            filename=row['file_name']
-        )
 
-# ----------------- تشغيل البوت -----------------
-async def main():
-    db_conn = await init_db()
+    await update.message.reply_text(f"جاري البحث عن: {book_name}...")
+
+    conn = await init_db()
+    row = await conn.fetchrow("SELECT file_id FROM books WHERE name ILIKE $1 LIMIT 1", book_name)
+    if row:
+        file_id = row["file_id"]
+        await context.bot.send_document(chat_id=update.message.chat_id, document=file_id)
+    else:
+        await update.message.reply_text("لم يتم العثور على الكتاب.")
+    await conn.close()
+
+async def add_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.document:
+        await update.message.reply_text("الرجاء إرسال مستند لإضافته.")
+        return
+
+    book_name = update.message.caption if update.message.caption else update.message.document.file_name
+    file_id = update.message.document.file_id
+
+    conn = await init_db()
+    await conn.execute("INSERT INTO books(name, file_id) VALUES($1, $2)", book_name, file_id)
+    await conn.close()
+    await update.message.reply_text(f"تم فهرسة الكتاب: {book_name}")
+
+# --- تشغيل البوت ---
+def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.bot_data["db_conn"] = db_conn
 
-    # استقبال الرسائل من القناة
-    app.add_handler(MessageHandler(filters.Document.ALL & filters.Chat(CHANNEL_USERNAME), handle_channel_message))
-
-    # أوامر المستخدمين
+    # إضافة Handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
+    app.add_handler(CommandHandler("search", search_book))
+    app.add_handler(MessageHandler(filters.Document.ALL, add_book))
 
-    await app.run_polling()
+    # تشغيل البوت
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
