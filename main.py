@@ -10,8 +10,8 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 CHANNEL = os.getenv("CHANNEL_ID")  # @books921383837
 
-# إنشاء عميل Telethon
-client = TelegramClient('session_name', API_ID, API_HASH)
+# إنشاء عميل Telethon للبوت
+client = TelegramClient('bot_session', API_ID, API_HASH)
 
 # البحث في القناة باستخدام Telethon
 async def search_book_telethon(book_name):
@@ -35,8 +35,8 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عذرًا، لم يتم العثور على الكتاب.")
 
 async def main():
-    # بدء Telethon
-    await client.start()
+    # بدء Telethon باستخدام توكن البوت (لا حاجة لإدخال رقم هاتف)
+    await client.start(bot_token=BOT_TOKEN)
     
     # بدء بوت Telegram
     app = ApplicationBuilder().token(BOT_TOKEN).build()
