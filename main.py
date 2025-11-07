@@ -10,29 +10,10 @@ from telegram.ext import PicklePersistence
 from admin_panel import register_admin_handlers 
 
 # ===============================================
-#       وظائف مساعدة لتحسين البحث العربي
+#       وظائف مساعدة
 # ===============================================
 
-def normalize_arabic_text(text: str) -> str:
-    """
-    تطبيق التطبيع الحرفي على النص العربي لتوحيد الأحرف المتشابهة في البحث.
-    """
-    if not text:
-        return ""
-    
-    # تحويل الكل إلى أحرف صغيرة (مفيد لأي كلمات لاتينية في أسماء الملفات)
-    text = text.lower() 
-    
-    # 1. توحيد الألفات (أ، إ، آ، ى -> ا)
-    text = text.replace('أ', 'ا')
-    text = text.replace('إ', 'ا')
-    text = text.replace('آ', 'ا')
-    text = text.replace('ى', 'ي') # توحيد الألف المقصورة مع الياء
-    
-    # 2. توحيد التاء المربوطة (ة -> ه)
-    text = text.replace('ة', 'ه')
-    
-    return text
+# تمت إزالة دالة normalize_arabic_text لأن البحث يتم بالكامل في قاعدة البيانات الآن
 
 # ===============================================
 #       وظائف البوت الأساسية
@@ -40,17 +21,32 @@ def normalize_arabic_text(text: str) -> str:
 
 # 1. تهيئة قاعدة البيانات والاتصال
 async def init_db(app_context: ContextTypes):
-    """تهيئة اتصال قاعدة البيانات وتخزينه في سياق التطبيق."""
+    """تهيئة اتصال قاعدة البيانات، تفعيل إضافات البحث النصي الكامل، وتخزينه في سياق التطبيق."""
     try:
+        if not os.getenv("DATABASE_URL"):
+            raise ValueError("DATABASE_URL غير متوفر.")
+            
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
         
-        # 📝 أمر إنشاء الجدول اليدوي (تم إضافة جدول users وجدول settings)
+        # 📝 1. تفعيل الإضافات اللازمة للبحث النصي الكامل (FTS)
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+        # 📝 2. إنشاء قالب بحث عربي مخصص يتجاهل التشكيل (Simple Arabic Config)
+        await conn.execute("""
+            CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);
+            ALTER TEXT SEARCH CONFIGURATION arabic_simple 
+            ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part 
+            WITH unaccent, simple;
+        """)
+
+        # 📝 3. إنشاء الجداول
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
                 file_id TEXT UNIQUE,  
                 file_name TEXT,
-                uploaded_at TIMESTAMP DEFAULT NOW()
+                uploaded_at TIMESTAMP DEFAULT NOW(),
+                -- إضافة عمود فهرسة لتحسين أداء البحث النصي
+                tsv_content tsvector
             );
             
             CREATE TABLE IF NOT EXISTS users (
@@ -62,10 +58,28 @@ async def init_db(app_context: ContextTypes):
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+            
+            -- إنشاء فهرس GIN على عمود tsv_content لأداء سريع
+            CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);
+        """)
+        
+        # 📝 4. إنشاء Trigger لتحديث عمود tsv_content تلقائياً عند إضافة كتاب
+        # يتم استخدام التكوين المخصص (arabic_simple) لتجاهل الهمزات والتشكيل
+        await conn.execute("""
+            CREATE OR REPLACE FUNCTION update_books_tsv() RETURNS trigger AS $$
+            BEGIN
+                NEW.tsv_content := to_tsvector('arabic_simple', NEW.file_name);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            
+            CREATE OR REPLACE TRIGGER tsv_update_trigger
+            BEFORE INSERT OR UPDATE OF file_name ON books
+            FOR EACH ROW EXECUTE FUNCTION update_books_tsv();
         """)
         
         app_context.bot_data['db_conn'] = conn
-        print("✅ تم الاتصال بقاعدة البيانات وتهيئة الجدول بنجاح.")
+        print("✅ تم الاتصال بقاعدة البيانات وتهيئة جداول وفهارس البحث النصي بنجاح.")
     except Exception as e:
         print(f"❌ خطأ في الاتصال بقاعدة البيانات: {e}")
         # لا نرفع RuntimeError لكي لا تتوقف عملية التشغيل في الـ Webhook
@@ -81,7 +95,7 @@ async def close_db(app: Application):
 
 # 3. معالج رسائل PDF (للفهرسة التلقائية)
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يفهرس أي ملف PDF جديد يصل إلى القناة."""
+    """يفهرس أي ملف PDF جديد يصل إلى القناة. يتم تحديث فهرس tsv_content تلقائيًا بواسطة Trigger."""
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         
         document = update.channel_post.document
@@ -89,7 +103,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if conn:
             try:
-                # هذا الاستعلام يتطلب وجود القيد UNIQUE في تعريف الجدول
+                # لا نحتاج لتحديث tsv_content هنا، الـ Trigger سيفعل ذلك تلقائياً
                 await conn.execute(
                     "INSERT INTO books(file_id, file_name) VALUES($1, $2) ON CONFLICT (file_id) DO NOTHING", 
                     document.file_id, 
@@ -97,13 +111,12 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 print(f"تمت فهرسة الكتاب: {document.file_name}")
             except Exception as e:
-                # لن يتكرر هذا الخطأ إذا كان الجدول محدثًا
                 print(f"خطأ في فهرسة الكتاب: {e}") 
 
 # 4. أمر /search (لإرسال الملف للمستخدم)
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    يبحث عن ما يصل إلى 10 كتب مطابقة ويعرضها في أزرار Inline.
+    يبحث عن ما يصل إلى 10 كتب مطابقة باستخدام Full-Text Search.
     """
     if update.effective_chat.type == "channel":
         return
@@ -112,23 +125,31 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("الرجاء إرسال اسم الكتاب. مثال: /search اسم الكتاب")
         return
     
-    # 🛑 1. تنظيف مصطلح البحث من المسافات الزائدة
+    # تحويل مصطلح البحث إلى نص واحد
     search_term = " ".join(context.args).strip()
-    
-    # 🛑 2. التطبيع الحرفي لمصطلح البحث
-    normalized_search_term = normalize_arabic_text(search_term)
-    
-    # 🛑 3. صياغة نمط البحث
-    search_pattern = f"%{normalized_search_term}%" 
     
     conn = context.bot_data.get('db_conn')
 
     if conn:
+        # 🛑🛑 استخدام البحث النصي الكامل (FTS): 
+        # 1. to_tsquery يحول مصطلح البحث إلى صيغة قابلة للبحث باستخدام التكوين المخصص (arabic_simple).
+        # 2. يتم تجاهل الهمزات، التاء المربوطة، إلخ، تلقائياً هنا.
+        # 3. يتم استخدام عامل التشغيل @@ للمقارنة مع عمود tsv_content المفهرس.
+        search_query = """
+            SELECT file_id, file_name 
+            FROM books 
+            WHERE tsv_content @@ to_tsquery('arabic_simple', $1)
+            ORDER BY file_name ASC 
+            LIMIT 10
+        """
         
-        # نستخدم LOWER() في DB لتوحيد حالة الأحرف (الإنجليزية)
+        # لضمان عمل to_tsquery بشكل صحيح مع المصطلحات التي تحتوي على مسافات، نستخدم صيغة 'simple'
+        # ونستبدل المسافات بعامل '&' (AND) ليتطابق مع كل الكلمات
+        query_text = search_term.replace(' ', ' & ')
+
         results = await conn.fetch(
-            "SELECT file_id, file_name FROM books WHERE LOWER(file_name) LIKE $1 ORDER BY file_name ASC LIMIT 10",
-            search_pattern
+            search_query,
+            query_text
         )
 
         if results:
@@ -261,4 +282,3 @@ if __name__ == "__main__":
         run_bot()
     except Exception as e:
         print(f"حدث خطأ فادح: {e}")
-        
