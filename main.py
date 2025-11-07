@@ -2,15 +2,16 @@ import os
 import asyncpg
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, PicklePersistence
+    Application, CommandHandler, MessageHandler, filters, ContextTypes, PicklePersistence, CallbackQueryHandler
 )
-
 from admin_panel import register_admin_handlers  # اسم الملف الصحيح
 
 # ===============================================
-#       Core Database & Setup Functions
+#       Database Initialization
 # ===============================================
+
 async def init_db(app_context: ContextTypes):
+    """Initializes DB connection and sets up tables and index."""
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
@@ -18,11 +19,17 @@ async def init_db(app_context: ContextTypes):
             return
 
         conn = await asyncpg.connect(db_url)
+        
+        # Extensions & FTS setup
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+        
+        # Create text search configuration if not exists
         await conn.execute("""
 DO $$
 BEGIN
-   IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
+   IF NOT EXISTS (
+       SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple'
+   ) THEN
        CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
    END IF;
 END
@@ -33,6 +40,8 @@ $$;
             "FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part "
             "WITH unaccent, simple;"
         )
+        
+        # Tables
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -44,15 +53,19 @@ $$;
         """)
         await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
         await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
+        
+        # Index & cleanup
         await conn.execute("DROP TRIGGER IF EXISTS tsv_update_trigger ON books;")
         await conn.execute("DROP FUNCTION IF EXISTS update_books_tsv();") 
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+        
         app_context.bot_data['db_conn'] = conn
         print("✅ Database connection and setup complete.")
     except Exception as e:
         print(f"❌ Database setup error: {e}")
 
 async def close_db(app: Application):
+    """Closes the database connection."""
     conn = app.bot_data.get('db_conn')
     if conn:
         await conn.close()
@@ -61,7 +74,9 @@ async def close_db(app: Application):
 # ===============================================
 #       PDF Handler (Indexing)
 # ===============================================
+
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Indexes new PDF files from the channel."""
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
@@ -70,6 +85,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_name = document.file_name
                 tsv_content_query = "SELECT to_tsvector('arabic_simple', $1);"
                 tsv_content = await conn.fetchval(tsv_content_query, file_name)
+
                 await conn.execute(
                     """
                     INSERT INTO books(file_id, file_name, tsv_content)
@@ -89,24 +105,32 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===============================================
 #       /search command
 # ===============================================
+
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Search for books by name."""
     if update.effective_chat.type == "channel":
         return
+
     if not context.args:
         await update.message.reply_text("الرجاء إرسال اسم الكتاب. مثال: /search اسم الكتاب")
         return
+    
     search_term = " ".join(context.args).strip()
     conn = context.bot_data.get('db_conn')
+
     if not conn:
         await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً.")
         return
+
     results = await conn.fetch(
         "SELECT file_id, file_name FROM books WHERE file_name ILIKE '%' || $1 || '%' ORDER BY uploaded_at DESC LIMIT 10;",
         search_term
     )
+
     if not results:
         await update.message.reply_text(f"❌ لم يتم العثور على كتاب يطابق '{search_term}'.")
         return
+
     if len(results) == 1:
         file_id = results[0]['file_id']
         book_name = results[0]['file_name']
@@ -117,12 +141,27 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message_text = f"📚 تم العثور على **{len(results)}** كتاباً يطابق بحثك '{search_term}':\n\n"
         message_text += "الرجاء اختيار النسخة المطلوبة من القائمة أدناه:"
-        keyboard = [[InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"file:{r['file_id']}")] for r in results]
+        keyboard = [[InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"send_file:{r['file_id']}")] for r in results]
         await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+# ===============================================
+#       CallbackQueryHandler for sending files
+# ===============================================
+
+async def callback_send_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data.startswith("send_file:"):
+        file_id = query.data.split("send_file:")[1]
+        try:
+            await query.message.reply_document(document=file_id)
+        except Exception:
+            await query.message.reply_text("❌ لم أتمكن من إرسال الملف.")
 
 # ===============================================
 #       /start command
 # ===============================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "مرحبًا بك في مكتبة البوت! 📚\n"
@@ -130,24 +169,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ===============================================
-#       CallbackQuery Handler لإرسال الملفات
-# ===============================================
-async def callback_send_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    file_id = query.data.split("file:")[1]
-    try:
-        await query.message.reply_document(document=file_id)
-    except Exception:
-        await query.message.reply_text("❌ لم أتمكن من إرسال الملف.")
-
-# ===============================================
 #       Main runner
 # ===============================================
+
 def run_bot():
     token = os.getenv("BOT_TOKEN")
     port = int(os.getenv("PORT", 8080))
     base_url = os.getenv("WEB_HOST")
+
     if not token:
         print("🚨 BOT_TOKEN missing in environment variables.")
         return
@@ -166,7 +195,7 @@ def run_bot():
     app.add_handler(CommandHandler("start", original_start_handler))
     app.add_handler(CommandHandler("search", search_book))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(callback_send_file, pattern="^file:"))
+    app.add_handler(CallbackQueryHandler(callback_send_file, pattern=r'^send_file:'))
 
     register_admin_handlers(app, original_start_handler)
 
