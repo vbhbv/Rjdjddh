@@ -1,141 +1,170 @@
 import os
-from telegram import Update, Bot
-from telegram.ext import (
-    ContextTypes, CommandHandler, ConversationHandler, MessageHandler, filters
-)
-from functools import wraps
+import asyncpg
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import PicklePersistence
+
+# Import the admin module
+from admin_panel import register_admin_handlers 
 
 # ===============================================
-#       إعدادات المشرفين
+#       Core Database & Setup Functions
 # ===============================================
 
-try:
-    ADMIN_USER_ID = int(os.environ.get("ADMIN_ID", "0"))
-except ValueError:
-    ADMIN_USER_ID = 0
-    print("⚠️ ADMIN_ID environment variable is not valid.")
+async def init_db(app_context: ContextTypes):
+    """Initializes DB connection and sets up FTS infrastructure robustly."""
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            print("🚨 DATABASE_URL environment variable is missing. Cannot connect to DB.")
+            return
 
-BAN_USER = 1
+        conn = await asyncpg.connect(db_url)
+        
+        # --- 1. SETUP COMMANDS (Extensions and Configs) ---
+        print("🛠️ Step 1: Creating Extensions and FTS Configuration...")
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+        await conn.execute("CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);")
+        await conn.execute(
+            "ALTER TEXT SEARCH CONFIGURATION arabic_simple "
+            "ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part WITH unaccent, simple;"
+        )
+        print("✅ Step 1 complete.")
+        
+        # --- 2. TABLE CREATION COMMANDS ---
+        print("🛠️ Step 2: Creating Tables...")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS books (
+                id SERIAL PRIMARY KEY,
+                file_id TEXT UNIQUE,  
+                file_name TEXT,
+                uploaded_at TIMESTAMP DEFAULT NOW(),
+                tsv_content tsvector 
+            );
+        """)
+        await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
+        await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
+        print("✅ Step 2 complete.")
 
-# ===============================================
-#       دوال مساعدة
-# ===============================================
+        # --- 3. FTS INDEX & CLEANUP COMMANDS ---
+        print("🛠️ Step 3: Cleanup and Creating FTS Index...")
+        await conn.execute("DROP TRIGGER IF EXISTS tsv_update_trigger ON books;")
+        await conn.execute("DROP FUNCTION IF EXISTS update_books_tsv();") 
+        await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+        print("✅ Step 3 complete.")
+        
+        app_context.bot_data['db_conn'] = conn
+        print("✅ Database connection and FTS setup complete and stable.")
+    except Exception as e:
+        print(f"❌ FATAL Database connection or setup error: {e}")
 
-def admin_only(func):
-    @wraps(func)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        if update.effective_user and update.effective_user.id == ADMIN_USER_ID and ADMIN_USER_ID != 0:
-            return await func(update, context, *args, **kwargs)
-        elif update.effective_message:
-            await update.effective_message.reply_text("❌ أمر خاص بالمشرفين فقط.")
-        return
-    return wrapper
+# Close DB connection
+async def close_db(app: Application):
+    conn = app.bot_data.get('db_conn')
+    if conn:
+        await conn.close()
+        print("✅ Database connection closed.")
 
-async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user and update.effective_user.id:
+# PDF Handler
+async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
+        document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
         if conn:
             try:
+                file_name = document.file_name
+                tsv_content = await conn.fetchval("SELECT to_tsvector('arabic_simple', $1);", file_name)
                 await conn.execute(
-                    "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", update.effective_user.id
+                    "INSERT INTO books(file_id, file_name, tsv_content) "
+                    "VALUES($1, $2, $3) "
+                    "ON CONFLICT (file_id) DO UPDATE SET file_name = EXCLUDED.file_name, tsv_content = EXCLUDED.tsv_content",
+                    document.file_id, file_name, tsv_content
                 )
+                print(f"Book indexed: {file_name}")
             except Exception as e:
-                print(f"Error tracking user {update.effective_user.id}: {e}")
+                print(f"❌ Error indexing book: {e}") 
 
-# ===============================================
-#       أوامر المشرفين
-# ===============================================
-
-@admin_only
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = context.bot_data.get('db_conn')
-    book_count = 0
-    user_count = 0
-    if conn:
-        try:
-            book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
-            user_count = await conn.fetchval("SELECT COUNT(*) FROM users")
-        except Exception as e:
-            print(f"Error fetching stats: {e}")
-
-    stats_text = (
-        "📊 **لوحة إحصائيات المشرف**\n"
-        "--------------------------------------\n"
-        f"📚 عدد الكتب المفهرسة: **{book_count:,}**\n"
-        f"👥 عدد المستخدمين الكلي: **{user_count:,}**\n"
-        "--------------------------------------\n"
-        "لإرسال رسالة: /broadcast رسالتك هنا\n"
-        "لحظر مستخدم: /ban_user\n"
-    )
-    await update.message.reply_text(stats_text, parse_mode='Markdown')
-
-@admin_only
-async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# /search command
+async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == "channel":
+        return
     if not context.args:
-        await update.message.reply_text("الرجاء إرسال رسالة بعد /broadcast")
+        await update.message.reply_text("الرجاء إرسال اسم الكتاب. مثال: /search اسم الكتاب")
         return
-
-    message_to_send = " ".join(context.args)
+    search_term = " ".join(context.args).strip()
     conn = context.bot_data.get('db_conn')
-    if not conn:
-        await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات.")
+    if conn:
+        query_text = search_term.replace(' ', ' & ')
+        search_query = """
+            SELECT file_id, file_name 
+            FROM books 
+            WHERE tsv_content @@ to_tsquery('arabic_simple', $1)
+            ORDER BY file_name ASC 
+            LIMIT 10
+        """
+        results = await conn.fetch(search_query, query_text)
+        if results:
+            if len(results) == 1:
+                file_id, book_name = results[0]['file_id'], results[0]['file_name']
+                try:
+                    await update.message.reply_document(document=file_id, caption=f"✅ تم العثور على الكتاب: **{book_name}**")
+                except Exception:
+                    await update.message.reply_text("❌ لم أتمكن من إرسال الملف. قد يكون الملف غير صالح.")
+            else:
+                message_text = f"📚 تم العثور على **{len(results)}** كتاب يطابق بحثك '{search_term}':\n\nالرجاء اختيار النسخة المطلوبة من القائمة أدناه:"
+                keyboard = [[InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"file:{r['file_id'][:50]}")] for r in results]
+                await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(f"❌ لم يتم العثور على كتاب يطابق '{search_term}'.")
+    else:
+        await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً. حاول لاحقاً.")
+
+# /start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = context.bot_data.get('db_conn')
+    if conn and update.effective_user:
+        try:
+            await conn.execute(
+                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", 
+                update.effective_user.id
+            )
+        except Exception as e:
+            print(f"Error tracking user: {e}")
+    await update.message.reply_text("مرحبًا بك في مكتبة البوت! استخدم /search للبحث عن الكتب.")
+
+# Main Runner
+def run_bot():
+    token = os.getenv("BOT_TOKEN")
+    port = int(os.environ.get('PORT', 8080))
+    base_url = os.environ.get('WEB_HOST')
+    if not token:
+        print("🚨 BOT_TOKEN is missing.")
         return
 
-    user_records = await conn.fetch("SELECT user_id FROM users")
-    sent_count = 0
-    failed_count = 0
-    bot: Bot = context.bot
-    await update.message.reply_text(f"بدء البث إلى {len(user_records)} مستخدم...")
-    for r in user_records:
-        try:
-            await bot.send_message(r['user_id'], message_to_send)
-            sent_count += 1
-        except Exception:
-            failed_count += 1
-
-    await update.message.reply_text(f"✅ انتهى البث.\nتم الإرسال بنجاح: {sent_count}\nفشل الإرسال: {failed_count}")
-
-# ===============================================
-#       الحظر
-# ===============================================
-
-@admin_only
-async def ban_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل ID المستخدم لحظره الآن (رقمياً).")
-    return BAN_USER
-
-@admin_only
-async def ban_user_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = int(update.message.text)
-        # ضع هنا منطق الحظر الفعلي إذا لزم
-        await update.message.reply_text(f"✅ تم حظر المستخدم ID: {user_id}")
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ يجب أن يكون رقم صحيح. حاول مرة أخرى أو /cancel")
-        return BAN_USER
-
-async def ban_user_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("تم إلغاء عملية الحظر.")
-    return ConversationHandler.END
-
-# ===============================================
-#       التسجيل الرئيسي
-# ===============================================
-
-def register_admin_handlers(application, original_start_handler):
-    async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await track_user(update, context)
-        await original_start_handler(update, context)
-
-    application.add_handler(CommandHandler("start", start_with_tracking))
-    application.add_handler(CommandHandler("stats", admin_stats))
-    application.add_handler(CommandHandler("broadcast", admin_broadcast))
-
-    ban_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('ban_user', ban_user_start)],
-        states={BAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ban_user_execute)]},
-        fallbacks=[CommandHandler('cancel', ban_user_cancel)]
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(init_db)
+        .post_shutdown(close_db)
+        .persistence(PicklePersistence(filepath="bot_data.pickle"))
+        .build()
     )
-    application.add_handler(ban_conv_handler)
-    print("✅ لوحة التحكم والمشرفين جاهزة للعمل.")
+
+    # Handlers
+    register_admin_handlers(app, start)
+    app.add_handler(CommandHandler("search", search_book))
+    app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
+
+    # Webhook or Polling
+    if base_url:
+        webhook_url = f"https://{base_url}"
+        app.run_webhook(listen="0.0.0.0", port=port, url_path=token, webhook_url=f"{webhook_url}/{token}", secret_token=os.getenv("WEBHOOK_SECRET"))
+    else:
+        print("⚠️ WEB_HOST not available. Falling back to Polling mode.")
+        app.run_polling(poll_interval=1.0)
+
+if __name__ == "__main__":
+    try:
+        run_bot()
+    except Exception as e:
+        print(f"Fatal error occurred: {e}")
