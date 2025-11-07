@@ -5,8 +5,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes, PicklePersistence
 )
 
-# تصحيح استدعاء ملف المشرفين
-from admin_panel import register_admin_handlers
+from admin_panel import register_admin_handlers  # اسم الملف الصحيح
 
 # ===============================================
 #       Core Database & Setup Functions
@@ -24,7 +23,20 @@ async def init_db(app_context: ContextTypes):
         
         # --- Extensions & FTS setup ---
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-        await conn.execute("CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);")
+        
+        # ✅ إصلاح CREATE TEXT SEARCH CONFIGURATION بدون IF NOT EXISTS
+        await conn.execute("""
+DO $$
+BEGIN
+   IF NOT EXISTS (
+       SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple'
+   ) THEN
+       CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
+   END IF;
+END
+$$;
+""")
+        
         await conn.execute(
             "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING "
             "FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part "
@@ -113,7 +125,6 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً.")
         return
 
-    # بحث بسيط باستخدام ILIKE لتفادي مشاكل FTS
     results = await conn.fetch(
         "SELECT file_id, file_name FROM books WHERE file_name ILIKE '%' || $1 || '%' ORDER BY uploaded_at DESC LIMIT 10;",
         search_term
