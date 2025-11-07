@@ -15,14 +15,20 @@ from admin_panel import register_admin_handlers
 async def execute_db_commands(conn, commands):
     """Executes a list of SQL commands sequentially, handling potential errors."""
     for command in commands:
+        # Clean up command string before execution
+        clean_command = command.strip()
+        if not clean_command:
+            continue
+            
         try:
-            await conn.execute(command)
+            await conn.execute(clean_command)
         except Exception as e:
             # Skip common "already exists" errors but log others
             if "already exists" in str(e) or "already defined" in str(e) or "notice" in str(e).lower():
                 pass 
             else:
-                print(f"❌ SQL Execution Error on command: {command.strip()[:100]}... Error: {e}")
+                # IMPORTANT: Print the failing command clearly
+                print(f"❌ SQL Execution Error on command: {clean_command[:100]}... Error: {e}")
 
 async def init_db(app_context: ContextTypes):
     """Initializes DB connection and sets up FTS infrastructure robustly."""
@@ -35,20 +41,17 @@ async def init_db(app_context: ContextTypes):
         conn = await asyncpg.connect(db_url)
         
         # --- 1. SETUP COMMANDS (Extensions and Configs) ---
+        # NOTE: Each command is now strictly on one line to avoid multi-line string parsing issues.
         setup_commands = [
             "CREATE EXTENSION IF NOT EXISTS unaccent;",
-            
-            # Create custom Arabic search configuration
-            """
-            CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);
-            ALTER TEXT SEARCH CONFIGURATION arabic_simple 
-            ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part 
-            WITH unaccent, simple;
-            """
+            # Create custom Arabic search configuration (Simplest form)
+            "CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);",
+            # Alter the configuration to use unaccent filter for normalization
+            "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part WITH unaccent, simple;"
         ]
         await execute_db_commands(conn, setup_commands)
 
-        # --- 2. TABLE CREATION COMMANDS (Must execute successfully before FTS setup) ---
+        # --- 2. TABLE CREATION COMMANDS ---
         table_commands = [
             """
             CREATE TABLE IF NOT EXISTS books (
@@ -64,7 +67,7 @@ async def init_db(app_context: ContextTypes):
         ]
         await execute_db_commands(conn, table_commands)
 
-        # --- 3. FTS INDEX & TRIGGER COMMANDS (Depend on 'books' table existence) ---
+        # --- 3. FTS INDEX & TRIGGER COMMANDS (Also separated) ---
         fts_commands = [
             # Create GIN index for fast FTS lookups
             "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
