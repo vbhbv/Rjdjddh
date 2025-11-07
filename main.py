@@ -18,9 +18,8 @@ async def execute_db_commands(conn, commands):
         try:
             await conn.execute(command)
         except Exception as e:
-            # We skip errors for things like "CREATE EXTENSION IF NOT EXISTS" 
-            # if they already exist, but log the error for debugging.
-            if "already exists" in str(e) or "already defined" in str(e):
+            # Skip common "already exists" errors but log others
+            if "already exists" in str(e) or "already defined" in str(e) or "notice" in str(e).lower():
                 pass 
             else:
                 print(f"❌ SQL Execution Error on command: {command.strip()[:100]}... Error: {e}")
@@ -35,20 +34,22 @@ async def init_db(app_context: ContextTypes):
 
         conn = await asyncpg.connect(db_url)
         
-        # List of SQL commands to be executed sequentially and safely
-        sql_commands = [
-            # 1. Enable FTS extensions (unaccent for Arabic normalization)
+        # --- 1. SETUP COMMANDS (Extensions and Configs) ---
+        setup_commands = [
             "CREATE EXTENSION IF NOT EXISTS unaccent;",
             
-            # 2. Create custom Arabic search configuration
+            # Create custom Arabic search configuration
             """
             CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);
             ALTER TEXT SEARCH CONFIGURATION arabic_simple 
             ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part 
             WITH unaccent, simple;
-            """,
+            """
+        ]
+        await execute_db_commands(conn, setup_commands)
 
-            # 3. Create Tables (books table now includes the tsv_content column)
+        # --- 2. TABLE CREATION COMMANDS (Must execute successfully before FTS setup) ---
+        table_commands = [
             """
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -58,14 +59,17 @@ async def init_db(app_context: ContextTypes):
                 tsv_content tsvector
             );
             """,
-            
             "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());",
-            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);",
-            
-            # 4. Create GIN index for fast FTS lookups
+            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);"
+        ]
+        await execute_db_commands(conn, table_commands)
+
+        # --- 3. FTS INDEX & TRIGGER COMMANDS (Depend on 'books' table existence) ---
+        fts_commands = [
+            # Create GIN index for fast FTS lookups
             "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
 
-            # 5. Create Trigger Function
+            # Create Trigger Function
             """
             CREATE OR REPLACE FUNCTION update_books_tsv() RETURNS trigger AS $$
             BEGIN
@@ -75,7 +79,7 @@ async def init_db(app_context: ContextTypes):
             $$ LANGUAGE plpgsql;
             """,
             
-            # 6. Apply the Trigger (using DO $$ to avoid "already exists" error on subsequent runs)
+            # Apply the Trigger
             """
             DO $$ 
             BEGIN
@@ -90,14 +94,12 @@ async def init_db(app_context: ContextTypes):
             END $$;
             """
         ]
-        
-        # Execute all commands
-        await execute_db_commands(conn, sql_commands)
+        await execute_db_commands(conn, fts_commands)
         
         app_context.bot_data['db_conn'] = conn
         print("✅ Database connection and FTS setup complete and stable.")
     except Exception as e:
-        print(f"❌ Database connection or setup error: {e}")
+        print(f"❌ Database connection or final setup error: {e}")
         print("🚨 Will continue without database connection.")
 
 # 2. Close DB connection
