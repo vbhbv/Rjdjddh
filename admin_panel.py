@@ -1,26 +1,27 @@
 import os
 from telegram import Update, Bot
 from telegram.ext import (
-    ContextTypes, CommandHandler, ConversationHandler, MessageHandler, filters
+    ContextTypes, CommandHandler, MessageHandler, filters
 )
 from functools import wraps
 
 # ===============================================
-#       إعدادات المشرفين
+# إعدادات المشرفين
 # ===============================================
-
 try:
-    ADMIN_USER_ID = int(os.environ.get("ADMIN_ID", "0"))
+    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))  # معرف المشرف
 except ValueError:
     ADMIN_USER_ID = 0
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
-BAN_USER = 1
+# ===============================================
+# متغير القناة الاشتراك الإجباري
+# ===============================================
+REQUIRED_CHANNEL_ID = None  # سيُحدد عبر /setchannel
 
 # ===============================================
-#       دوال مساعدة
+# دوال مساعدة
 # ===============================================
-
 def admin_only(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
@@ -32,6 +33,7 @@ def admin_only(func):
     return wrapper
 
 async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تسجيل المستخدمين في قاعدة البيانات (لإحصائيات البث لاحقاً)."""
     if update.effective_user and update.effective_user.id:
         conn = context.bot_data.get('db_conn')
         if conn:
@@ -42,12 +44,28 @@ async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Error tracking user {update.effective_user.id}: {e}")
 
-# ===============================================
-#       أوامر المشرفين
-# ===============================================
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحقق من اشتراك المستخدم بالقناة الإلزامية."""
+    if REQUIRED_CHANNEL_ID is None:
+        return True  # إذا لم يُحدد معرف القناة، تخطي الاشتراك
+    try:
+        member = await context.bot.get_chat_member(REQUIRED_CHANNEL_ID, update.effective_user.id)
+        if member.status in ["left", "kicked"]:
+            await update.message.reply_text(
+                "❌ يجب الاشتراك في القناة أولاً قبل استخدام البوت."
+            )
+            return False
+        return True
+    except Exception:
+        await update.message.reply_text("❌ حدث خطأ أثناء التحقق من الاشتراك.")
+        return False
 
+# ===============================================
+# أوامر المشرفين
+# ===============================================
 @admin_only
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض لوحة التحكم الخاصة بالمشرف."""
     conn = context.bot_data.get('db_conn')
     book_count = 0
     user_count = 0
@@ -59,18 +77,19 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Error fetching stats: {e}")
 
     stats_text = (
-        "📊 **لوحة إحصائيات المشرف**\n"
+        "📊 **لوحة تحكم المشرف**\n"
         "--------------------------------------\n"
         f"📚 عدد الكتب المفهرسة: **{book_count:,}**\n"
         f"👥 عدد المستخدمين الكلي: **{user_count:,}**\n"
         "--------------------------------------\n"
-        "لإرسال رسالة: /broadcast رسالتك هنا\n"
-        "لحظر مستخدم: /ban_user\n"
+        "لإرسال رسالة للمستخدمين: /broadcast رسالتك هنا\n"
+        "لتحديد القناة للاشتراك الإجباري: /setchannel\n"
     )
     await update.message.reply_text(stats_text, parse_mode='Markdown')
 
 @admin_only
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بث رسالة لجميع المستخدمين."""
     if not context.args:
         await update.message.reply_text("الرجاء إرسال رسالة بعد /broadcast")
         return
@@ -96,46 +115,42 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ انتهى البث.\nتم الإرسال بنجاح: {sent_count}\nفشل الإرسال: {failed_count}")
 
 # ===============================================
-#       الحظر
+# تحديد القناة للاشتراك الإجباري
 # ===============================================
-
 @admin_only
-async def ban_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل ID المستخدم لحظره الآن (رقمياً).")
-    return BAN_USER
-
-@admin_only
-async def ban_user_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديد القناة للاشتراك الإجباري عن طريق الرد/معرف القناة."""
+    global REQUIRED_CHANNEL_ID
+    if not context.args:
+        await update.message.reply_text("الرجاء إرسال معرف القناة الرقمي أو الرابط @channel_username بعد /setchannel")
+        return
+    channel_arg = context.args[0]
     try:
-        user_id = int(update.message.text)
-        # ضع هنا منطق الحظر الفعلي إذا لزم
-        await update.message.reply_text(f"✅ تم حظر المستخدم ID: {user_id}")
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ يجب أن يكون رقم صحيح. حاول مرة أخرى أو /cancel")
-        return BAN_USER
-
-async def ban_user_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("تم إلغاء عملية الحظر.")
-    return ConversationHandler.END
+        # إذا كان @username
+        if channel_arg.startswith("@"):
+            chat = await context.bot.get_chat(channel_arg)
+            REQUIRED_CHANNEL_ID = chat.id
+        else:
+            REQUIRED_CHANNEL_ID = int(channel_arg)
+        await update.message.reply_text(f"✅ تم تعيين القناة للاشتراك الإجباري: {REQUIRED_CHANNEL_ID}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ في تحديد القناة: {e}")
 
 # ===============================================
-#       التسجيل الرئيسي
+# التسجيل الرئيسي
 # ===============================================
-
 def register_admin_handlers(application, original_start_handler):
+    """تسجيل جميع أوامر المشرفين مع الاشتراك الإجباري وتتبع المستخدمين."""
     async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        subscribed = await check_subscription(update, context)
+        if not subscribed:
+            return
         await track_user(update, context)
         await original_start_handler(update, context)
 
-    application.add_handler(CommandHandler("start", start_with_tracking))
-    application.add_handler(CommandHandler("stats", admin_stats))
+    application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CommandHandler("broadcast", admin_broadcast))
+    application.add_handler(CommandHandler("setchannel", set_channel))
+    application.add_handler(CommandHandler("start", start_with_tracking))
 
-    ban_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('ban_user', ban_user_start)],
-        states={BAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ban_user_execute)]},
-        fallbacks=[CommandHandler('cancel', ban_user_cancel)]
-    )
-    application.add_handler(ban_conv_handler)
     print("✅ لوحة التحكم والمشرفين جاهزة للعمل.")
