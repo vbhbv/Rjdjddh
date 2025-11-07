@@ -1,13 +1,15 @@
 import os
 import asyncpg
+import hashlib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes, PicklePersistence, CallbackQueryHandler
 )
+
 from admin_panel import register_admin_handlers  # اسم الملف الصحيح
 
 # ===============================================
-#       Database Initialization
+#       Core Database & Setup Functions
 # ===============================================
 
 async def init_db(app_context: ContextTypes):
@@ -20,10 +22,10 @@ async def init_db(app_context: ContextTypes):
 
         conn = await asyncpg.connect(db_url)
         
-        # Extensions & FTS setup
+        # --- Extensions & FTS setup ---
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
         
-        # Create text search configuration if not exists
+        # إصلاح CREATE TEXT SEARCH CONFIGURATION بدون IF NOT EXISTS
         await conn.execute("""
 DO $$
 BEGIN
@@ -41,7 +43,7 @@ $$;
             "WITH unaccent, simple;"
         )
         
-        # Tables
+        # --- Tables ---
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -54,7 +56,7 @@ $$;
         await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
         await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
         
-        # Index & cleanup
+        # --- Index & Cleanup ---
         await conn.execute("DROP TRIGGER IF EXISTS tsv_update_trigger ON books;")
         await conn.execute("DROP FUNCTION IF EXISTS update_books_tsv();") 
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
@@ -80,6 +82,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
+        
         if conn:
             try:
                 file_name = document.file_name
@@ -141,22 +144,29 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message_text = f"📚 تم العثور على **{len(results)}** كتاباً يطابق بحثك '{search_term}':\n\n"
         message_text += "الرجاء اختيار النسخة المطلوبة من القائمة أدناه:"
-        keyboard = [[InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"send_file:{r['file_id']}")] for r in results]
+        keyboard = []
+        for r in results:
+            # استخدام hash قصير للـ callback_data ≤ 64 حرف
+            key = hashlib.md5(r['file_id'].encode()).hexdigest()[:16]
+            context.bot_data[f"file_{key}"] = r['file_id']
+            keyboard.append([InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"file:{key}")])
         await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 # ===============================================
-#       CallbackQueryHandler for sending files
+#       CallbackQueryHandler للأزرار
 # ===============================================
 
 async def callback_send_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.data.startswith("send_file:"):
-        file_id = query.data.split("send_file:")[1]
-        try:
+    data = query.data
+    if data.startswith("file:"):
+        key = data.split(":")[1]
+        file_id = context.bot_data.get(f"file_{key}")
+        if file_id:
             await query.message.reply_document(document=file_id)
-        except Exception:
-            await query.message.reply_text("❌ لم أتمكن من إرسال الملف.")
+        else:
+            await query.message.reply_text("❌ تعذر العثور على الملف.")
 
 # ===============================================
 #       /start command
@@ -195,7 +205,7 @@ def run_bot():
     app.add_handler(CommandHandler("start", original_start_handler))
     app.add_handler(CommandHandler("search", search_book))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(callback_send_file, pattern=r'^send_file:'))
+    app.add_handler(CallbackQueryHandler(callback_send_file))  # إضافة معالج الأزرار
 
     register_admin_handlers(app, original_start_handler)
 
