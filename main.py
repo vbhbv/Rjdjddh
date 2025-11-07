@@ -1,14 +1,14 @@
 import os
 import asyncpg
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup # 🛑 تم إضافة InlineButton و InlineKeyboardMarkup هنا
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # 🛑 الاستيراد من وحدة التحكم الجديدة
 from admin_panel import register_admin_handlers 
 
-# ... (بقية تعريفات الدوال مثل handle_pdf و search_book و start تبقى كما هي) ...
+# ... (بقية تعريفات الدوال تبقى كما هي) ...
 
-# 1. تهيئة قاعدة البيانات والاتصال (تم إضافة جدول settings)
+# 1. تهيئة قاعدة البيانات والاتصال
 async def init_db(app_context: ContextTypes):
     """تهيئة اتصال قاعدة البيانات وتخزينه في سياق التطبيق."""
     try:
@@ -71,7 +71,9 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 4. أمر /search (لإرسال الملف للمستخدم)
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (بقية الدالة تبقى كما هي) ...
+    """
+    يبحث عن ما يصل إلى 10 كتب مطابقة ويعرضها في أزرار Inline.
+    """
     if update.effective_chat.type == "channel":
         return
 
@@ -83,22 +85,49 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get('db_conn')
 
     if conn:
-        result = await conn.fetchrow(
-            "SELECT file_id, file_name FROM books WHERE file_name ILIKE $1 LIMIT 1",
+        # 🛑 تم التعديل هنا: جلب ما يصل إلى 10 نتائج مع الترتيب وإزالة LIMIT 1
+        results = await conn.fetch(
+            "SELECT file_id, file_name FROM books WHERE file_name ILIKE $1 ORDER BY file_name ASC LIMIT 10",
             f"%{search_term}%" 
         )
 
-        if result:
-            file_id = result['file_id']
-            book_name = result['file_name']
+        if results:
+            if len(results) == 1:
+                # إذا كانت نتيجة واحدة، أرسل الملف مباشرة
+                file_id = results[0]['file_id']
+                book_name = results[0]['file_name']
+                
+                try:
+                    await update.message.reply_document(
+                        document=file_id, 
+                        caption=f"✅ تم العثور على الكتاب: **{book_name}**"
+                    )
+                except Exception:
+                    await update.message.reply_text("❌ لم أتمكن من إرسال الملف. قد يكون الملف غير صالح أو واجهت مشكلة في تيليجرام.")
             
-            try:
-                await update.message.reply_document(
-                    document=file_id, 
-                    caption=f"✅ تم العثور على الكتاب: **{book_name}**"
+            else:
+                # 🛑 إذا كانت نتائج متعددة، عرضها في أزرار Inline
+                
+                message_text = f"📚 تم العثور على **{len(results)}** كتاباً يطابق بحثك '{search_term}':\n\n"
+                message_text += "الرجاء اختيار النسخة المطلوبة من القائمة أدناه:"
+                
+                keyboard = []
+                for idx, result in enumerate(results):
+                    # نستخدم نمط callback_data فريد: "file:<file_id_partial>"
+                    # بما أن callback_data محدودة، نستخدم أول 50 حرف من file_id
+                    callback_data = f"file:{result['file_id'][:50]}" 
+                    
+                    # نضع اسم الملف في الزر
+                    keyboard.append([InlineKeyboardButton(f"🔗 {result['file_name']}", callback_data=callback_data)])
+                    
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await update.message.reply_text(
+                    message_text,
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
                 )
-            except Exception:
-                await update.message.reply_text("❌ لم أتمكن من إرسال الملف. قد يكون الملف غير صالح أو واجهت مشكلة في تيليجرام.")
+
         else:
             await update.message.reply_text(f"❌ لم يتم العثور على كتاب يطابق '{search_term}'.")
     else:
