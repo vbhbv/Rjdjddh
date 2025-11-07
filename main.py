@@ -1,18 +1,18 @@
 import os
 import asyncpg
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters, ContextTypes, PicklePersistence
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import PicklePersistence
 
-from admin_panel import register_admin_handlers  # اسم الملف الصحيح
+# Import the admin module
+from admin_panel import register_admin_handlers 
 
 # ===============================================
 #       Core Database & Setup Functions
 # ===============================================
 
 async def init_db(app_context: ContextTypes):
-    """Initializes DB connection and sets up tables and index."""
+    """Initializes DB connection and sets up FTS infrastructure robustly."""
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
@@ -21,152 +21,124 @@ async def init_db(app_context: ContextTypes):
 
         conn = await asyncpg.connect(db_url)
         
-        # --- Extensions & FTS setup ---
+        # --- 1. SETUP COMMANDS (Extensions and Configs) ---
+        print("🛠️ Step 1: Creating Extensions and FTS Configuration...")
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-        
-        # إصلاح CREATE TEXT SEARCH CONFIGURATION بدون IF NOT EXISTS
-        await conn.execute("""
-DO $$
-BEGIN
-   IF NOT EXISTS (
-       SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple'
-   ) THEN
-       CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
-   END IF;
-END
-$$;
-""")
+        await conn.execute("CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);")
         await conn.execute(
-            "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING "
-            "FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part "
-            "WITH unaccent, simple;"
+            "ALTER TEXT SEARCH CONFIGURATION arabic_simple "
+            "ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part WITH unaccent, simple;"
         )
+        print("✅ Step 1 complete.")
         
-        # --- Tables ---
+        # --- 2. TABLE CREATION COMMANDS ---
+        print("🛠️ Step 2: Creating Tables...")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
-                file_id TEXT UNIQUE,
+                file_id TEXT UNIQUE,  
                 file_name TEXT,
                 uploaded_at TIMESTAMP DEFAULT NOW(),
-                tsv_content tsvector
+                tsv_content tsvector 
             );
         """)
         await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
         await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
-        
-        # --- Index & Cleanup ---
+        print("✅ Step 2 complete.")
+
+        # --- 3. FTS INDEX & CLEANUP COMMANDS ---
+        print("🛠️ Step 3: Cleanup and Creating FTS Index...")
         await conn.execute("DROP TRIGGER IF EXISTS tsv_update_trigger ON books;")
         await conn.execute("DROP FUNCTION IF EXISTS update_books_tsv();") 
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+        print("✅ Step 3 complete.")
         
         app_context.bot_data['db_conn'] = conn
-        print("✅ Database connection and setup complete.")
+        print("✅ Database connection and FTS setup complete and stable.")
     except Exception as e:
-        print(f"❌ Database setup error: {e}")
+        print(f"❌ FATAL Database connection or setup error: {e}")
 
+# Close DB connection
 async def close_db(app: Application):
-    """Closes the database connection."""
     conn = app.bot_data.get('db_conn')
     if conn:
         await conn.close()
         print("✅ Database connection closed.")
 
-# ===============================================
-#       PDF Handler (Indexing)
-# ===============================================
-
+# PDF Handler
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Indexes new PDF files from the channel."""
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
-        
         if conn:
             try:
                 file_name = document.file_name
-                tsv_content_query = "SELECT to_tsvector('arabic_simple', $1);"
-                tsv_content = await conn.fetchval(tsv_content_query, file_name)
-
+                tsv_content = await conn.fetchval("SELECT to_tsvector('arabic_simple', $1);", file_name)
                 await conn.execute(
-                    """
-                    INSERT INTO books(file_id, file_name, tsv_content)
-                    VALUES($1, $2, $3)
-                    ON CONFLICT (file_id) DO UPDATE
-                        SET file_name = EXCLUDED.file_name,
-                            tsv_content = EXCLUDED.tsv_content
-                    """,
-                    document.file_id,
-                    file_name,
-                    tsv_content
+                    "INSERT INTO books(file_id, file_name, tsv_content) "
+                    "VALUES($1, $2, $3) "
+                    "ON CONFLICT (file_id) DO UPDATE SET file_name = EXCLUDED.file_name, tsv_content = EXCLUDED.tsv_content",
+                    document.file_id, file_name, tsv_content
                 )
                 print(f"Book indexed: {file_name}")
             except Exception as e:
-                print(f"❌ Error indexing book: {e}")
+                print(f"❌ Error indexing book: {e}") 
 
-# ===============================================
-#       /search command
-# ===============================================
-
+# /search command
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Search for books by name."""
     if update.effective_chat.type == "channel":
         return
-
     if not context.args:
         await update.message.reply_text("الرجاء إرسال اسم الكتاب. مثال: /search اسم الكتاب")
         return
-    
     search_term = " ".join(context.args).strip()
     conn = context.bot_data.get('db_conn')
-
-    if not conn:
-        await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً.")
-        return
-
-    results = await conn.fetch(
-        "SELECT file_id, file_name FROM books WHERE file_name ILIKE '%' || $1 || '%' ORDER BY uploaded_at DESC LIMIT 10;",
-        search_term
-    )
-
-    if not results:
-        await update.message.reply_text(f"❌ لم يتم العثور على كتاب يطابق '{search_term}'.")
-        return
-
-    if len(results) == 1:
-        file_id = results[0]['file_id']
-        book_name = results[0]['file_name']
-        try:
-            await update.message.reply_document(document=file_id, caption=f"✅ تم العثور على الكتاب: **{book_name}**")
-        except Exception:
-            await update.message.reply_text("❌ لم أتمكن من إرسال الملف. قد يكون الملف غير صالح أو واجهت مشكلة في تيليجرام.")
+    if conn:
+        query_text = search_term.replace(' ', ' & ')
+        search_query = """
+            SELECT file_id, file_name 
+            FROM books 
+            WHERE tsv_content @@ to_tsquery('arabic_simple', $1)
+            ORDER BY file_name ASC 
+            LIMIT 10
+        """
+        results = await conn.fetch(search_query, query_text)
+        if results:
+            if len(results) == 1:
+                file_id, book_name = results[0]['file_id'], results[0]['file_name']
+                try:
+                    await update.message.reply_document(document=file_id, caption=f"✅ تم العثور على الكتاب: **{book_name}**")
+                except Exception:
+                    await update.message.reply_text("❌ لم أتمكن من إرسال الملف. قد يكون الملف غير صالح.")
+            else:
+                message_text = f"📚 تم العثور على **{len(results)}** كتاب يطابق بحثك '{search_term}':\n\nالرجاء اختيار النسخة المطلوبة من القائمة أدناه:"
+                keyboard = [[InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"file:{r['file_id'][:50]}")] for r in results]
+                await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(f"❌ لم يتم العثور على كتاب يطابق '{search_term}'.")
     else:
-        message_text = f"📚 تم العثور على **{len(results)}** كتاباً يطابق بحثك '{search_term}':\n\n"
-        message_text += "الرجاء اختيار النسخة المطلوبة من القائمة أدناه:"
-        keyboard = [[InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"file:{r['file_id'][:50]}")] for r in results]
-        await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً. حاول لاحقاً.")
 
-# ===============================================
-#       /start command
-# ===============================================
-
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "مرحبًا بك في مكتبة البوت! 📚\n"
-        "للبحث عن كتاب، استخدم الأمر: /search اسم الكتاب"
-    )
+    conn = context.bot_data.get('db_conn')
+    if conn and update.effective_user:
+        try:
+            await conn.execute(
+                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", 
+                update.effective_user.id
+            )
+        except Exception as e:
+            print(f"Error tracking user: {e}")
+    await update.message.reply_text("مرحبًا بك في مكتبة البوت! استخدم /search للبحث عن الكتب.")
 
-# ===============================================
-#       Main runner
-# ===============================================
-
+# Main Runner
 def run_bot():
     token = os.getenv("BOT_TOKEN")
-    port = int(os.getenv("PORT", 8080))
-    base_url = os.getenv("WEB_HOST")
-
+    port = int(os.environ.get('PORT', 8080))
+    base_url = os.environ.get('WEB_HOST')
     if not token:
-        print("🚨 BOT_TOKEN missing in environment variables.")
+        print("🚨 BOT_TOKEN is missing.")
         return
 
     app = (
@@ -178,24 +150,15 @@ def run_bot():
         .build()
     )
 
-    original_start_handler = start
-
-    app.add_handler(CommandHandler("start", original_start_handler))
+    # Handlers
+    register_admin_handlers(app, start)
     app.add_handler(CommandHandler("search", search_book))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
 
-    register_admin_handlers(app, original_start_handler)
-
+    # Webhook or Polling
     if base_url:
         webhook_url = f"https://{base_url}"
-        print(f"🤖 Running via Webhook on {webhook_url}:{port}")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=token,
-            webhook_url=f"{webhook_url}/{token}",
-            secret_token=os.getenv("WEBHOOK_SECRET")
-        )
+        app.run_webhook(listen="0.0.0.0", port=port, url_path=token, webhook_url=f"{webhook_url}/{token}", secret_token=os.getenv("WEBHOOK_SECRET"))
     else:
         print("⚠️ WEB_HOST not available. Falling back to Polling mode.")
         app.run_polling(poll_interval=1.0)
@@ -204,4 +167,4 @@ if __name__ == "__main__":
     try:
         run_bot()
     except Exception as e:
-        print(f"Fatal error: {e}")
+        print(f"Fatal error occurred: {e}")
