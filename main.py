@@ -125,20 +125,9 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً.")
         return
 
-    # استخدام FTS بدلاً من ILIKE ليتوافق مع tsv_content
-    query_text = search_term.replace(' ', ' & ') # تحويل المسافات إلى عوامل تشغيل AND
-        
-    search_query = """
-        SELECT file_id, file_name 
-        FROM books 
-        WHERE tsv_content @@ to_tsquery('arabic_simple', $1)
-        ORDER BY file_name ASC 
-        LIMIT 10
-    """
-
     results = await conn.fetch(
-        search_query,
-        query_text
+        "SELECT file_id, file_name FROM books WHERE file_name ILIKE '%' || $1 || '%' ORDER BY uploaded_at DESC LIMIT 10;",
+        search_term
     )
 
     if not results:
@@ -162,7 +151,6 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.bot_data[f"file_{key}"] = r['file_id']
             keyboard.append([InlineKeyboardButton(f"🔗 {r['file_name']}", callback_data=f"file:{key}")])
         await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
 
 # ===============================================
 #       CallbackQueryHandler للأزرار
@@ -214,9 +202,7 @@ def run_bot():
 
     original_start_handler = start
 
-    # ❌ تم إزالة السطر: app.add_handler(CommandHandler("start", original_start_handler))
-    # ✅ هذا هو التعديل الوحيد لضمان أن admin_panel يقوم بالتسجيل الصحيح
-
+    app.add_handler(CommandHandler("start", original_start_handler))
     app.add_handler(CommandHandler("search", search_book))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_send_file))  # إضافة معالج الأزرار
