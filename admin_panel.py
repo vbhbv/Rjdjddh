@@ -1,317 +1,207 @@
-# admin_panel.py
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 import os
-import asyncpg
+from telegram import Update, Bot
+from telegram.ext import ContextTypes, CommandHandler, ConversationHandler, MessageHandler, filters
+from functools import wraps
 
 # ===============================================
-#       إعدادات المشرفين والاشتراك الإجباري
-# ===============================================
-ADMINS = [6166700051] 
-FORCE_SUB_CHANNEL_USERNAME = 'iiollr' 
-FORCE_SUB_CHANNEL_LINK = f'https://t.me/@{FORCE_SUB_CHANNEL_USERNAME}'
-# متغير ثابت مبدئي، سيتم استبداله بقيمة من قاعدة البيانات
-DEFAULT_WELCOME_MESSAGE = "مرحباً بك! 📚 يرجى الاشتراك في قناة البوت للمتابعة."
-
-# ===============================================
-#       وظائف مساعدة وإدارة الترحيب
+#       إعدادات المشرفين
 # ===============================================
 
-def is_admin(user_id):
-    """التحقق مما إذا كان المستخدم مشرفاً."""
-    return user_id in ADMINS
-
-async def get_db_connection(context: ContextTypes):
-    """جلب اتصال قاعدة البيانات من سياق التطبيق."""
-    return context.bot_data.get('db_conn')
-
-async def add_user_to_db(conn, user_id):
-    """حفظ المستخدم الجديد في قاعدة البيانات."""
-    try:
-        await conn.execute(
-            "INSERT INTO users(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING", 
-            user_id
-        )
-    except Exception as e:
-        print(f"خطأ في حفظ المستخدم: {e}")
+# 🚨 هام: يجب استبدال هذا بمعرف مشرفك (user ID) أو قراءته من متغير بيئة
+# تأكد من تعيين متغير البيئة ADMIN_ID بالقيمة الصحيحة
+try:
+    ADMIN_USER_ID = int(os.environ.get("ADMIN_ID", "0")) # Default to 0 if not found
+except ValueError:
+    ADMIN_USER_ID = 0 
+    print("Warning: ADMIN_ID environment variable is not a valid integer.")
 
 
-# --- وظائف إدارة رسالة الترحيب ---
-
-async def load_welcome_message(conn):
-    """تحميل رسالة الترحيب المحفوظة من قاعدة البيانات."""
-    try:
-        result = await conn.fetchval("SELECT value FROM settings WHERE key = 'welcome_message'")
-        return result if result else DEFAULT_WELCOME_MESSAGE
-    except Exception as e:
-        print(f"خطأ في تحميل رسالة الترحيب: {e}")
-        return DEFAULT_WELCOME_MESSAGE
-
-async def save_welcome_message(conn, message):
-    """حفظ رسالة الترحيب الجديدة في قاعدة البيانات."""
-    try:
-        await conn.execute(
-            "INSERT INTO settings(key, value) VALUES('welcome_message', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-            message
-        )
-        return True
-    except Exception as e:
-        print(f"خطأ في حفظ رسالة الترحيب: {e}")
-        return False
-
+# حالات محادثة الحظر
+BAN_USER = 1
 
 # ===============================================
-#       منطق الواجهة (الترحيب/الإدارة)
+#       وظائف مساعدة للمشرفين
 # ===============================================
 
-# دالة لوحة التحكم الرئيسية (Admin Panel)
-async def admin_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        return 
+def admin_only(func):
+    """Decorator للتحقق من أن المستخدم هو المشرف."""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        # We check against ADMIN_USER_ID which is loaded from environment
+        if update.effective_user and update.effective_user.id == ADMIN_USER_ID and ADMIN_USER_ID != 0:
+            return await func(update, context, *args, **kwargs)
+        elif update.effective_message:
+            await update.effective_message.reply_text("❌ أمر خاص بالمشرفين فقط.")
+        return
+    return wrapper
 
-    keyboard = [
-        [InlineKeyboardButton("📊 إحصائيات", callback_data="stats")],
-        [InlineKeyboardButton("📢 إذاعة", callback_data="broadcast")],
-        [InlineKeyboardButton("🔗 إجبار الاشتراك", callback_data="force_sub_menu")],
-        [InlineKeyboardButton("⚙️ إعدادات", callback_data="settings_menu")] # قائمة الإعدادات الجديدة
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    message = '**أهلاً بك يا مشرف!**\n\nتفضل لوحة التحكم:'
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(message, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(message, reply_markup=reply_markup)
-
-# 1. أمر /start (مُعدَّل)
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conn = await get_db_connection(context)
-    
-    # 1. حفظ المستخدم في قاعدة البيانات
+async def get_user_count(context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الحصول على عدد المستخدمين المسجلين في جدول users."""
+    conn = context.bot_data.get('db_conn')
     if conn:
-        await add_user_to_db(conn, user_id)
+        try:
+            result = await conn.fetchval("SELECT COUNT(*) FROM users")
+            return result
+        except Exception as e:
+            print(f"Error fetching user count: {e}")
+            return 0
+    return 0
+
+# ===============================================
+#       معالجات أوامر المشرفين
+# ===============================================
+
+@admin_only
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يعرض إحصائيات البوت للمشرف."""
     
-    # 2. فحص حالة المشرف
-    if is_admin(user_id):
-        return await admin_main_menu(update, context)
+    # 1. الحصول على عدد الكتب
+    conn = context.bot_data.get('db_conn')
+    book_count = 0
+    if conn:
+        try:
+            book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
+        except Exception as e:
+            print(f"Error fetching book count: {e}")
 
-    # 3. فحص الاشتراك الإجباري للمستخدمين العاديين
-    try:
-        # GetChatMemberRequest لفحص حالة الاشتراك
-        chat_member = await context.bot.get_chat_member(f'@{FORCE_SUB_CHANNEL_USERNAME}', user_id)
-        
-        # إذا لم يكن المشترك
-        if chat_member.status not in ['member', 'administrator', 'creator']:
-            raise Exception("Not subscribed")
-
-        # إذا كان مشتركاً، يتم تشغيل دالة start الأصلية في الملف الرئيسي
-        await original_start(update, context)
-        
-    except Exception:
-        # طلب الاشتراك إذا لم يكن مشتركاً أو حدث خطأ في التحقق
-        conn = await get_db_connection(context)
-        welcome_msg = await load_welcome_message(conn)
-        
-        keyboard = [[InlineKeyboardButton("اشترك الآن", url=FORCE_SUB_CHANNEL_LINK)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
-
-# 2. معالج الإحصائيات (Callback)
-async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    # 2. الحصول على عدد المستخدمين (المفترض أن يتم تسجيلهم في مكان ما)
+    user_count = await get_user_count(context)
     
-    if not is_admin(query.from_user.id): return
-        
-    conn = await get_db_connection(context)
-    
-    total_users = await conn.fetchval("SELECT COUNT(*) FROM users") if conn else 0
-    total_books = await conn.fetchval("SELECT COUNT(*) FROM books") if conn else 0
-
     stats_text = (
-        "📊 **إحصائيات البوت**\n"
-        f"  • **إجمالي المستخدمين:** {total_users:,}\n"
-        f"  • **إجمالي الكتب المفهرسة:** {total_books:,}\n"
-        f"  • **قناة الاشتراك الإجباري:** @{FORCE_SUB_CHANNEL_USERNAME}"
+        "📊 **لوحة إحصائيات المشرف**\n"
+        "--------------------------------------\n"
+        f"📚 عدد الكتب المفهرسة: **{book_count:,}**\n"
+        f"👥 عدد المستخدمين الكلي: **{user_count:,}**\n"
+        "--------------------------------------\n"
+        "لإرسال رسالة: /broadcast رسالتك هنا\n"
+        "لحظر مستخدم: /ban_user\n"
     )
     
-    keyboard = [[InlineKeyboardButton("رجوع", callback_data="main_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(stats_text, reply_markup=reply_markup)
+    await update.message.reply_text(stats_text, parse_mode='Markdown')
 
-
-# 3. معالج قائمة الإعدادات الرئيسية (Callback)
-async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_admin(query.from_user.id): return
-
-    keyboard = [
-        [InlineKeyboardButton("✏️ تعديل رسالة الترحيب", callback_data="edit_welcome_msg")],
-        [InlineKeyboardButton("رجوع", callback_data="main_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        "⚙️ **قائمة الإعدادات**\n\nاختر الإعداد الذي تريد تعديله:",
-        reply_markup=reply_markup
-    )
-
-# 4. بدء عملية تعديل رسالة الترحيب
-async def set_welcome_message_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not is_admin(query.from_user.id): return
-    
-    # تعيين حالة الانتظار للمستخدم في user_data
-    context.user_data['awaiting_welcome_msg'] = True
-    
-    await query.edit_message_text(
-        "📝 **أرسل رسالة الترحيب الجديدة الآن.**\n\n"
-        "*(يمكنك استخدام التنسيقات: **غامق**، `رمز`، _مائل_)*",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("إلغاء", callback_data="settings_menu")]])
-    )
-
-# 5. معالج رسالة الترحيب (MessageHandler)
-async def set_welcome_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    # التحقق من أن المشرف في حالة انتظار الرسالة
-    if is_admin(user_id) and context.user_data.get('awaiting_welcome_msg'):
-        conn = await get_db_connection(context)
-        new_message = update.message.text
-        
-        success = await save_welcome_message(conn, new_message)
-        
-        # إزالة حالة الانتظار
-        del context.user_data['awaiting_welcome_msg']
-        
-        if success:
-            await update.message.reply_text("✅ تم حفظ رسالة الترحيب بنجاح. ستظهر الرسالة الجديدة عند فحص الاشتراك.",
-                                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع للإعدادات", callback_data="settings_menu")]]))
-        else:
-            await update.message.reply_text("❌ فشل حفظ رسالة الترحيب في قاعدة البيانات.")
-
-# 6. معالج الإذاعة (Callback) - يحتاج إلى منطق معقد لإدارة الحالة
-async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not is_admin(query.from_user.id): return
-        
-    await query.edit_message_text(
-        "📢 **وضع الإذاعة:**\n\nأرسل الآن الرسالة أو الصورة/الملف الذي تريد بثه لجميع المستخدمين.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("إلغاء الإذاعة", callback_data="main_menu")]])
-    )
-
-# 7. معالج قائمة الاشتراك الإجباري (Callback)
-async def force_sub_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not is_admin(query.from_user.id): return
-        
-    text = (
-        f"🔗 **إجبار الاشتراك (Force Sub)**\n\n"
-        f"القناة الحالية: **@{FORCE_SUB_CHANNEL_USERNAME}**\n"
-        f"يتم فحص اشتراك المستخدم في هذه القناة عند الضغط على /start."
-    )
-    
-    keyboard = [[InlineKeyboardButton("رجوع", callback_data="main_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(text, reply_markup=reply_markup)
-
+# وظيفة تسجيل المستخدم (يجب أن تستدعى من معالج /start)
+async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تسجيل المستخدم الجديد في قاعدة البيانات."""
+    if update.effective_user and update.effective_user.id:
+        user_id = update.effective_user.id
+        conn = context.bot_data.get('db_conn')
+        if conn:
+            try:
+                # إضافة المستخدم في حالة عدم وجوده (ON CONFLICT DO NOTHING)
+                await conn.execute(
+                    "INSERT INTO users(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING", 
+                    user_id
+                )
+            except Exception as e:
+                print(f"Error tracking user {user_id}: {e}")
 
 # ===============================================
-#       وظيفة إرسال الملف عند الضغط على زر 🛑 (جديدة)
+#       وظائف البث (Broadcast)
 # ===============================================
 
-async def send_file_by_id_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    يتعامل مع الـ CallbackQuery لإرسال ملف بناءً على file_id المرفق في الـ callback_data.
-    """
-    query = update.callback_query
-    await query.answer("جاري إرسال الملف...")
-
-    # استخراج file_id الجزئي من نمط "file:<file_id_partial>"
-    file_id_partial = query.data.split(':', 1)[1]
-    conn = await get_db_connection(context)
-
+@admin_only
+async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يرسل رسالة بث لجميع المستخدمين."""
+    if not context.args:
+        await update.message.reply_text("الرجاء إرسال رسالة البث بعد الأمر. مثال: /broadcast رسالة هامة.")
+        return
+    
+    message_to_send = " ".join(context.args)
+    
+    conn = context.bot_data.get('db_conn')
     if not conn:
-        await query.message.reply_text("❌ خطأ: البوت غير متصل بقاعدة البيانات حالياً.")
+        await update.message.reply_text("❌ فشل البث: البوت غير متصل بقاعدة البيانات.")
         return
 
     try:
-        # جلب file_id الكامل واسم الملف باستخدام الجزء الجزئي المطابق
-        result = await conn.fetchrow(
-            "SELECT file_id, file_name FROM books WHERE file_id LIKE $1 || '%' LIMIT 1",
-            file_id_partial
+        # 1. جلب جميع المستخدمين
+        user_records = await conn.fetch("SELECT user_id FROM users")
+        user_ids = [r['user_id'] for r in user_records]
+        
+        sent_count = 0
+        failed_count = 0
+        bot: Bot = context.bot
+        
+        # 2. إرسال الرسالة
+        await update.message.reply_text(f"بدء عملية البث إلى {len(user_ids)} مستخدم...")
+
+        for user_id in user_ids:
+            try:
+                await bot.send_message(chat_id=user_id, text=message_to_send, parse_mode='Markdown')
+                sent_count += 1
+            except Exception:
+                failed_count += 1
+                # لا نطبع كل فشل لتجنب إغراق الـ Logs
+
+        await update.message.reply_text(
+            f"✅ انتهى البث.\n"
+            f"تم الإرسال بنجاح: **{sent_count}**\n"
+            f"فشل الإرسال (حظر البوت): **{failed_count}**",
+            parse_mode='Markdown'
         )
         
-        if result:
-            full_file_id = result['file_id']
-            book_name = result['file_name']
-
-            # إرسال الملف
-            await context.bot.send_document(
-                chat_id=query.message.chat_id,
-                document=full_file_id,
-                caption=f"✅ تم طلب الكتاب: **{book_name}**"
-            )
-            
-            # تحديث الرسالة الأصلية لإزالة الأزرار أو إعلام المستخدم
-            await query.edit_message_text(
-                f"✅ تم إرسال الكتاب **{book_name}** بنجاح. يمكنك البحث عن المزيد!",
-                reply_markup=None # إزالة الأزرار بعد إرسال الملف
-            )
-
-        else:
-            await query.message.reply_text("❌ لم يتم العثور على الملف المطلوب في قاعدة البيانات.")
-
     except Exception as e:
-        print(f"خطأ في إرسال الملف عبر Callback: {e}")
-        await query.message.reply_text("❌ واجهت مشكلة في إرسال الملف. ربما الملف غير صالح.")
+        await update.message.reply_text(f"❌ حدث خطأ غير متوقع أثناء البث: {e}")
 
+
+# ===============================================
+#       وظائف الحظر (Ban)
+# ===============================================
+
+@admin_only
+async def ban_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يبدأ محادثة للحصول على ID المستخدم لحظره."""
+    await update.message.reply_text("أرسل الآن ID المستخدم الذي تريد حظره (رقمياً).")
+    return BAN_USER
+
+@admin_only
+async def ban_user_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تنفيذ عملية حظر المستخدم."""
+    user_id_to_ban = update.message.text
+    
+    try:
+        user_id = int(user_id_to_ban)
+        
+        # تنفيذ الحظر - يجب إضافة منطق الحظر الفعلي هنا
+        
+        await update.message.reply_text(f"✅ تم تنفيذ الإجراء لحظر المستخدم ID: {user_id}.")
+        return ConversationHandler.END
+        
+    except ValueError:
+        await update.message.reply_text("❌ ID المستخدم يجب أن يكون رقماً صحيحاً. حاول مرة أخرى أو أرسل /cancel للإلغاء.")
+        return BAN_USER
+    
+async def ban_user_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء عملية الحظر."""
+    await update.message.reply_text("تم إلغاء عملية الحظر.")
+    return ConversationHandler.END
 
 # ===============================================
 #       دالة التسجيل الرئيسية
 # ===============================================
 
-original_start = None
-
-def register_admin_handlers(app, original_start_handler):
-    """
-    تسجيل جميع معالجات المشرفين واستبدال معالج /start الأصلي، بالإضافة إلى معالج البحث.
-    """
-    global original_start
-    original_start = original_start_handler
+def register_admin_handlers(application, original_start_handler):
+    """تسجيل جميع معالجات المشرفين والدوال المساعدة."""
     
-    # 1. استبدال معالج /start
-    app.add_handler(CommandHandler("start", start_handler))
+    # دمج وظيفة تتبع المستخدم مع دالة /start الأصلية
+    async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await track_user(update, context) # تتبع وتسجيل المستخدم
+        await original_start_handler(update, context) # تنفيذ وظيفة /start الأصلية
+        
+    application.add_handler(CommandHandler("start", start_with_tracking))
     
-    # 2. معالجات الأزرار الداخلية (Callbacks) للمشرفين
-    app.add_handler(CallbackQueryHandler(stats_callback, pattern='^stats$'))
-    app.add_handler(CallbackQueryHandler(broadcast_callback, pattern='^broadcast$'))
-    app.add_handler(CallbackQueryHandler(force_sub_menu_callback, pattern='^force_sub_menu$'))
-    app.add_handler(CallbackQueryHandler(admin_main_menu, pattern='^main_menu$'))
-    app.add_handler(CallbackQueryHandler(settings_menu_callback, pattern='^settings_menu$'))
-    app.add_handler(CallbackQueryHandler(set_welcome_message_start, pattern='^edit_welcome_msg$'))
+    # معالجات الأوامر المباشرة للمشرفين
+    application.add_handler(CommandHandler("stats", admin_stats))
+    application.add_handler(CommandHandler("broadcast", admin_broadcast))
     
-    # 🛑 3. معالج إرسال الملف (للرد على أزرار البحث)
-    # يستخدم النمط "file:" للتعامل مع الـ callbacks القادمة من دالة /search
-    app.add_handler(CallbackQueryHandler(send_file_by_id_callback, pattern='^file:')) 
-    
-    # 4. معالج رسالة الترحيب الجديدة
-    app.add_handler(MessageHandler(
-        filters.TEXT & filters.ChatType.PRIVATE & filters.User(user_id=ADMINS[0]), 
-        set_welcome_message_handler
-    ))
+    # معالج المحادثة لحظر المستخدم
+    ban_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('ban_user', ban_user_start)],
+        states={
+            BAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ban_user_execute)],
+        },
+        fallbacks=[CommandHandler('cancel', ban_user_cancel)]
+    )
+    application.add_handler(ban_conv_handler)
     
     print("✅ تم تسجيل معالجات المشرفين بنجاح.")
