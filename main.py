@@ -2,6 +2,9 @@ import os
 import asyncpg
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+# إضافة الـ Webhook
+from telegram.ext._updater import Updater
+from telegram.ext import PicklePersistence
 
 # 🛑 الاستيراد من وحدة التحكم الجديدة
 from admin_panel import register_admin_handlers 
@@ -13,9 +16,6 @@ from admin_panel import register_admin_handlers
 def normalize_arabic_text(text: str) -> str:
     """
     تطبيق التطبيع الحرفي على النص العربي لتوحيد الأحرف المتشابهة في البحث.
-    
-    ملاحظة: لتبسيط الكود وعدم إدخال تعقيدات لغوية، نركز على أهم التوحيدات
-    مثل الألفات والتاء المربوطة. مشكلة (ظ/ض) تحتاج مكتبات لغوية متقدمة.
     """
     if not text:
         return ""
@@ -31,10 +31,6 @@ def normalize_arabic_text(text: str) -> str:
     
     # 2. توحيد التاء المربوطة (ة -> ه)
     text = text.replace('ة', 'ه')
-    
-    # 3. إزالة علامات التشكيل إن وجدت (اختياري لكن مفيد)
-    # قد تحتوي أسماء الملفات على تنوين أو حركات، لذا من الأفضل إزالتها
-    # هذا يتطلب مكتبة متقدمة، لذا نعتمد على التوحيد البسيط للحروف فقط
     
     return text
 
@@ -72,7 +68,8 @@ async def init_db(app_context: ContextTypes):
         print("✅ تم الاتصال بقاعدة البيانات وتهيئة الجدول بنجاح.")
     except Exception as e:
         print(f"❌ خطأ في الاتصال بقاعدة البيانات: {e}")
-        raise RuntimeError("فشل تهيئة قاعدة البيانات")
+        # لا نرفع RuntimeError لكي لا تتوقف عملية التشغيل في الـ Webhook
+        print("🚨 سيستمر التشغيل بدون قاعدة بيانات.")
 
 # 2. إغلاق اتصال قاعدة البيانات
 async def close_db(app: Application):
@@ -127,17 +124,8 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get('db_conn')
 
     if conn:
-        # 🛑 تم التعديل هنا: تطبيق التطبيع الحرفي أيضاً على اسم الملف في قاعدة البيانات
-        # ملاحظة: لتحقيق التطبيع على البيانات المخزنة، نفضل أن يكون هناك عمود 
-        # منفصل مُعدّ مسبقاً بالتطبيع. لكن هنا نطبقها برمجياً على الداتا بيس مباشرة:
         
-        # لتحسين أداء البحث العربي، يجب علينا توحيد الأحرف في file_name أيضاً.
-        # بما أن دالة normalize_arabic_text هي دالة بايثون ولا يمكن استخدامها في SQL مباشرة،
-        # سنستخدم الدالة LOWER() لتوحيد حالة الأحرف اللاتينية، ونعتمد على المستخدم لإرسال النص
-        # بعد تطبيقه في Python (Normalized_search_term).
-
-        # هذا الاستعلام يقلل من تأثير التطبيع (Normalization) على أداء DB
-        # وهو أفضل حل ممكن دون استخدام إضافات (Extensions) مخصصة للبحث العربي في PostgreSQL.
+        # نستخدم LOWER() في DB لتوحيد حالة الأحرف (الإنجليزية)
         results = await conn.fetch(
             "SELECT file_id, file_name FROM books WHERE LOWER(file_name) LIKE $1 ORDER BY file_name ASC LIMIT 10",
             search_pattern
@@ -166,7 +154,6 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = []
                 for idx, result in enumerate(results):
                     # نستخدم نمط callback_data فريد: "file:<file_id_partial>"
-                    # بما أن callback_data محدودة، نستخدم أول 50 حرف من file_id
                     callback_data = f"file:{result['file_id'][:50]}" 
                     
                     # نضع اسم الملف في الزر
@@ -194,16 +181,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 6. دالة التشغيل الرئيسية
 def run_bot():
-    """هذه الدالة تستخدم run_polling وهي آمنة للاستخدام في Railway."""
+    """تستخدم طريقة Webhook وهي آمنة في بيئات الاستضافة مثل Railway."""
     token = os.getenv("BOT_TOKEN")
-    if not token:
+    port = int(os.environ.get('PORT', 8080)) # المنفذ الافتراضي في Railway
+    base_url = os.environ.get('WEB_HOST') # عنوان الـ Domain الممنوح من Railway (يجب أن يكون متاحاً)
+    
+    if not token or not base_url:
+        print("🚨 يجب توفير BOT_TOKEN و WEB_HOST (عادةً يكون عنوان URL الخاص بـ Railway) في متغيرات البيئة.")
+        # نعود إلى Polling كحل احتياطي إذا لم تتوفر متغيرات الـ Webhook (للتشغيل المحلي)
+        if token:
+             print("⚠️ Webhook غير متوفر. يتم تشغيل البوت باستخدام Polling. تأكد من أن نسخة واحدة فقط تعمل.")
+             return run_polling_fallback(token)
         raise ValueError("BOT_TOKEN غير متوفر في متغيرات البيئة.")
+
 
     app = (
         Application.builder()
         .token(token)
         .post_init(init_db)     # لفتح الاتصال وإنشاء الجدول
         .post_shutdown(close_db) # لإغلاق الاتصال
+        .persistence(PicklePersistence(filepath="bot_data.pickle")) # لتخزين بيانات المشرفين مؤقتاً
         .build()
     )
     
@@ -218,15 +215,50 @@ def run_bot():
     ))
 
     # 3. تسجيل معالجات المشرفين (Admin Handlers)
-    # 🛑 هذه الدالة ستقوم بإضافة معالج /start الجديد الذي يتحقق من المشرفين
     register_admin_handlers(app, original_start_handler)
 
+    
+    # 🛑 4. تشغيل البوت باستخدام الـ Webhook
+    
+    webhook_url = f'https://{base_url}'
+    
+    print(f"🤖 تشغيل البوت عبر Webhook على: {webhook_url}:{port}")
+    
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=token, # استخدام التوكن كمسار آمن
+        webhook_url=f"{webhook_url}/{token}",
+        secret_token=os.getenv("WEBHOOK_SECRET") # إضافة Secret Token لزيادة الأمان
+    )
 
-    print("🤖 البوت يعمل الآن...")
-    app.run_polling(poll_interval=1.0) 
+
+def run_polling_fallback(token):
+    """دالة احتياطية لتشغيل البوت في حال عدم توفر Webhook (للتشغيل المحلي)."""
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(init_db)
+        .post_shutdown(close_db)
+        .persistence(PicklePersistence(filepath="bot_data.pickle"))
+        .build()
+    )
+    
+    original_start_handler = start
+    app.add_handler(CommandHandler("search", search_book))
+    app.add_handler(MessageHandler(
+        filters.Document.PDF & filters.ChatType.CHANNEL,
+        handle_pdf
+    ))
+    register_admin_handlers(app, original_start_handler)
+
+    print("⚠️ البوت يعمل في وضع Polling. تذكر: لا تشغل نسختين.")
+    app.run_polling(poll_interval=1.0)
+
 
 if __name__ == "__main__":
     try:
         run_bot()
     except Exception as e:
         print(f"حدث خطأ فادح: {e}")
+        
