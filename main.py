@@ -41,10 +41,9 @@ async def init_db(app_context: ContextTypes):
         conn = await asyncpg.connect(db_url)
         
         # --- 1. SETUP COMMANDS (Extensions and Configs) ---
-        # NOTE: Each command is now strictly on one line to avoid multi-line string parsing issues.
         setup_commands = [
             "CREATE EXTENSION IF NOT EXISTS unaccent;",
-            # Create custom Arabic search configuration (Simplest form)
+            # Create custom Arabic search configuration
             "CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);",
             # Alter the configuration to use unaccent filter for normalization
             "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part WITH unaccent, simple;"
@@ -67,12 +66,12 @@ async def init_db(app_context: ContextTypes):
         ]
         await execute_db_commands(conn, table_commands)
 
-        # --- 3. FTS INDEX & TRIGGER COMMANDS (Also separated) ---
+        # --- 3. FTS INDEX & TRIGGER COMMANDS (Reverted to simple version) ---
         fts_commands = [
             # Create GIN index for fast FTS lookups
             "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
 
-            # Create Trigger Function
+            # ⬅️ REVERTED: The simple, problematic-but-functional version
             """
             CREATE OR REPLACE FUNCTION update_books_tsv() RETURNS trigger AS $$
             BEGIN
@@ -82,7 +81,7 @@ async def init_db(app_context: ContextTypes):
             $$ LANGUAGE plpgsql;
             """,
             
-            # Apply the Trigger
+            # Apply the Trigger (Check for existence is essential)
             """
             DO $$ 
             BEGIN
@@ -131,6 +130,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 print(f"Book indexed: {document.file_name}")
             except Exception as e:
+                # Log the specific indexing error to help debugging
                 print(f"Error indexing book: {e}") 
 
 # 4. /search command (FTS)
