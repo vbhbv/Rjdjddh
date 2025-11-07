@@ -8,13 +8,13 @@ from admin_panel import register_admin_handlers
 
 # ... (بقية تعريفات الدوال مثل handle_pdf و search_book و start تبقى كما هي) ...
 
-# 1. تهيئة قاعدة البيانات والاتصال
+# 1. تهيئة قاعدة البيانات والاتصال (تم إضافة جدول settings)
 async def init_db(app_context: ContextTypes):
     """تهيئة اتصال قاعدة البيانات وتخزينه في سياق التطبيق."""
     try:
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
         
-        # 📝 أمر إنشاء الجدول اليدوي (تم إضافة جدول users هنا)
+        # 📝 أمر إنشاء الجدول اليدوي (تم إضافة جدول users وجدول settings)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -26,6 +26,11 @@ async def init_db(app_context: ContextTypes):
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 joined_at TIMESTAMP DEFAULT NOW()
+            );
+            
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             );
         """)
         
@@ -131,10 +136,7 @@ def run_bot():
         handle_pdf
     ))
 
-    # 3. إزالة معالج /start مؤقتًا (لإعادة تسجيله من الوحدة الخارجية)
-    # (لاحظ أننا لا نضيفه هنا، بل نمرر الدالة الأصلية للوحدة)
-    
-    # 4. تسجيل معالجات المشرفين (Admin Handlers)
+    # 3. تسجيل معالجات المشرفين (Admin Handlers)
     # 🛑 هذه الدالة ستقوم بإضافة معالج /start الجديد الذي يتحقق من المشرفين
     register_admin_handlers(app, original_start_handler)
 
