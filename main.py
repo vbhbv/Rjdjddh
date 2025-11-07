@@ -58,7 +58,7 @@ async def init_db(app_context: ContextTypes):
                 file_id TEXT UNIQUE,  
                 file_name TEXT,
                 uploaded_at TIMESTAMP DEFAULT NOW(),
-                tsv_content tsvector
+                tsv_content tsvector -- ⬅️ هذا العمود سيُملأ الآن بواسطة كود Python
             );
             """,
             "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());",
@@ -66,37 +66,14 @@ async def init_db(app_context: ContextTypes):
         ]
         await execute_db_commands(conn, table_commands)
 
-        # --- 3. FTS INDEX & TRIGGER COMMANDS (Fixing the Trigger Function) ---
+        # --- 3. FTS INDEX & CLEANUP COMMANDS ---
         fts_commands = [
-            # Create GIN index for fast FTS lookups
-            "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
-
-            # 🚀 الإصلاح القاطع: استخدام COALESCE لضمان عدم تمرير NULL أو قيمة غير صالحة إلى to_tsvector
-            # هذه الصيغة أكثر مقاومة لمشاكل "record 'new'" التي تظهر في بعض البيئات
-            """
-            CREATE OR REPLACE FUNCTION update_books_tsv() RETURNS trigger AS $$
-            BEGIN
-                -- استخدم COALESCE لضمان تحويل file_name إلى سلسلة نصية فارغة بدلاً من NULL إذا لم يكن موجوداً
-                NEW.tsv_content := to_tsvector('arabic_simple', COALESCE(NEW.file_name, ''));
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-            """,
+            # ⛔️ حذف التريغر والدالة لمنع تعارضات البيئة
+            "DROP TRIGGER IF EXISTS tsv_update_trigger ON books;",
+            "DROP FUNCTION IF EXISTS update_books_tsv();", 
             
-            # Apply the Trigger (Check for existence is essential)
-            """
-            DO $$ 
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_trigger 
-                    WHERE tgname = 'tsv_update_trigger'
-                ) THEN
-                    CREATE TRIGGER tsv_update_trigger
-                    BEFORE INSERT OR UPDATE OF file_name ON books
-                    FOR EACH ROW EXECUTE FUNCTION update_books_tsv();
-                END IF;
-            END $$;
-            """
+            # إنشاء الـ GIN index فقط للفهرسة السريعة
+            "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
         ]
         await execute_db_commands(conn, fts_commands)
         
@@ -124,16 +101,30 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if conn:
             try:
-                # The tsv_content column will be updated automatically by the trigger
+                # 🚀 الإصلاح: حساب tsvector مباشرة في Python وإرسال القيمة جاهزة إلى SQL
+                file_name = document.file_name
+                # استخدام دالة to_tsvector في SQL
+                tsv_content_query = """
+                    SELECT to_tsvector('arabic_simple', $1);
+                """
+                # الحصول على قيمة tsvector من DB
+                tsv_content = await conn.fetchval(tsv_content_query, file_name)
+
+                # إدخال البيانات في خطوة واحدة
                 await conn.execute(
-                    "INSERT INTO books(file_id, file_name) VALUES($1, $2) ON CONFLICT (file_id) DO NOTHING", 
+                    """
+                    INSERT INTO books(file_id, file_name, tsv_content) 
+                    VALUES($1, $2, $3) 
+                    ON CONFLICT (file_id) DO UPDATE SET file_name = EXCLUDED.file_name, tsv_content = EXCLUDED.tsv_content
+                    """, 
                     document.file_id, 
-                    document.file_name
+                    file_name,
+                    tsv_content
                 )
-                print(f"Book indexed: {document.file_name}")
+                print(f"Book indexed: {file_name}")
             except Exception as e:
                 # Log the specific indexing error to help debugging
-                print(f"Error indexing book: {e}") 
+                print(f"❌ Error indexing book: {e}") 
 
 # 4. /search command (FTS)
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
