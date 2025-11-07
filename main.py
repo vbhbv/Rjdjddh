@@ -66,16 +66,18 @@ async def init_db(app_context: ContextTypes):
         ]
         await execute_db_commands(conn, table_commands)
 
-        # --- 3. FTS INDEX & TRIGGER COMMANDS (Reverted to simple version) ---
+        # --- 3. FTS INDEX & TRIGGER COMMANDS (Fixing the Trigger Function) ---
         fts_commands = [
             # Create GIN index for fast FTS lookups
             "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
 
-            # ⬅️ REVERTED: The simple, problematic-but-functional version
+            # 🚀 الإصلاح القاطع: استخدام COALESCE لضمان عدم تمرير NULL أو قيمة غير صالحة إلى to_tsvector
+            # هذه الصيغة أكثر مقاومة لمشاكل "record 'new'" التي تظهر في بعض البيئات
             """
             CREATE OR REPLACE FUNCTION update_books_tsv() RETURNS trigger AS $$
             BEGIN
-                NEW.tsv_content := to_tsvector('arabic_simple', NEW.file_name);
+                -- استخدم COALESCE لضمان تحويل file_name إلى سلسلة نصية فارغة بدلاً من NULL إذا لم يكن موجوداً
+                NEW.tsv_content := to_tsvector('arabic_simple', COALESCE(NEW.file_name, ''));
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
