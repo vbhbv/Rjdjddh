@@ -24,7 +24,7 @@ async def init_db(app_context: ContextTypes):
         # --- Extensions & FTS setup ---
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
         
-        # ✅ إصلاح CREATE TEXT SEARCH CONFIGURATION بدون IF NOT EXISTS
+        # إصلاح CREATE TEXT SEARCH CONFIGURATION بدون IF NOT EXISTS
         await conn.execute("""
 DO $$
 BEGIN
@@ -36,7 +36,6 @@ BEGIN
 END
 $$;
 """)
-        
         await conn.execute(
             "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING "
             "FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part "
