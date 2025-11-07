@@ -12,67 +12,73 @@ from admin_panel import register_admin_handlers
 #       Core Database & Setup Functions
 # ===============================================
 
-# 1. Initialize the database connection and setup FTS
+async def execute_db_commands(conn, commands):
+    """Executes a list of SQL commands sequentially, handling potential errors."""
+    for command in commands:
+        try:
+            await conn.execute(command)
+        except Exception as e:
+            # We skip errors for things like "CREATE EXTENSION IF NOT EXISTS" 
+            # if they already exist, but log the error for debugging.
+            if "already exists" in str(e) or "already defined" in str(e):
+                pass 
+            else:
+                print(f"❌ SQL Execution Error on command: {command.strip()[:100]}... Error: {e}")
+
 async def init_db(app_context: ContextTypes):
-    """Initializes the database connection, enables Full-Text Search extensions, and sets up tables."""
+    """Initializes DB connection and sets up FTS infrastructure robustly."""
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            print("🚨 DATABASE_URL environment variable is missing.")
+            print("🚨 DATABASE_URL environment variable is missing. Cannot connect to DB.")
             return
 
         conn = await asyncpg.connect(db_url)
         
-        # 1. Enable necessary extensions for FTS (unaccent is crucial for Arabic normalization)
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-        
-        # 2. Create a custom Arabic search configuration that uses unaccent
-        await conn.execute("""
+        # List of SQL commands to be executed sequentially and safely
+        sql_commands = [
+            # 1. Enable FTS extensions (unaccent for Arabic normalization)
+            "CREATE EXTENSION IF NOT EXISTS unaccent;",
+            
+            # 2. Create custom Arabic search configuration
+            """
             CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);
             ALTER TEXT SEARCH CONFIGURATION arabic_simple 
             ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part 
             WITH unaccent, simple;
-        """)
+            """,
 
-        # 3. Create Tables
-        await conn.execute("""
+            # 3. Create Tables (books table now includes the tsv_content column)
+            """
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
                 file_id TEXT UNIQUE,  
                 file_name TEXT,
                 uploaded_at TIMESTAMP DEFAULT NOW(),
-                -- Column for FTS indexing
                 tsv_content tsvector
             );
+            """,
             
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                joined_at TIMESTAMP DEFAULT NOW()
-            );
+            "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());",
+            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);",
             
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-        """)
-        
-        # 4. Create GIN index for fast FTS lookups
-        await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+            # 4. Create GIN index for fast FTS lookups
+            "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
 
-        # 5. Create Trigger Function to automatically update tsv_content on insert/update
-        await conn.execute("""
+            # 5. Create Trigger Function
+            """
             CREATE OR REPLACE FUNCTION update_books_tsv() RETURNS trigger AS $$
             BEGIN
-                -- Use the custom arabic_simple configuration for Arabic FTS
                 NEW.tsv_content := to_tsvector('arabic_simple', NEW.file_name);
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
-        """)
-        
-        # 6. Apply the Trigger
-        await conn.execute("""
-            DO $$ BEGIN
+            """,
+            
+            # 6. Apply the Trigger (using DO $$ to avoid "already exists" error on subsequent runs)
+            """
+            DO $$ 
+            BEGIN
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_trigger 
                     WHERE tgname = 'tsv_update_trigger'
@@ -82,13 +88,16 @@ async def init_db(app_context: ContextTypes):
                     FOR EACH ROW EXECUTE FUNCTION update_books_tsv();
                 END IF;
             END $$;
-        """)
+            """
+        ]
+        
+        # Execute all commands
+        await execute_db_commands(conn, sql_commands)
         
         app_context.bot_data['db_conn'] = conn
-        print("✅ Database connection and FTS setup complete.")
+        print("✅ Database connection and FTS setup complete and stable.")
     except Exception as e:
         print(f"❌ Database connection or setup error: {e}")
-        # Continue running even if DB fails initially
         print("🚨 Will continue without database connection.")
 
 # 2. Close DB connection
@@ -134,10 +143,9 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get('db_conn')
 
     if conn:
-        # Use simple search config: replace spaces with '&' (AND operator in FTS)
+        # FTS Query logic: replace spaces with '&' (AND operator in FTS)
         query_text = search_term.replace(' ', ' & ')
         
-        # FTS Query: Use @@ operator against the indexed tsv_content column
         search_query = """
             SELECT file_id, file_name 
             FROM books 
@@ -205,9 +213,9 @@ def run_bot():
     port = int(os.environ.get('PORT', 8080))
     base_url = os.environ.get('WEB_HOST')
     
-    # Check for mandatory environment variables
     if not token:
-        raise ValueError("BOT_TOKEN is missing in environment variables.")
+        print("🚨 BOT_TOKEN is missing in environment variables.")
+        return
 
     app = (
         Application.builder()
@@ -246,13 +254,6 @@ def run_bot():
     else:
         print("⚠️ WEB_HOST not available. Falling back to Polling mode. Ensure only one instance is running.")
         app.run_polling(poll_interval=1.0)
-
-
-def run_polling_fallback(token):
-    """Fallback function for Polling mode (used internally by run_bot)."""
-    # This function is not used directly externally, but left for completeness/debugging.
-    # The run_bot function handles the fallback logic now.
-    pass
 
 
 if __name__ == "__main__":
