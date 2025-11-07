@@ -2,7 +2,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 import os
-import asyncpg # لاستخدامه في جلب الاتصال من bot_data
+import asyncpg
 
 # ===============================================
 #       إعدادات المشرفين والاشتراك الإجباري
@@ -10,10 +10,11 @@ import asyncpg # لاستخدامه في جلب الاتصال من bot_data
 ADMINS = [6166700051] 
 FORCE_SUB_CHANNEL_USERNAME = 'iiollr' 
 FORCE_SUB_CHANNEL_LINK = f'https://t.me/@{FORCE_SUB_CHANNEL_USERNAME}'
-WELCOME_MESSAGE = "مرحباً بك! 📚 يرجى الاشتراك في قناة البوت للمتابعة."
+# متغير ثابت مبدئي، سيتم استبداله بقيمة من قاعدة البيانات
+DEFAULT_WELCOME_MESSAGE = "مرحباً بك! 📚 يرجى الاشتراك في قناة البوت للمتابعة."
 
 # ===============================================
-#       وظائف مساعدة
+#       وظائف مساعدة وإدارة الترحيب (وهمية/تحتاج DB)
 # ===============================================
 
 def is_admin(user_id):
@@ -34,6 +35,34 @@ async def add_user_to_db(conn, user_id):
     except Exception as e:
         print(f"خطأ في حفظ المستخدم: {e}")
 
+
+# --- وظائف إدارة رسالة الترحيب (تحتاج إلى جدول في DB للإعدادات) ---
+# سنفترض وجود جدول إعدادات (settings) لحفظ رسالة الترحيب
+# يجب إضافة هذا الجدول في init_db بملف main.py:
+# CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+
+async def load_welcome_message(conn):
+    """تحميل رسالة الترحيب المحفوظة من قاعدة البيانات."""
+    try:
+        result = await conn.fetchval("SELECT value FROM settings WHERE key = 'welcome_message'")
+        return result if result else DEFAULT_WELCOME_MESSAGE
+    except Exception as e:
+        print(f"خطأ في تحميل رسالة الترحيب: {e}")
+        return DEFAULT_WELCOME_MESSAGE
+
+async def save_welcome_message(conn, message):
+    """حفظ رسالة الترحيب الجديدة في قاعدة البيانات."""
+    try:
+        await conn.execute(
+            "INSERT INTO settings(key, value) VALUES('welcome_message', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            message
+        )
+        return True
+    except Exception as e:
+        print(f"خطأ في حفظ رسالة الترحيب: {e}")
+        return False
+
+
 # ===============================================
 #       منطق الواجهة (الترحيب/الإدارة)
 # ===============================================
@@ -43,13 +72,13 @@ async def admin_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     if not is_admin(user_id):
-        return # لا يفعل شيئاً لغير المشرف
+        return 
 
     keyboard = [
         [InlineKeyboardButton("📊 إحصائيات", callback_data="stats")],
         [InlineKeyboardButton("📢 إذاعة", callback_data="broadcast")],
         [InlineKeyboardButton("🔗 إجبار الاشتراك", callback_data="force_sub_menu")],
-        [InlineKeyboardButton("⚙️ إعدادات", callback_data="settings_menu")]
+        [InlineKeyboardButton("⚙️ إعدادات", callback_data="settings_menu")] # قائمة الإعدادات الجديدة
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     message = '**أهلاً بك يا مشرف!**\n\nتفضل لوحة التحكم:'
@@ -77,7 +106,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # GetChatMemberRequest لفحص حالة الاشتراك
         chat_member = await context.bot.get_chat_member(f'@{FORCE_SUB_CHANNEL_USERNAME}', user_id)
         
-        # إذا لم يكن المشترك (member) أو (administrator) أو (creator)
+        # إذا لم يكن المشترك
         if chat_member.status not in ['member', 'administrator', 'creator']:
             raise Exception("Not subscribed")
 
@@ -86,21 +115,22 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception:
         # طلب الاشتراك إذا لم يكن مشتركاً أو حدث خطأ في التحقق
+        conn = await get_db_connection(context)
+        welcome_msg = await load_welcome_message(conn)
+        
         keyboard = [[InlineKeyboardButton("اشترك الآن", url=FORCE_SUB_CHANNEL_LINK)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(WELCOME_MESSAGE, reply_markup=reply_markup)
+        await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
 
 # 2. معالج الإحصائيات (Callback)
 async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    if not is_admin(query.from_user.id):
-        return
+    if not is_admin(query.from_user.id): return
         
     conn = await get_db_connection(context)
     
-    # جلب إحصائيات من قاعدة البيانات
     total_users = await conn.fetchval("SELECT COUNT(*) FROM users") if conn else 0
     total_books = await conn.fetchval("SELECT COUNT(*) FROM books") if conn else 0
 
@@ -117,26 +147,79 @@ async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(stats_text, reply_markup=reply_markup)
 
 
-# 3. معالج الإذاعة (Callback) - يحتاج إلى منطق معقد لإدارة الحالة
+# 3. معالج قائمة الإعدادات الرئيسية (Callback)
+async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id): return
+
+    keyboard = [
+        [InlineKeyboardButton("✏️ تعديل رسالة الترحيب", callback_data="edit_welcome_msg")],
+        [InlineKeyboardButton("رجوع", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        "⚙️ **قائمة الإعدادات**\n\nاختر الإعداد الذي تريد تعديله:",
+        reply_markup=reply_markup
+    )
+
+# 4. بدء عملية تعديل رسالة الترحيب
+async def set_welcome_message_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id): return
+    
+    # تعيين حالة الانتظار للمستخدم في user_data
+    context.user_data['awaiting_welcome_msg'] = True
+    
+    await query.edit_message_text(
+        "📝 **أرسل رسالة الترحيب الجديدة الآن.**\n\n"
+        "*(يمكنك استخدام التنسيقات: **غامق**، `رمز`، _مائل_)*",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("إلغاء", callback_data="settings_menu")]])
+    )
+
+# 5. معالج رسالة الترحيب (MessageHandler)
+async def set_welcome_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # التحقق من أن المشرف في حالة انتظار الرسالة
+    if is_admin(user_id) and context.user_data.get('awaiting_welcome_msg'):
+        conn = await get_db_connection(context)
+        new_message = update.message.text
+        
+        success = await save_welcome_message(conn, new_message)
+        
+        # إزالة حالة الانتظار
+        del context.user_data['awaiting_welcome_msg']
+        
+        if success:
+            await update.message.reply_text("✅ تم حفظ رسالة الترحيب بنجاح. ستظهر الرسالة الجديدة عند فحص الاشتراك.",
+                                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع للإعدادات", callback_data="settings_menu")]]))
+        else:
+            await update.message.reply_text("❌ فشل حفظ رسالة الترحيب في قاعدة البيانات.")
+
+
+# 6. معالج الإذاعة (Callback) - يحتاج إلى منطق معقد لإدارة الحالة
 async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    if not is_admin(query.from_user.id):
-        return
+    if not is_admin(query.from_user.id): return
         
     await query.edit_message_text(
         "📢 **وضع الإذاعة:**\n\nأرسل الآن الرسالة أو الصورة/الملف الذي تريد بثه لجميع المستخدمين.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("إلغاء الإذاعة", callback_data="main_menu")]])
     )
 
-# 4. معالج قائمة الاشتراك الإجباري (Callback)
+# 7. معالج قائمة الاشتراك الإجباري (Callback)
 async def force_sub_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    if not is_admin(query.from_user.id):
-        return
+    if not is_admin(query.from_user.id): return
         
     text = (
         f"🔗 **إجبار الاشتراك (Force Sub)**\n\n"
@@ -154,23 +237,16 @@ async def force_sub_menu_callback(update: Update, context: ContextTypes.DEFAULT_
 #       دالة التسجيل الرئيسية
 # ===============================================
 
-# نحتاج إلى دالة التسجيل الأساسية، ونستبدل دالة start الأصلية بالدالة الجديدة.
 original_start = None
 
 def register_admin_handlers(app, original_start_handler):
     """
     تسجيل جميع معالجات المشرفين واستبدال معالج /start الأصلي.
-    
-    Args:
-        app: كائن التطبيق (Application) الخاص بـ python-telegram-bot.
-        original_start_handler: دالة start الأصلية من الملف الرئيسي.
     """
     global original_start
     original_start = original_start_handler
     
     # 1. استبدال معالج /start
-    # يجب إزالة معالج start الأصلي أولاً في main.py قبل استدعاء هذه الدالة
-    # ثم يتم تسجيل start_handler الجديدة هنا
     app.add_handler(CommandHandler("start", start_handler))
     
     # 2. معالجات الأزرار الداخلية (Callbacks)
@@ -178,5 +254,13 @@ def register_admin_handlers(app, original_start_handler):
     app.add_handler(CallbackQueryHandler(broadcast_callback, pattern='^broadcast$'))
     app.add_handler(CallbackQueryHandler(force_sub_menu_callback, pattern='^force_sub_menu$'))
     app.add_handler(CallbackQueryHandler(admin_main_menu, pattern='^main_menu$'))
+    app.add_handler(CallbackQueryHandler(settings_menu_callback, pattern='^settings_menu$')) # قائمة الإعدادات
+    app.add_handler(CallbackQueryHandler(set_welcome_message_start, pattern='^edit_welcome_msg$')) # بدء تعديل رسالة الترحيب
+    
+    # 3. معالج رسالة الترحيب الجديدة (يجب أن يكون بعد المعالجات الأخرى)
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.PRIVATE & filters.User(user_id=ADMINS[0]), 
+        set_welcome_message_handler
+    ))
     
     print("✅ تم تسجيل معالجات المشرفين بنجاح.")
