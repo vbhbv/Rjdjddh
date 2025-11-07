@@ -89,20 +89,19 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"❌ Error indexing book: {e}")
 
 # ===============================================
-#       البحث عن الكتب مع نظام الصفحات
+#       البحث التلقائي عن الكتب
 # ===============================================
 
 BOOKS_PER_PAGE = 10
 
-async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "channel":
         return
 
-    if not context.args:
-        await update.message.reply_text("📖 أرسل اسم الكتاب بعد الأمر /search مثل: `/search رواية`", parse_mode="Markdown")
-        return
+    query = update.message.text.strip()
+    if len(query) < 2:
+        return  # تجاهل الرسائل القصيرة جداً
 
-    query = " ".join(context.args).strip()
     conn = context.bot_data.get('db_conn')
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
@@ -184,7 +183,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
-        "ابحث عن أي كتاب بالأمر: `/search اسم الكتاب`",
+        "اكتب اسم أي كتاب مباشرة لأبحث لك عنه!",
         parse_mode="Markdown"
     )
 
@@ -212,8 +211,8 @@ def run_bot():
 
     # الأوامر
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_books))
     app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_search))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
 
     # لوحة الإدارة
