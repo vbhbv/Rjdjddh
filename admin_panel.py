@@ -14,7 +14,7 @@ FORCE_SUB_CHANNEL_LINK = f'https://t.me/@{FORCE_SUB_CHANNEL_USERNAME}'
 DEFAULT_WELCOME_MESSAGE = "مرحباً بك! 📚 يرجى الاشتراك في قناة البوت للمتابعة."
 
 # ===============================================
-#       وظائف مساعدة وإدارة الترحيب (وهمية/تحتاج DB)
+#       وظائف مساعدة وإدارة الترحيب
 # ===============================================
 
 def is_admin(user_id):
@@ -36,10 +36,7 @@ async def add_user_to_db(conn, user_id):
         print(f"خطأ في حفظ المستخدم: {e}")
 
 
-# --- وظائف إدارة رسالة الترحيب (تحتاج إلى جدول في DB للإعدادات) ---
-# سنفترض وجود جدول إعدادات (settings) لحفظ رسالة الترحيب
-# يجب إضافة هذا الجدول في init_db بملف main.py:
-# CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+# --- وظائف إدارة رسالة الترحيب ---
 
 async def load_welcome_message(conn):
     """تحميل رسالة الترحيب المحفوظة من قاعدة البيانات."""
@@ -201,7 +198,6 @@ async def set_welcome_message_handler(update: Update, context: ContextTypes.DEFA
         else:
             await update.message.reply_text("❌ فشل حفظ رسالة الترحيب في قاعدة البيانات.")
 
-
 # 6. معالج الإذاعة (Callback) - يحتاج إلى منطق معقد لإدارة الحالة
 async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -234,6 +230,57 @@ async def force_sub_menu_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 # ===============================================
+#       وظيفة إرسال الملف عند الضغط على زر 🛑 (جديدة)
+# ===============================================
+
+async def send_file_by_id_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    يتعامل مع الـ CallbackQuery لإرسال ملف بناءً على file_id المرفق في الـ callback_data.
+    """
+    query = update.callback_query
+    await query.answer("جاري إرسال الملف...")
+
+    # استخراج file_id الجزئي من نمط "file:<file_id_partial>"
+    file_id_partial = query.data.split(':', 1)[1]
+    conn = await get_db_connection(context)
+
+    if not conn:
+        await query.message.reply_text("❌ خطأ: البوت غير متصل بقاعدة البيانات حالياً.")
+        return
+
+    try:
+        # جلب file_id الكامل واسم الملف باستخدام الجزء الجزئي المطابق
+        result = await conn.fetchrow(
+            "SELECT file_id, file_name FROM books WHERE file_id LIKE $1 || '%' LIMIT 1",
+            file_id_partial
+        )
+        
+        if result:
+            full_file_id = result['file_id']
+            book_name = result['file_name']
+
+            # إرسال الملف
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=full_file_id,
+                caption=f"✅ تم طلب الكتاب: **{book_name}**"
+            )
+            
+            # تحديث الرسالة الأصلية لإزالة الأزرار أو إعلام المستخدم
+            await query.edit_message_text(
+                f"✅ تم إرسال الكتاب **{book_name}** بنجاح. يمكنك البحث عن المزيد!",
+                reply_markup=None # إزالة الأزرار بعد إرسال الملف
+            )
+
+        else:
+            await query.message.reply_text("❌ لم يتم العثور على الملف المطلوب في قاعدة البيانات.")
+
+    except Exception as e:
+        print(f"خطأ في إرسال الملف عبر Callback: {e}")
+        await query.message.reply_text("❌ واجهت مشكلة في إرسال الملف. ربما الملف غير صالح.")
+
+
+# ===============================================
 #       دالة التسجيل الرئيسية
 # ===============================================
 
@@ -241,7 +288,7 @@ original_start = None
 
 def register_admin_handlers(app, original_start_handler):
     """
-    تسجيل جميع معالجات المشرفين واستبدال معالج /start الأصلي.
+    تسجيل جميع معالجات المشرفين واستبدال معالج /start الأصلي، بالإضافة إلى معالج البحث.
     """
     global original_start
     original_start = original_start_handler
@@ -249,15 +296,19 @@ def register_admin_handlers(app, original_start_handler):
     # 1. استبدال معالج /start
     app.add_handler(CommandHandler("start", start_handler))
     
-    # 2. معالجات الأزرار الداخلية (Callbacks)
+    # 2. معالجات الأزرار الداخلية (Callbacks) للمشرفين
     app.add_handler(CallbackQueryHandler(stats_callback, pattern='^stats$'))
     app.add_handler(CallbackQueryHandler(broadcast_callback, pattern='^broadcast$'))
     app.add_handler(CallbackQueryHandler(force_sub_menu_callback, pattern='^force_sub_menu$'))
     app.add_handler(CallbackQueryHandler(admin_main_menu, pattern='^main_menu$'))
-    app.add_handler(CallbackQueryHandler(settings_menu_callback, pattern='^settings_menu$')) # قائمة الإعدادات
-    app.add_handler(CallbackQueryHandler(set_welcome_message_start, pattern='^edit_welcome_msg$')) # بدء تعديل رسالة الترحيب
+    app.add_handler(CallbackQueryHandler(settings_menu_callback, pattern='^settings_menu$'))
+    app.add_handler(CallbackQueryHandler(set_welcome_message_start, pattern='^edit_welcome_msg$'))
     
-    # 3. معالج رسالة الترحيب الجديدة (يجب أن يكون بعد المعالجات الأخرى)
+    # 🛑 3. معالج إرسال الملف (للرد على أزرار البحث)
+    # يستخدم النمط "file:" للتعامل مع الـ callbacks القادمة من دالة /search
+    app.add_handler(CallbackQueryHandler(send_file_by_id_callback, pattern='^file:')) 
+    
+    # 4. معالج رسالة الترحيب الجديدة
     app.add_handler(MessageHandler(
         filters.TEXT & filters.ChatType.PRIVATE & filters.User(user_id=ADMINS[0]), 
         set_welcome_message_handler
