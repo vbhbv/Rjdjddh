@@ -41,16 +41,18 @@ async def init_db(app_context: ContextTypes):
         conn = await asyncpg.connect(db_url)
         
         # --- 1. SETUP COMMANDS (Extensions and Configs) ---
+        # نضمن إنشاء الإضافات وإعدادات البحث قبل أي شيء آخر
         setup_commands = [
             "CREATE EXTENSION IF NOT EXISTS unaccent;",
-            # Create custom Arabic search configuration
+            # إنشاء إعدادات البحث النصي المخصص
             "CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);",
-            # Alter the configuration to use unaccent filter for normalization
+            # تعديل الإعدادات لاستخدام فلتر unaccent لتطبيع الحروف
             "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part WITH unaccent, simple;"
         ]
         await execute_db_commands(conn, setup_commands)
 
         # --- 2. TABLE CREATION COMMANDS ---
+        # نضمن إنشاء الجداول الآن بعد التأكد من وجود الإعدادات
         table_commands = [
             """
             CREATE TABLE IF NOT EXISTS books (
@@ -58,7 +60,7 @@ async def init_db(app_context: ContextTypes):
                 file_id TEXT UNIQUE,  
                 file_name TEXT,
                 uploaded_at TIMESTAMP DEFAULT NOW(),
-                tsv_content tsvector -- ⬅️ هذا العمود سيُملأ الآن بواسطة كود Python
+                tsv_content tsvector 
             );
             """,
             "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());",
@@ -67,12 +69,13 @@ async def init_db(app_context: ContextTypes):
         await execute_db_commands(conn, table_commands)
 
         # --- 3. FTS INDEX & CLEANUP COMMANDS ---
+        # بعد إنشاء الجدول، نحذف أي تريغر قديم وننشئ الفهرس الجديد
         fts_commands = [
-            # ⛔️ حذف التريغر والدالة لمنع تعارضات البيئة
+            # ⛔️ حذف التريغر والدالة لمنع تعارضات البيئة (هذا يحل مشكلة "record new")
             "DROP TRIGGER IF EXISTS tsv_update_trigger ON books;",
             "DROP FUNCTION IF EXISTS update_books_tsv();", 
             
-            # إنشاء الـ GIN index فقط للفهرسة السريعة
+            # إنشاء الـ GIN index للفهرسة السريعة
             "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
         ]
         await execute_db_commands(conn, fts_commands)
@@ -101,16 +104,14 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if conn:
             try:
-                # 🚀 الإصلاح: حساب tsvector مباشرة في Python وإرسال القيمة جاهزة إلى SQL
                 file_name = document.file_name
-                # استخدام دالة to_tsvector في SQL
+                # الخطوة 1: طلب قيمة tsvector من DB (باستخدام الإعدادات المخصصة)
                 tsv_content_query = """
                     SELECT to_tsvector('arabic_simple', $1);
                 """
-                # الحصول على قيمة tsvector من DB
                 tsv_content = await conn.fetchval(tsv_content_query, file_name)
 
-                # إدخال البيانات في خطوة واحدة
+                # الخطوة 2: إدخال البيانات في خطوة واحدة
                 await conn.execute(
                     """
                     INSERT INTO books(file_id, file_name, tsv_content) 
