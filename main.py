@@ -1,7 +1,10 @@
-import os
+Import os
 import asyncpg
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+# 🛑 الاستيراد من وحدة التحكم الجديدة
+from admin_panel import register_admin_handlers 
 
 # ... (بقية تعريفات الدوال مثل handle_pdf و search_book و start تبقى كما هي) ...
 
@@ -11,14 +14,19 @@ async def init_db(app_context: ContextTypes):
     try:
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
         
-        # 📝 أمر إنشاء الجدول اليدوي
+        # 📝 أمر إنشاء الجدول اليدوي (تم إضافة جدول users هنا)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
                 file_id TEXT UNIQUE,  
                 file_name TEXT,
                 uploaded_at TIMESTAMP DEFAULT NOW()
-            )
+            );
+            
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                joined_at TIMESTAMP DEFAULT NOW()
+            );
         """)
         
         app_context.bot_data['db_conn'] = conn
@@ -91,7 +99,7 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً. حاول لاحقاً.")
 
-# 5. أمر /start
+# 5. أمر /start (الدالة الأصلية)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "مرحبًا بك في مكتبة البوت! 📚\n"
@@ -113,12 +121,23 @@ def run_bot():
         .build()
     )
     
-    app.add_handler(CommandHandler("start", start))
+    # 1. تخزين الدالة الأصلية في متغير
+    original_start_handler = start
+    
+    # 2. معالج البحث ومعالج PDF (كما هي)
     app.add_handler(CommandHandler("search", search_book))
     app.add_handler(MessageHandler(
         filters.Document.PDF & filters.ChatType.CHANNEL,
         handle_pdf
     ))
+
+    # 3. إزالة معالج /start مؤقتًا (لإعادة تسجيله من الوحدة الخارجية)
+    # (لاحظ أننا لا نضيفه هنا، بل نمرر الدالة الأصلية للوحدة)
+    
+    # 4. تسجيل معالجات المشرفين (Admin Handlers)
+    # 🛑 هذه الدالة ستقوم بإضافة معالج /start الجديد الذي يتحقق من المشرفين
+    register_admin_handlers(app, original_start_handler)
+
 
     print("🤖 البوت يعمل الآن...")
     app.run_polling(poll_interval=1.0) 
