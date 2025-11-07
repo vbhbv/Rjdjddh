@@ -6,21 +6,22 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, PicklePersistence, CallbackQueryHandler
 )
-
 from admin_panel import register_admin_handlers  # لوحة التحكم
 
 # ===============================================
 #       إعداد قاعدة البيانات
 # ===============================================
 
-async def init_db(app: Application):
+async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
             print("🚨 DATABASE_URL environment variable is missing.")
             return
 
-        conn = await asyncpg.connect(db_url)
+        # زيادة المهلة عند الاتصال
+        conn = await asyncpg.connect(db_url, timeout=60)
+
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
         await conn.execute("""
 DO $$
@@ -50,12 +51,10 @@ $$;
         await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
 
-        app.bot_data["db_conn"] = conn
+        app_context.bot_data["db_conn"] = conn
         print("✅ Database connection and setup complete.")
     except Exception as e:
-        import traceback
-        print("❌ FATAL Database setup error:")
-        print(traceback.format_exc())
+        print(f"❌ FATAL Database setup error: {e}")
 
 async def close_db(app: Application):
     conn = app.bot_data.get("db_conn")
@@ -71,46 +70,52 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
+        if not conn:
+            return
 
-        if conn:
-            try:
-                file_name = document.file_name
-                tsv_content = await conn.fetchval("SELECT to_tsvector('arabic_simple', $1);", file_name)
-                await conn.execute("""
-                    INSERT INTO books(file_id, file_name, tsv_content)
-                    VALUES($1, $2, $3)
-                    ON CONFLICT (file_id) DO UPDATE
-                        SET file_name = EXCLUDED.file_name,
-                            tsv_content = EXCLUDED.tsv_content
-                """, document.file_id, file_name, tsv_content)
-                print(f"📚 Indexed book: {file_name}")
-            except Exception as e:
-                print(f"❌ Error indexing book: {e}")
+        try:
+            file_name = document.file_name
+            tsv_content = await conn.fetchval("SELECT to_tsvector('arabic_simple', $1);", file_name)
+            await conn.execute("""
+                INSERT INTO books(file_id, file_name, tsv_content)
+                VALUES($1, $2, $3)
+                ON CONFLICT (file_id) DO UPDATE
+                    SET file_name = EXCLUDED.file_name,
+                        tsv_content = EXCLUDED.tsv_content
+            """, document.file_id, file_name, tsv_content)
+            print(f"📚 Indexed book: {file_name}")
+        except Exception as e:
+            print(f"❌ Error indexing book: {e}")
 
 # ===============================================
-#       البحث عن الكتب (بدون أمر /search)
+#       البحث عن الكتب بدون أمر /search
 # ===============================================
 
 BOOKS_PER_PAGE = 10
 
-async def search_books_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "channel":
-        return
-    if not update.message.text:
         return
 
     query = update.message.text.strip()
+    if not query:
+        return
+
     conn = context.bot_data.get('db_conn')
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    books = await conn.fetch("""
-        SELECT id, file_id, file_name
-        FROM books
-        WHERE file_name ILIKE '%' || $1 || '%'
-        ORDER BY uploaded_at DESC;
-    """, query)
+    try:
+        books = await conn.fetch("""
+            SELECT id, file_id, file_name
+            FROM books
+            WHERE file_name ILIKE '%' || $1 || '%'
+            ORDER BY uploaded_at DESC;
+        """, query)
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ في البحث: {e}")
+        return
 
     if not books:
         await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {query}")
@@ -181,7 +186,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
-        "أرسل اسم أي كتاب لبدء البحث عنه.",
+        "ابحث عن أي كتاب مباشرة بإرسال الاسم.",
         parse_mode="Markdown"
     )
 
@@ -209,7 +214,8 @@ def run_bot():
 
     # الأوامر
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_message))
+    # البحث بدون أمر /search
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
 
