@@ -1,262 +1,163 @@
 import os
 import asyncpg
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.ext._updater import Updater
-from telegram.ext import PicklePersistence
+from telegram import Update, InputFile
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, filters,
+    ContextTypes
+)
+from datetime import datetime
 
-# Import the admin module
-from admin_panel import register_admin_handlers 
-
-# ===============================================
-#       Core Database & Setup Functions
-# ===============================================
+# ------------------ تهيئة قاعدة البيانات ------------------
 
 async def execute_db_commands(conn, commands):
-    """Executes a list of SQL commands sequentially, handling potential errors."""
+    """تنفيذ سلسلة أوامر SQL بأمان"""
     for command in commands:
-        # Clean up command string before execution
-        clean_command = command.strip()
-        if not clean_command:
-            continue
-            
         try:
-            await conn.execute(clean_command)
+            await conn.execute(command)
         except Exception as e:
-            # Skip common "already exists" errors but log others
-            if "already exists" in str(e) or "already defined" in str(e) or "notice" in str(e).lower():
-                pass 
-            else:
-                # IMPORTANT: Print the failing command clearly
-                print(f"❌ SQL Execution Error on command: {clean_command[:100]}... Error: {e}")
+            print(f"❌ SQL Execution Error on command: {command[:60]}... Error: {e}")
 
 async def init_db(app_context: ContextTypes):
-    """Initializes DB connection and sets up FTS infrastructure robustly."""
+    """إعداد قاعدة البيانات وتهيئة البحث النصي الكامل"""
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            print("🚨 DATABASE_URL environment variable is missing. Cannot connect to DB.")
+            print("🚨 DATABASE_URL environment variable is missing.")
             return
 
         conn = await asyncpg.connect(db_url)
-        
-        # --- 1. SETUP COMMANDS (Extensions and Configs) ---
-        # نضمن إنشاء الإضافات وإعدادات البحث قبل أي شيء آخر
-        setup_commands = [
-            "CREATE EXTENSION IF NOT EXISTS unaccent;",
-            # إنشاء إعدادات البحث النصي المخصص
-            "CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS arabic_simple (PARSER = default);",
-            # تعديل الإعدادات لاستخدام فلتر unaccent لتطبيع الحروف
-            "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part WITH unaccent, simple;"
-        ]
-        await execute_db_commands(conn, setup_commands)
 
-        # --- 2. TABLE CREATION COMMANDS ---
-        # نضمن إنشاء الجداول الآن بعد التأكد من وجود الإعدادات
+        # --- 1. الإضافات ---
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+
+        # --- 2. إنشاء text search config آمن ---
+        create_fts_config = """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_ts_config WHERE cfgname = 'arabic_simple'
+            ) THEN
+                CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
+            END IF;
+        END$$;
+        """
+        await conn.execute(create_fts_config)
+
+        # --- 3. ضبط إعدادات البحث ---
+        await conn.execute("""
+        ALTER TEXT SEARCH CONFIGURATION arabic_simple
+        ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part
+        WITH unaccent, simple;
+        """)
+
+        # --- 4. إنشاء الجداول ---
         table_commands = [
             """
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
-                file_id TEXT UNIQUE,  
+                file_id TEXT UNIQUE,
                 file_name TEXT,
                 uploaded_at TIMESTAMP DEFAULT NOW(),
-                tsv_content tsvector 
+                tsv_content tsvector
             );
             """,
             "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());",
-            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);"
         ]
         await execute_db_commands(conn, table_commands)
 
-        # --- 3. FTS INDEX & CLEANUP COMMANDS ---
-        # بعد إنشاء الجدول، نحذف أي تريغر قديم وننشئ الفهرس الجديد
-        fts_commands = [
-            # ⛔️ حذف التريغر والدالة لمنع تعارضات البيئة (هذا يحل مشكلة "record new")
-            "DROP TRIGGER IF EXISTS tsv_update_trigger ON books;",
-            "DROP FUNCTION IF EXISTS update_books_tsv();", 
-            
-            # إنشاء الـ GIN index للفهرسة السريعة
-            "CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);",
-        ]
-        await execute_db_commands(conn, fts_commands)
-        
-        app_context.bot_data['db_conn'] = conn
+        # --- 5. عمود البحث النصي ---
+        await conn.execute("ALTER TABLE books ADD COLUMN IF NOT EXISTS tsv_content tsvector;")
+
+        # --- 6. فهرس البحث ---
+        await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+
+        app_context.bot_data["db_conn"] = conn
         print("✅ Database connection and FTS setup complete and stable.")
+
     except Exception as e:
-        print(f"❌ Database connection or final setup error: {e}")
-        print("🚨 Will continue without database connection.")
+        print(f"❌ Database init error: {e}")
 
-# 2. Close DB connection
-async def close_db(app: Application):
-    """Closes the database connection on shutdown."""
-    conn = app.bot_data.get('db_conn')
-    if conn:
-        await conn.close()
-        print("✅ Database connection closed.")
 
-# 3. PDF Handler (Automatic Indexing)
-async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Indexes any new PDF file received in the channel."""
-    if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
-        
-        document = update.channel_post.document
-        conn = context.bot_data.get('db_conn')
-        
-        if conn:
-            try:
-                file_name = document.file_name
-                # الخطوة 1: طلب قيمة tsvector من DB (باستخدام الإعدادات المخصصة)
-                tsv_content_query = """
-                    SELECT to_tsvector('arabic_simple', $1);
-                """
-                tsv_content = await conn.fetchval(tsv_content_query, file_name)
+# ------------------ وظائف البوت ------------------
 
-                # الخطوة 2: إدخال البيانات في خطوة واحدة
-                await conn.execute(
-                    """
-                    INSERT INTO books(file_id, file_name, tsv_content) 
-                    VALUES($1, $2, $3) 
-                    ON CONFLICT (file_id) DO UPDATE SET file_name = EXCLUDED.file_name, tsv_content = EXCLUDED.tsv_content
-                    """, 
-                    document.file_id, 
-                    file_name,
-                    tsv_content
-                )
-                print(f"Book indexed: {file_name}")
-            except Exception as e:
-                # Log the specific indexing error to help debugging
-                print(f"❌ Error indexing book: {e}") 
-
-# 4. /search command (FTS)
-async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Searches for up to 10 matching books using Full-Text Search."""
-    if update.effective_chat.type == "channel":
-        return
-
-    if not context.args:
-        await update.message.reply_text("الرجاء إرسال اسم الكتاب. مثال: /search اسم الكتاب")
-        return
-    
-    search_term = " ".join(context.args).strip()
-    
-    conn = context.bot_data.get('db_conn')
-
-    if conn:
-        # FTS Query logic: replace spaces with '&' (AND operator in FTS)
-        query_text = search_term.replace(' ', ' & ')
-        
-        search_query = """
-            SELECT file_id, file_name 
-            FROM books 
-            WHERE tsv_content @@ to_tsquery('arabic_simple', $1)
-            ORDER BY file_name ASC 
-            LIMIT 10
-        """
-
-        results = await conn.fetch(
-            search_query,
-            query_text
-        )
-
-        if results:
-            if len(results) == 1:
-                # Send file directly if only one result
-                file_id = results[0]['file_id']
-                book_name = results[0]['file_name']
-                
-                try:
-                    await update.message.reply_document(
-                        document=file_id, 
-                        caption=f"✅ تم العثور على الكتاب: **{book_name}**"
-                    )
-                except Exception:
-                    await update.message.reply_text("❌ لم أتمكن من إرسال الملف. قد يكون الملف غير صالح أو واجهت مشكلة في تيليجرام.")
-            
-            else:
-                # Show multiple results in Inline buttons
-                
-                message_text = f"📚 تم العثور على **{len(results)}** كتاباً يطابق بحثك '{search_term}':\n\n"
-                message_text += "الرجاء اختيار النسخة المطلوبة من القائمة أدناه:"
-                
-                keyboard = []
-                for result in results:
-                    # Use unique callback_data: "file:<file_id_partial>"
-                    callback_data = f"file:{result['file_id'][:50]}" 
-                    
-                    keyboard.append([InlineKeyboardButton(f"🔗 {result['file_name']}", callback_data=callback_data)])
-                    
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                await update.message.reply_text(
-                    message_text,
-                    reply_markup=reply_markup,
-                    parse_mode='Markdown'
-                )
-
-        else:
-            await update.message.reply_text(f"❌ لم يتم العثور على كتاب يطابق '{search_term}'.")
-    else:
-        await update.message.reply_text("❌ البوت غير متصل بقاعدة البيانات حالياً. حاول لاحقاً.")
-
-# 5. /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "مرحبًا بك في مكتبة البوت! 📚\n"
-        "للبحث عن كتاب، استخدم الأمر: /search اسم الكتاب"
-    )
+    await update.message.reply_text("مرحباً! أرسل اسم أي كتاب وسأجده لك 🔍📚")
 
-# 6. Main Runner Function
-def run_bot():
-    """Uses Webhook for hosting environments like Railway, with Polling fallback."""
-    token = os.getenv("BOT_TOKEN")
-    port = int(os.environ.get('PORT', 8080))
-    base_url = os.environ.get('WEB_HOST')
-    
-    if not token:
-        print("🚨 BOT_TOKEN is missing in environment variables.")
+
+async def index_new_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عند وصول كتاب جديد في القناة"""
+    if not update.channel_post or not update.channel_post.document:
         return
 
-    app = (
-        Application.builder()
-        .token(token)
-        .post_init(init_db)     # Open connection and setup DB
-        .post_shutdown(close_db) # Close connection
-        .persistence(PicklePersistence(filepath="bot_data.pickle")) # Temp storage
-        .build()
-    )
-    
-    original_start_handler = start
-    
-    app.add_handler(CommandHandler("search", search_book))
-    app.add_handler(MessageHandler(
-        filters.Document.PDF & filters.ChatType.CHANNEL,
-        handle_pdf
-    ))
+    document = update.channel_post.document
+    file_name = document.file_name
+    file_id = document.file_id
 
-    # Register admin handlers (includes tracking logic)
-    register_admin_handlers(app, original_start_handler)
+    conn = context.bot_data.get("db_conn")
+    if not conn:
+        print("⚠️ No DB connection. Skipping index.")
+        return
 
-    
-    # Run Webhook if WEB_HOST is available, otherwise fall back to Polling
-    if base_url:
-        webhook_url = f'https://{base_url}'
-        
-        print(f"🤖 Running bot via Webhook on: {webhook_url}:{port}")
-        
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=token, 
-            webhook_url=f"{webhook_url}/{token}",
-            secret_token=os.getenv("WEBHOOK_SECRET")
+    try:
+        await conn.execute(
+            """
+            INSERT INTO books (file_id, file_name, tsv_content)
+            VALUES ($1, $2, to_tsvector('arabic_simple', $2))
+            ON CONFLICT (file_id) DO NOTHING;
+            """,
+            file_id, file_name
         )
-    else:
-        print("⚠️ WEB_HOST not available. Falling back to Polling mode. Ensure only one instance is running.")
-        app.run_polling(poll_interval=1.0)
+        print(f"📘 Indexed new book: {file_name}")
+    except Exception as e:
+        print(f"❌ Error indexing book: {e}")
+
+
+async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بحث عن كتاب وإرساله"""
+    query = update.message.text.strip()
+    if not query:
+        return await update.message.reply_text("❗ أرسل اسم الكتاب الذي تبحث عنه.")
+
+    conn = context.bot_data.get("db_conn")
+    if not conn:
+        return await update.message.reply_text("🚨 قاعدة البيانات غير متصلة حالياً.")
+
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT file_id, file_name FROM books
+            WHERE tsv_content @@ plainto_tsquery('arabic_simple', $1)
+            ORDER BY uploaded_at DESC LIMIT 1;
+            """,
+            query
+        )
+
+        if row:
+            await update.message.reply_document(document=row["file_id"], caption=f"📘 {row['file_name']}")
+        else:
+            await update.message.reply_text("😔 لم أجد كتاباً بهذا الاسم في المكتبة.")
+    except Exception as e:
+        print(f"❌ Error searching book: {e}")
+        await update.message.reply_text("⚠️ حدث خطأ أثناء البحث.")
+
+
+# ------------------ تشغيل التطبيق ------------------
+
+def main():
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        raise ValueError("🚨 BOT_TOKEN environment variable is missing!")
+
+    app = ApplicationBuilder().token(token).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
+    app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST, index_new_book))
+
+    app.post_init = init_db
+    print("🚀 Bot is starting...")
+
+    app.run_polling()
 
 
 if __name__ == "__main__":
-    try:
-        run_bot()
-    except Exception as e:
-        print(f"Fatal error occurred: {e}")
+    main()
