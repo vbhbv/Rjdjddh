@@ -8,7 +8,7 @@ from telegram.ext import (
     PicklePersistence, ContextTypes, filters
 )
 
-from admin_panel import register_admin_handlers  # إعادة استيراد لوحة التحكم
+from admin_panel import register_admin_handlers  # لوحة التحكم
 
 # ===============================================
 # إعداد اللوج
@@ -199,12 +199,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
 
 # ===============================================
-# أوامر أساسية مع الاشتراك الإجباري
+# الاشتراك الإجباري والقناة
 # ===============================================
-CHANNEL_USERNAME = "@iiollr"  # ضع القناة مباشرة هنا
+CHANNEL_USERNAME = "@iiollr"
 
+async def check_subscription(user_id: int, bot) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+# ===============================================
+# أوامر أساسية (start)
+# ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # التحقق من الاشتراك الإجباري
+    # تحقق من الاشتراك الإجباري
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
@@ -217,10 +227,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # رسالة الترحيب العادية
+    # رسالة الترحيب بعد التحقق
     await update.message.reply_text(
-        "مرحبًا بك في 📚 "مكتبة الكتب المطورة*\n"
-        "ابحث عن أي كتاب ببساطة عبر كتابة اسمه هنا وسأرسله خلال ثوانٍ يمكنك البحث عن أي تصنيف في بالك .",
+        "🎉 أهلاً بك! هذا أول بوت مكتبة سريع من نوعه 📚\n"
+        "يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
+        "تجربة سلسة، واجهة بسيطة، وسرعة عالية.",
         parse_mode="Markdown"
     )
 
@@ -251,8 +262,7 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # إعادة استيراد لوحة التحكم
-    register_admin_handlers(app, start)
+    register_admin_handlers(app, start)  # لوحة الإدارة
 
     if base_url:
         webhook_url = f"https://{base_url}"
