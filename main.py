@@ -1,12 +1,10 @@
 import os
 import asyncpg
 import hashlib
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, MessageHandler, filters, ContextTypes,
-    PicklePersistence, CallbackQueryHandler, CommandHandler
+    Application, CommandHandler, MessageHandler, filters,
+    PicklePersistence, CallbackQueryHandler, ContextTypes
 )
 from admin_panel import register_admin_handlers
 
@@ -56,12 +54,6 @@ async def init_db(app: Application):
     except Exception as e:
         print(f"❌ Database setup error: {e}")
 
-async def close_db(app: Application):
-    conn = app.bot_data.get("db_conn")
-    if conn:
-        await conn.close()
-        print("✅ Database connection closed.")
-
 # ==========================
 #       استقبال ملفات PDF
 # ==========================
@@ -93,6 +85,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.message.text.strip()
     if not query:
+        await update.message.reply_text("📖 أرسل اسم الكتاب بعد الأمر /search مثل: `/search رواية`", parse_mode="Markdown")
         return
 
     conn = context.bot_data.get('db_conn')
@@ -202,12 +195,19 @@ async def main():
     # لوحة الإدارة
     register_admin_handlers(app, start)
 
+    # تشغيل البوت بدون asyncio.run
     if base_url:
         webhook_url = f"https://{base_url}"
-        await app.run_webhook(listen="0.0.0.0", port=port, url_path=token, webhook_url=f"{webhook_url}/{token}")
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        print("⚡ Bot is running (Webhook mode)...")
     else:
-        await app.run_polling(poll_interval=1.0)
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        print("⚡ Bot is running (Polling mode)...")
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main())
+    asyncio.get_event_loop().run_until_complete(main())
