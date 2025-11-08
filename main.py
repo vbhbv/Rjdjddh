@@ -8,9 +8,6 @@ from telegram.ext import (
     PicklePersistence, ContextTypes, filters
 )
 
-# رابط القناة مباشرة للاشتراك الإجباري
-CHANNEL_USERNAME = "@iiollr"
-
 # ===============================================
 # إعداد اللوج
 # ===============================================
@@ -31,8 +28,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             return
 
         conn = await asyncpg.connect(db_url)
-
-        # الجداول
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -47,6 +42,12 @@ CREATE TABLE IF NOT EXISTS users (
     joined_at TIMESTAMP DEFAULT NOW()
 );
 """)
+        await conn.execute("""
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+""")
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
@@ -59,14 +60,15 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
-# الاشتراك الإجباري قبل البحث
+# الاشتراك الاجباري
 # ===============================================
+CHANNEL_USERNAME = "@iiollr"  # ضع رابط القناة مباشرة هنا
+
 async def check_subscription(user_id: int, bot) -> bool:
     try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status not in ["left", "kicked"]
-    except Exception as e:
-        logger.error(f"❌ Subscription check failed: {e}")
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "creator", "administrator"]
+    except:
         return False
 
 # ===============================================
@@ -76,7 +78,6 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
-
         if not conn:
             logger.error("❌ Database not connected.")
             return
@@ -99,13 +100,6 @@ BOOKS_PER_PAGE = 10
 
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
-        return  # البحث فقط في الخاص
-
-    # التحقق من الاشتراك الإجباري
-    if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text(
-            f"المعذرة 🙏 الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا."
-        )
         return
 
     query = update.message.text.strip()
@@ -197,6 +191,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # أوامر أساسية
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_subscription(update.effective_user.id, context.bot):
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+        ])
+        await update.message.reply_text(
+            f"📚 مرحبًا! الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا ويساعدك على الوصول إلى مكتبة غنية بالمعرفة والكتب.\n\n"
+            "اضغط على الزر للاشتراك ثم أعد إرسال الأمر للاستمتاع بالكتب.",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
     await update.message.reply_text(
         "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
         "ابحث عن أي كتاب ببساطة عبر كتابة اسمه هنا.",
@@ -224,7 +230,6 @@ def run_bot():
         .build()
     )
 
-    # أوامر
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
