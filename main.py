@@ -1,18 +1,21 @@
 import os
 import asyncpg
 import hashlib
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
+)
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, PicklePersistence, CallbackQueryHandler
+    Application, MessageHandler, filters, ContextTypes,
+    PicklePersistence, CallbackQueryHandler, CommandHandler
 )
 from admin_panel import register_admin_handlers
 
-# ===============================================
-#       إعداد قاعدة البيانات
-# ===============================================
+BOOKS_PER_PAGE = 10
 
-async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
+# ==========================
+#       قاعدة البيانات
+# ==========================
+async def init_db(app: Application):
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
@@ -22,20 +25,19 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         conn = await asyncpg.connect(db_url)
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
         await conn.execute("""
-DO $$
-BEGIN
-   IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
-       CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
-   END IF;
-END
-$$;
-""")
-        await conn.execute(
-            "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING "
-            "FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart "
-            "WITH unaccent, simple;"
-        )
-
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
+                CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
+            END IF;
+        END
+        $$;
+        """)
+        await conn.execute("""
+            ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING
+            FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
+            WITH unaccent, simple;
+        """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -47,10 +49,9 @@ $$;
         """)
         await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
         await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
-
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
 
-        app_context.bot_data["db_conn"] = conn
+        app.bot_data["db_conn"] = conn
         print("✅ Database connection and setup complete.")
     except Exception as e:
         print(f"❌ Database setup error: {e}")
@@ -61,15 +62,13 @@ async def close_db(app: Application):
         await conn.close()
         print("✅ Database connection closed.")
 
-# ===============================================
-#       استقبال ملفات PDF من القنوات
-# ===============================================
-
+# ==========================
+#       استقبال ملفات PDF
+# ==========================
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
-
         if conn:
             try:
                 file_name = document.file_name
@@ -85,19 +84,15 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"❌ Error indexing book: {e}")
 
-# ===============================================
-#       البحث عن الكتب مع نظام الصفحات
-# ===============================================
-
-BOOKS_PER_PAGE = 10
-
+# ==========================
+#       البحث عن الكتب
+# ==========================
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "channel":
         return
 
-    query = update.message.text.strip()  # البحث بدون أمر
+    query = update.message.text.strip()
     if not query:
-        await update.message.reply_text("📖 أرسل اسم الكتاب للبحث عنه مباشرة")
         return
 
     conn = context.bot_data.get('db_conn')
@@ -146,15 +141,11 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(text, reply_markup=reply_markup)
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
-# ===============================================
+# ==========================
 #       معالجات الأزرار
-# ===============================================
-
+# ==========================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -164,13 +155,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            await query.message.reply_document(
-                document=file_id,
-                caption="تم التنزيل بواسطة @Boooksfree1bot",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📤 شارك الملف", switch_inline_query=file_id)]
-                ])
-            )
+            caption = "تم التنزيل بواسطة @Boooksfree1bot"
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك الملف", switch_inline_query=file_id)]])
+            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
@@ -180,20 +167,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_page"] -= 1
         await send_books_page(update, context)
 
-# ===============================================
+# ==========================
 #       أوامر أساسية
-# ===============================================
-
+# ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "مرحبًا بك في 📚 مكتبة المعرفة\n"
-        "ابحث عن أي كتاب بسهولة عن طريق كتابة اسمه مباشرة.",
+        "مرحبًا بك في 📚 *مكتبة المعرفة*\nابحث عن أي كتاب مباشرةً بإرسال اسمه.",
+        parse_mode="Markdown"
     )
 
-# ===============================================
+# ==========================
 #       تشغيل البوت
-# ===============================================
-
+# ==========================
 async def main():
     token = os.getenv("BOT_TOKEN")
     base_url = os.getenv("WEB_HOST")
@@ -203,16 +188,12 @@ async def main():
         print("🚨 BOT_TOKEN not found in environment.")
         return
 
-    app = (
-        Application.builder()
-        .token(token)
-        .post_init(init_db)
-        .post_shutdown(close_db)
-        .persistence(PicklePersistence(filepath="bot_data.pickle"))
-        .build()
-    )
+    app = Application.builder().token(token).persistence(PicklePersistence("bot_data.pickle")).build()
 
-    # الأوامر
+    # مزامنة قاعدة البيانات قبل أي هاندلر
+    await init_db(app)
+
+    # الهاندلرز
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
@@ -223,20 +204,10 @@ async def main():
 
     if base_url:
         webhook_url = f"https://{base_url}"
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=token,
-            webhook_url=f"{webhook_url}/{token}"
-        )
+        await app.run_webhook(listen="0.0.0.0", port=port, url_path=token, webhook_url=f"{webhook_url}/{token}")
     else:
-        print("⚠️ WEB_HOST not available. Running in polling mode.")
         await app.run_polling(poll_interval=1.0)
 
-# ===============================================
-#       تشغيل التطبيق
-# ===============================================
-
-import asyncio
-asyncio.get_event_loop().create_task(main())
-print("⚡ Bot is running...")
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
