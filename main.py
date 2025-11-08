@@ -8,7 +8,8 @@ from telegram.ext import (
     PicklePersistence, ContextTypes, filters
 )
 
-from admin_panel import register_admin_handlers  # لوحة التحكم
+# رابط القناة مباشرة للاشتراك الإجباري
+CHANNEL_USERNAME = "@iiollr"
 
 # ===============================================
 # إعداد اللوج
@@ -30,21 +31,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             return
 
         conn = await asyncpg.connect(db_url)
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-        await conn.execute("""
-DO $$
-BEGIN
-   IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
-       CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
-   END IF;
-END
-$$;
-""")
-        await conn.execute("""
-ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING
-FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
-WITH unaccent, simple;
-""")
 
         # الجداول
         await conn.execute("""
@@ -52,8 +38,7 @@ CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     file_id TEXT UNIQUE,
     file_name TEXT,
-    uploaded_at TIMESTAMP DEFAULT NOW(),
-    tsv_content tsvector
+    uploaded_at TIMESTAMP DEFAULT NOW()
 );
 """)
         await conn.execute("""
@@ -62,14 +47,6 @@ CREATE TABLE IF NOT EXISTS users (
     joined_at TIMESTAMP DEFAULT NOW()
 );
 """)
-        await conn.execute("""
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-""")
-        await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
-
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
@@ -80,6 +57,17 @@ async def close_db(app: Application):
     if conn:
         await conn.close()
         logger.info("✅ Database connection closed.")
+
+# ===============================================
+# الاشتراك الإجباري قبل البحث
+# ===============================================
+async def check_subscription(user_id: int, bot) -> bool:
+    try:
+        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return member.status not in ["left", "kicked"]
+    except Exception as e:
+        logger.error(f"❌ Subscription check failed: {e}")
+        return False
 
 # ===============================================
 # استقبال ملفات PDF من القنوات
@@ -112,6 +100,13 @@ BOOKS_PER_PAGE = 10
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return  # البحث فقط في الخاص
+
+    # التحقق من الاشتراك الإجباري
+    if not await check_subscription(update.effective_user.id, context.bot):
+        await update.message.reply_text(
+            f"المعذرة 🙏 الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا."
+        )
+        return
 
     query = update.message.text.strip()
     if not query:
@@ -234,8 +229,6 @@ def run_bot():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
-
-    register_admin_handlers(app, start)  # لوحة الإدارة
 
     if base_url:
         webhook_url = f"https://{base_url}"
