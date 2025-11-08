@@ -1,24 +1,28 @@
 import os
-import asyncio
-import hashlib
 import asyncpg
+import hashlib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, PicklePersistence, filters
+    Application, CommandHandler, MessageHandler, filters,
+    ContextTypes, PicklePersistence, CallbackQueryHandler
 )
-from admin_panel import register_admin_handlers
+from admin_panel import register_admin_handlers  # لوحة التحكم
+import nest_asyncio
 
 # ===============================================
 #       إعداد قاعدة البيانات
 # ===============================================
 
-async def init_db_pool(db_url):
+async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
-        pool = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=5)
-        async with pool.acquire() as conn:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-            await conn.execute("""
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            print("🚨 DATABASE_URL environment variable is missing.")
+            return
+
+        conn = await asyncpg.connect(db_url)
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+        await conn.execute("""
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
@@ -27,61 +31,63 @@ BEGIN
 END
 $$;
 """)
-            await conn.execute("""
-ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING
-FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
-WITH unaccent, simple;
-""")
-            await conn.execute("""
-CREATE TABLE IF NOT EXISTS books (
-    id SERIAL PRIMARY KEY,
-    file_id TEXT UNIQUE,
-    file_name TEXT,
-    uploaded_at TIMESTAMP DEFAULT NOW(),
-    tsv_content tsvector
-);
-""")
-            await conn.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT PRIMARY KEY,
-    joined_at TIMESTAMP DEFAULT NOW()
-);
-""")
-            await conn.execute("""
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-""")
-            await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
-        print("✅ Database setup complete.")
-        return pool
+        await conn.execute(
+            "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING "
+            "FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart "
+            "WITH unaccent, simple;"
+        )
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS books (
+                id SERIAL PRIMARY KEY,
+                file_id TEXT UNIQUE,
+                file_name TEXT,
+                uploaded_at TIMESTAMP DEFAULT NOW(),
+                tsv_content tsvector
+            );
+        """)
+        await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
+        await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
+
+        await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+
+        app_context.bot_data["db_conn"] = conn
+        print("✅ Database connection and setup complete.")
     except Exception as e:
         print(f"❌ Database setup error: {e}")
-        return None
+
+async def close_db(app: Application):
+    conn = app.bot_data.get("db_conn")
+    if conn:
+        await conn.close()
+        print("✅ Database connection closed.")
 
 # ===============================================
 #       استقبال ملفات PDF من القنوات
 # ===============================================
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    document = update.channel_post.document if update.channel_post else None
-    if document and document.mime_type == "application/pdf":
-        pool = context.bot_data.get("db_pool")
-        if pool:
-            async with pool.acquire() as conn:
-                tsv_content = await conn.fetchval("SELECT to_tsvector('arabic_simple', $1);", document.file_name)
+    if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
+        document = update.channel_post.document
+        conn = context.bot_data.get('db_conn')
+
+        if conn:
+            try:
+                file_name = document.file_name
+                tsv_content = await conn.fetchval("SELECT to_tsvector('arabic_simple', $1);", file_name)
                 await conn.execute("""
                     INSERT INTO books(file_id, file_name, tsv_content)
                     VALUES($1, $2, $3)
-                    ON CONFLICT(file_id) DO UPDATE
+                    ON CONFLICT (file_id) DO UPDATE
                         SET file_name = EXCLUDED.file_name,
-                            tsv_content = EXCLUDED.tsv_content;
-                """, document.file_id, document.file_name, tsv_content)
-                print(f"📚 Indexed book: {document.file_name}")
+                            tsv_content = EXCLUDED.tsv_content
+                """, document.file_id, file_name, tsv_content)
+                print(f"📚 Indexed book: {file_name}")
+            except Exception as e:
+                print(f"❌ Error indexing book: {e}")
 
 # ===============================================
-#       البحث عن الكتب
+#       البحث عن الكتب مع نظام الصفحات
 # ===============================================
 
 BOOKS_PER_PAGE = 10
@@ -90,19 +96,22 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "channel":
         return
 
-    query = update.message.text.strip()
+    query = update.message.text.strip()  # البحث بدون أمر
     if not query:
-        await update.message.reply_text("📖 أرسل اسم الكتاب للبحث عنه.")
+        await update.message.reply_text("📖 أرسل اسم الكتاب للبحث عنه مباشرة")
         return
 
-    pool = context.bot_data.get("db_pool")
-    async with pool.acquire() as conn:
-        books = await conn.fetch("""
-            SELECT id, file_id, file_name
-            FROM books
-            WHERE file_name ILIKE '%' || $1 || '%'
-            ORDER BY uploaded_at DESC;
-        """, query)
+    conn = context.bot_data.get('db_conn')
+    if not conn:
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
+        return
+
+    books = await conn.fetch("""
+        SELECT id, file_id, file_name
+        FROM books
+        WHERE file_name ILIKE '%' || $1 || '%'
+        ORDER BY uploaded_at DESC;
+    """, query)
 
     if not books:
         await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {query}")
@@ -123,6 +132,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = f"📚 النتائج ({len(books)} كتاب)\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
+
     for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
@@ -143,7 +153,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=reply_markup)
 
 # ===============================================
-#       التعامل مع الأزرار
+#       معالجات الأزرار
 # ===============================================
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -159,7 +169,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 document=file_id,
                 caption="تم التنزيل بواسطة @Boooksfree1bot",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔗 شارك الملف", switch_inline_query=file_id)]
+                    [InlineKeyboardButton("📤 شارك الملف", switch_inline_query=file_id)]
                 ])
             )
         else:
@@ -177,8 +187,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "مرحبًا بك في 📚 *مكتبة المعرفة*\nابحث عن أي كتاب بإرسال اسمه مباشرة",
-        parse_mode="Markdown"
+        "مرحبًا بك في 📚 مكتبة المعرفة\n"
+        "ابحث عن أي كتاب بسهولة عن طريق كتابة اسمه مباشرة.",
     )
 
 # ===============================================
@@ -186,35 +196,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===============================================
 
 async def main():
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    DB_URL = os.getenv("DATABASE_URL")
-    if not BOT_TOKEN or not DB_URL:
-        print("🚨 Missing BOT_TOKEN or DATABASE_URL in environment.")
+    token = os.getenv("BOT_TOKEN")
+    base_url = os.getenv("WEB_HOST")
+    port = int(os.getenv("PORT", 8080))
+
+    if not token:
+        print("🚨 BOT_TOKEN not found in environment.")
         return
 
-    db_pool = await init_db_pool(DB_URL)
-    if not db_pool:
-        print("❌ Could not initialize database. Exiting.")
-        return
-
-    app = Application.builder() \
-        .token(BOT_TOKEN) \
-        .persistence(PicklePersistence("bot_data.pickle")) \
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(init_db)
+        .post_shutdown(close_db)
+        .persistence(PicklePersistence(filepath="bot_data.pickle"))
         .build()
+    )
 
-    app.bot_data["db_pool"] = db_pool
-
-    # لوحة الإدارة
-    register_admin_handlers(app, None)
-
-    # أوامر البوت
+    # الأوامر
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    print("⚡ Bot is running...")
-    await app.run_polling(poll_interval=1.0)
+    # لوحة الإدارة
+    register_admin_handlers(app, start)
+
+    if base_url:
+        webhook_url = f"https://{base_url}"
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"{webhook_url}/{token}"
+        )
+    else:
+        print("⚠️ WEB_HOST not available. Running in polling mode.")
+        await app.run_polling(poll_interval=1.0)
+
+# ===============================================
+#       تشغيل التطبيق مع nest_asyncio
+# ===============================================
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import asyncio
+    nest_asyncio.apply()
+    asyncio.get_event_loop().run_until_complete(main())
