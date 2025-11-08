@@ -6,7 +6,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, PicklePersistence, CallbackQueryHandler
 )
-from admin_panel import register_admin_handlers  # لوحة التحكم
+from admin_panel import register_admin_handlers
 
 # ===============================================
 #       إعداد قاعدة البيانات
@@ -35,7 +35,6 @@ ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING
 FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
 WITH unaccent, simple;
 """)
-        # جداول الكتب والمستخدمين والإعدادات
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -111,7 +110,6 @@ async def search_books_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # إضافة المستخدم للجدول
     await conn.execute("INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING;", update.effective_user.id)
 
     books = await conn.fetch("""
@@ -130,7 +128,7 @@ ORDER BY uploaded_at DESC;
     await send_books_page(update, context)
 
 # ===============================================
-#       عرض صفحة الكتب مع أزرار المفضلة والمشاركة
+#       عرض صفحة الكتب بشكل صحيح
 # ===============================================
 
 async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,12 +146,11 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for b in current_books:
         key = hashlib.md5(str(b["id"]).encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([
-            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}"),
-            InlineKeyboardButton("❤️", callback_data=f"fav:{b['id']}"),
-            InlineKeyboardButton("🔗", callback_data=f"share:{key}")
-        ])
 
+        # زر واحد فقط لاسم الكتاب لإرسال الملف مباشرة
+        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
+
+    # أزرار التنقل
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
@@ -187,16 +184,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_document(document=file_id)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
-    elif data.startswith("fav:"):
-        book_id = int(data.split(":")[1])
-        user_id = query.from_user.id
-        await conn.execute("INSERT INTO favorites(user_id, book_id) VALUES($1, $2) ON CONFLICT DO NOTHING;", user_id, book_id)
-        await query.message.reply_text("✅ تمت إضافة الكتاب إلى المفضلة.")
-    elif data.startswith("share:"):
-        key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
-        if file_id:
-            await query.message.reply_text(f"🔗 رابط المشاركة: {file_id}")
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
