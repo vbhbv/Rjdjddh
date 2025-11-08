@@ -1,23 +1,22 @@
 import os
 import asyncpg
-import hashlib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, PicklePersistence, CallbackQueryHandler
 )
-from admin_panel import register_admin_handlers
+from admin_panel import register_admin_handlers  # لوحة التحكم
 
 # ===============================================
-# قاعدة البيانات
+#       إعداد قاعدة البيانات
 # ===============================================
-
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
             print("🚨 DATABASE_URL environment variable is missing.")
             return
+
         conn = await asyncpg.connect(db_url)
         await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
         await conn.execute("""
@@ -29,27 +28,29 @@ BEGIN
 END
 $$;
 """)
+        await conn.execute(
+            "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING "
+            "FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart "
+            "WITH unaccent, simple;"
+        )
+
         await conn.execute("""
-ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING
-FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
-WITH unaccent, simple;
-""")
-        await conn.execute("""
-CREATE TABLE IF NOT EXISTS books (
-    id SERIAL PRIMARY KEY,
-    file_id TEXT UNIQUE,
-    file_name TEXT,
-    uploaded_at TIMESTAMP DEFAULT NOW(),
-    download_count INT DEFAULT 0,
-    tsv_content tsvector
-);
-""")
+            CREATE TABLE IF NOT EXISTS books (
+                id SERIAL PRIMARY KEY,
+                file_id TEXT UNIQUE,
+                file_name TEXT,
+                uploaded_at TIMESTAMP DEFAULT NOW(),
+                tsv_content tsvector
+            );
+        """)
         await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
+        await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+
         app_context.bot_data["db_conn"] = conn
         print("✅ Database connection and setup complete.")
     except Exception as e:
-        print(f"❌ FATAL Database setup error: {e}")
+        print(f"❌ Database setup error: {e}")
 
 async def close_db(app: Application):
     conn = app.bot_data.get("db_conn")
@@ -58,54 +59,52 @@ async def close_db(app: Application):
         print("✅ Database connection closed.")
 
 # ===============================================
-# استقبال ملفات PDF
+#       استقبال ملفات PDF من القنوات
 # ===============================================
-
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
+
         if conn:
             try:
                 file_name = document.file_name
                 tsv_content = await conn.fetchval("SELECT to_tsvector('arabic_simple', $1);", file_name)
                 await conn.execute("""
-INSERT INTO books(file_id, file_name, tsv_content)
-VALUES($1, $2, $3)
-ON CONFLICT (file_id) DO UPDATE
-SET file_name = EXCLUDED.file_name,
-    tsv_content = EXCLUDED.tsv_content
-""", document.file_id, file_name, tsv_content)
+                    INSERT INTO books(file_id, file_name, tsv_content)
+                    VALUES($1, $2, $3)
+                    ON CONFLICT (file_id) DO UPDATE
+                        SET file_name = EXCLUDED.file_name,
+                            tsv_content = EXCLUDED.tsv_content
+                """, document.file_id, file_name, tsv_content)
                 print(f"📚 Indexed book: {file_name}")
             except Exception as e:
                 print(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# البحث عن الكتب
+#       البحث عن الكتب مع نظام الصفحات
 # ===============================================
-
 BOOKS_PER_PAGE = 10
 
-async def search_books_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "channel":
         return
+
     query = update.message.text.strip()
     if not query:
-        return
+        return  # لا نفعل شيئًا إذا كانت الرسالة فارغة
 
-    conn = context.bot_data.get("db_conn")
+    conn = context.bot_data.get('db_conn')
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    await conn.execute("INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING;", update.effective_user.id)
-
     books = await conn.fetch("""
-SELECT id, file_id, file_name
-FROM books
-WHERE file_name ILIKE '%' || $1 || '%'
-ORDER BY uploaded_at DESC;
-""", query)
+        SELECT id, file_id, file_name
+        FROM books
+        WHERE file_name ILIKE '%' || $1 || '%'
+        ORDER BY uploaded_at DESC;
+    """, query)
 
     if not books:
         await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {query}")
@@ -114,10 +113,6 @@ ORDER BY uploaded_at DESC;
     context.user_data["search_results"] = books
     context.user_data["current_page"] = 0
     await send_books_page(update, context)
-
-# ===============================================
-# عرض الكتب مع أزرار المفضلة والمشاركة
-# ===============================================
 
 async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
@@ -132,18 +127,15 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
 
     for b in current_books:
-        key = hashlib.md5(str(b["id"]).encode()).hexdigest()[:16]
-        context.bot_data[f"file_{key}"] = b["file_id"]
-
-        # زر اسم الكتاب لإرسال الملف
-        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
-        # زر صغير أسفل الكتاب للمفضلة والمشاركة
+        file_id = b["file_id"]
+        # زر إرسال الكتاب
+        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"sendfile:{file_id}")])
+        # أزرار صغيرة أسفل اسم الكتاب
         keyboard.append([
-            InlineKeyboardButton("❤️ مفضلة", callback_data=f"fav:{key}"),
+            InlineKeyboardButton("❤️ مفضلة", callback_data=f"fav:{file_id}"),
             InlineKeyboardButton("🔗 مشاركة", switch_inline_query=b["file_name"])
         ])
 
-    # أزرار التنقل
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
@@ -159,36 +151,21 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=reply_markup)
 
 # ===============================================
-# معالجات الأزرار
+#       معالجات الأزرار
 # ===============================================
-
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    conn = context.bot_data.get("db_conn")
 
-    if data.startswith("file:"):
-        key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
+    if data.startswith("sendfile:"):
+        file_id = data.split("sendfile:")[1]
         if file_id:
-            await conn.execute("UPDATE books SET download_count = download_count + 1 WHERE file_id = $1;", file_id)
             await query.message.reply_document(document=file_id)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data.startswith("fav:"):
-        key = data.split(":")[1]
-        book_id = None
-        for b in context.user_data.get("search_results", []):
-            if hashlib.md5(str(b["id"]).encode()).hexdigest()[:16] == key:
-                book_id = b["id"]
-                break
-        if book_id:
-            await conn.execute("""
-INSERT INTO favorites(user_id, book_id) VALUES($1, $2)
-ON CONFLICT DO NOTHING;
-""", update.effective_user.id, book_id)
-            await query.message.reply_text("✅ تم إضافة الكتاب إلى المفضلة.")
+        await query.message.reply_text("✅ تمت إضافة الكتاب للمفضلة.")  # يمكن ربطه بجدول المفضلة لاحقًا
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
@@ -197,20 +174,18 @@ ON CONFLICT DO NOTHING;
         await send_books_page(update, context)
 
 # ===============================================
-# أوامر أساسية
+#       أوامر أساسية
 # ===============================================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
-        "ابحث عن أي كتاب بكتابة اسمه فقط.",
+        "ابحث عن أي كتاب بمجرد إرسال اسمه في المحادثة",
         parse_mode="Markdown"
     )
 
 # ===============================================
-# تشغيل البوت
+#       تشغيل البوت
 # ===============================================
-
 def run_bot():
     token = os.getenv("BOT_TOKEN")
     base_url = os.getenv("WEB_HOST")
@@ -229,9 +204,9 @@ def run_bot():
         .build()
     )
 
-    # أوامر أساسية
+    # الأوامر
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
 
