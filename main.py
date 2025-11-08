@@ -6,8 +6,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, PicklePersistence, CallbackQueryHandler
 )
-from admin_panel import register_admin_handlers  # لوحة التحكم
-import nest_asyncio
+from admin_panel import register_admin_handlers
 
 # ===============================================
 #       إعداد قاعدة البيانات
@@ -235,10 +234,9 @@ async def main():
         await app.run_polling(poll_interval=1.0)
 
 # ===============================================
-#       تشغيل التطبيق مع nest_asyncio
+#       تشغيل التطبيق
 # ===============================================
 
-if __name__ == "__main__":
-    import asyncio
-    nest_asyncio.apply()
-    asyncio.get_event_loop().run_until_complete(main())
+import asyncio
+asyncio.get_event_loop().create_task(main())
+print("⚡ Bot is running...")
