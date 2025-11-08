@@ -2,7 +2,6 @@ import os
 import asyncpg
 import hashlib
 import logging
-import fitz  # PyMuPDF لقراءة محتوى PDF
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
@@ -83,20 +82,6 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
-# استخراج النص من PDF
-# ===============================================
-def extract_text_from_pdf(file_path: str) -> str:
-    try:
-        doc = fitz.open(file_path)
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        return text
-    except Exception as e:
-        logger.error(f"❌ Error reading PDF {file_path}: {e}")
-        return ""
-
-# ===============================================
 # استقبال ملفات PDF من القنوات
 # ===============================================
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,14 +93,9 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error("❌ Database not connected.")
             return
 
-        file = await document.get_file()
-        file_path = f"/tmp/{document.file_name}"
-        await file.download_to_drive(file_path)
-
-        # استخراج النص والفهرسة
-        full_text = extract_text_from_pdf(file_path)
+        # احفظ فقط اسم الملف للفهرسة
         tsv_content = await conn.fetchval(
-            "SELECT to_tsvector('arabic_simple', $1);", full_text
+            "SELECT to_tsvector('arabic_simple', $1);", document.file_name
         )
 
         await conn.execute("""
@@ -127,7 +107,6 @@ SET file_name = EXCLUDED.file_name,
 """, document.file_id, document.file_name, tsv_content)
 
         logger.info(f"📚 Indexed book: {document.file_name}")
-        os.remove(file_path)
 
 # ===============================================
 # البحث المباشر مع الصفحات
@@ -165,9 +144,9 @@ ORDER BY uploaded_at DESC;
 
     context.user_data["search_results"] = books
     context.user_data["current_page"] = 0
-    await send_books_page(update, context)
+    await send_books_page(update, context, edit=False)
 
-async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=True):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1
@@ -182,9 +161,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([
-            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
-        ])
+        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
 
     nav_buttons = []
     if page > 0:
@@ -195,10 +172,17 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup)
+
+    try:
+        if edit and update.callback_query:
+            await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        logger.error(f"❌ Error sending books page: {e}")
 
 # ===============================================
-# أزرار الملفات
+# أزرار الملفات والتنقل
 # ===============================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -257,7 +241,8 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    register_admin_handlers(app, start)  # لوحة الإدارة
+    # لوحة الإدارة
+    register_admin_handlers(app, start)
 
     if base_url:
         webhook_url = f"https://{base_url}"
