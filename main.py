@@ -6,10 +6,12 @@ from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes,
     PicklePersistence, CallbackQueryHandler, CommandHandler
 )
-from admin_panel import register_admin_handlers  # لوحة التحكم
+from admin_panel import register_admin_handlers
+
+BOOKS_PER_PAGE = 10
 
 # ===============================================
-#       إعداد قاعدة البيانات
+#       قاعدة البيانات
 # ===============================================
 
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
@@ -30,12 +32,6 @@ BEGIN
 END
 $$;
 """)
-        await conn.execute(
-            "ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING "
-            "FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart "
-            "WITH unaccent, simple;"
-        )
-
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -48,7 +44,6 @@ $$;
         await conn.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT NOW());")
         await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
-
         app_context.bot_data["db_conn"] = conn
         print("✅ Database connection and setup complete.")
     except Exception as e:
@@ -61,7 +56,7 @@ async def close_db(app: Application):
         print("✅ Database connection closed.")
 
 # ===============================================
-#       استقبال ملفات PDF من القنوات
+#       استقبال PDF
 # ===============================================
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,13 +79,10 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"❌ Error indexing book: {e}")
 
 # ===============================================
-#       البحث عن الكتب مع الصفحات والأزرار
+#       البحث وإظهار النتائج
 # ===============================================
 
-BOOKS_PER_PAGE = 10
-
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تجاهل الرسائل من القنوات
     if update.effective_chat.type == "channel":
         return
 
@@ -132,12 +124,15 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
 
     for b in current_books:
-        file_id = b["file_id"]
+        # إنشاء مفتاح قصير لكل كتاب لضمان طول أقل من 64 حرف
+        key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
+        context.bot_data[f"file_{key}"] = b["file_id"]
+
         # زر إرسال الكتاب
-        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"sendfile:{file_id}")])
-        # أزرار صغيرة أسفل اسم الكتاب
+        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"sendfile:{key}")])
+        # أزرار المفضلة والمشاركة أسفل اسم الكتاب
         keyboard.append([
-            InlineKeyboardButton("❤️ مفضلة", callback_data=f"fav:{file_id}"),
+            InlineKeyboardButton("❤️ مفضلة", callback_data=f"fav:{key}"),
             InlineKeyboardButton("🔗 مشاركة", switch_inline_query=b["file_name"])
         ])
 
@@ -156,8 +151,6 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup)
         elif update.message:
             await update.message.reply_text(text=text, reply_markup=reply_markup)
-        else:
-            print("⚠️ Update object ليس لديه رسالة أو callback_query")
     except Exception as e:
         print(f"❌ Error in send_books_page: {e}")
 
@@ -171,10 +164,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data.startswith("sendfile:"):
-        file_id = data.split(":", 1)[1]
-        await query.message.reply_document(document=file_id)
+        key = data.split(":", 1)[1]
+        file_id = context.bot_data.get(f"file_{key}")
+        if file_id:
+            await query.message.reply_document(document=file_id)
+        else:
+            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data.startswith("fav:"):
-        await query.message.reply_text("⭐ تم إضافة الكتاب للمفضلة!")  # يمكن تطويرها لاحقًا
+        await query.message.reply_text("⭐ تم إضافة الكتاب للمفضلة!")
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
@@ -215,7 +212,7 @@ def run_bot():
         .build()
     )
 
-    # الأوامر والمعالجات
+    # المعالجات
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(CallbackQueryHandler(callback_handler))
