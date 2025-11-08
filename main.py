@@ -8,6 +8,8 @@ from telegram.ext import (
     PicklePersistence, ContextTypes, filters
 )
 
+from admin_panel import register_admin_handlers  # إعادة استيراد لوحة التحكم
+
 # ===============================================
 # إعداد اللوج
 # ===============================================
@@ -28,12 +30,30 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             return
 
         conn = await asyncpg.connect(db_url)
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+        await conn.execute("""
+DO $$
+BEGIN
+   IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
+       CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
+   END IF;
+END
+$$;
+""")
+        await conn.execute("""
+ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING
+FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
+WITH unaccent, simple;
+""")
+
+        # الجداول
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     file_id TEXT UNIQUE,
     file_name TEXT,
-    uploaded_at TIMESTAMP DEFAULT NOW()
+    uploaded_at TIMESTAMP DEFAULT NOW(),
+    tsv_content tsvector
 );
 """)
         await conn.execute("""
@@ -48,6 +68,8 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 """)
+        await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
+
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
@@ -60,24 +82,13 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
-# الاشتراك الاجباري
-# ===============================================
-CHANNEL_USERNAME = "@iiollr"  # ضع رابط القناة مباشرة هنا
-
-async def check_subscription(user_id: int, bot) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return member.status in ["member", "creator", "administrator"]
-    except:
-        return False
-
-# ===============================================
 # استقبال ملفات PDF من القنوات
 # ===============================================
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
+
         if not conn:
             logger.error("❌ Database not connected.")
             return
@@ -100,7 +111,7 @@ BOOKS_PER_PAGE = 10
 
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
-        return
+        return  # البحث فقط في الخاص
 
     query = update.message.text.strip()
     if not query:
@@ -188,24 +199,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
 
 # ===============================================
-# أوامر أساسية
+# أوامر أساسية مع الاشتراك الإجباري
 # ===============================================
+CHANNEL_USERNAME = "@iiollr"  # ضع القناة مباشرة هنا
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق من الاشتراك الإجباري
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
         ])
         await update.message.reply_text(
-            f"📚 مرحبًا! الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا ويساعدك على الوصول إلى مكتبة غنية بالمعرفة والكتب.\n\n"
-            "اضغط على الزر للاشتراك ثم أعد إرسال الأمر للاستمتاع بالكتب.",
+            f"🚫 *المعذرة!* الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا.\n\n"
+            "اضغط على الزر ثم أعد إرسال الأمر.",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
         return
 
+    # رسالة الترحيب العادية
     await update.message.reply_text(
-        "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
-        "ابحث عن أي كتاب ببساطة عبر كتابة اسمه هنا.",
+        "مرحبًا بك في 📚 "مكتبة الكتب المطورة*\n"
+        "ابحث عن أي كتاب ببساطة عبر كتابة اسمه هنا وسأرسله خلال ثوانٍ يمكنك البحث عن أي تصنيف في بالك .",
         parse_mode="Markdown"
     )
 
@@ -230,10 +245,14 @@ def run_bot():
         .build()
     )
 
+    # أوامر
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
+
+    # إعادة استيراد لوحة التحكم
+    register_admin_handlers(app, start)
 
     if base_url:
         webhook_url = f"https://{base_url}"
