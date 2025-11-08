@@ -2,12 +2,13 @@ import os
 import asyncpg
 import hashlib
 import logging
-import fitz  # PyMuPDF
+import fitz  # PyMuPDF لقراءة محتوى PDF
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     PicklePersistence, ContextTypes, filters
 )
+
 from admin_panel import register_admin_handlers  # لوحة التحكم
 
 # ===============================================
@@ -53,10 +54,7 @@ CREATE TABLE IF NOT EXISTS books (
     file_id TEXT UNIQUE,
     file_name TEXT,
     uploaded_at TIMESTAMP DEFAULT NOW(),
-    tsv_content tsvector,
-    summary TEXT,
-    category TEXT,
-    pages INT
+    tsv_content tsvector
 );
 """)
         await conn.execute("""
@@ -85,13 +83,18 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
-# دالة توليد الملخص والتصنيف (مثال بسيط)
+# استخراج النص من PDF
 # ===============================================
-def generate_summary_and_category(text: str):
-    # مثال بسيط جدًا على التصنيف والتلخيص
-    summary = text[:200] + "..." if len(text) > 200 else text
-    category = "رواية" if "رواية" in text else "عام"
-    return summary, category
+def extract_text_from_pdf(file_path: str) -> str:
+    try:
+        doc = fitz.open(file_path)
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        return text
+    except Exception as e:
+        logger.error(f"❌ Error reading PDF {file_path}: {e}")
+        return ""
 
 # ===============================================
 # استقبال ملفات PDF من القنوات
@@ -101,40 +104,30 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
 
-        if conn:
-            try:
-                file_name = document.file_name
-                # تحميل الملف مؤقتًا لاستخراج المحتوى
-                file_path = f"/tmp/{file_name}"
-                await document.get_file().download_to_drive(file_path)
-                doc = fitz.open(file_path)
-                pages = doc.page_count
-                text_content = ""
-                for page in doc:
-                    text_content += page.get_text()
-                doc.close()
-                os.remove(file_path)
+        if not conn:
+            logger.error("❌ Database not connected.")
+            return
 
-                # توليد الملخص والتصنيف
-                summary, category = generate_summary_and_category(text_content)
+        file = await document.get_file()
+        file_path = f"/tmp/{document.file_name}"
+        await file.download_to_drive(file_path)
 
-                tsv_content = await conn.fetchval(
-                    "SELECT to_tsvector('arabic_simple', $1);", text_content
-                )
-                await conn.execute("""
-INSERT INTO books(file_id, file_name, tsv_content, summary, category, pages)
-VALUES($1, $2, $3, $4, $5, $6)
+        # استخراج النص والفهرسة
+        full_text = extract_text_from_pdf(file_path)
+        tsv_content = await conn.fetchval(
+            "SELECT to_tsvector('arabic_simple', $1);", full_text
+        )
+
+        await conn.execute("""
+INSERT INTO books(file_id, file_name, tsv_content)
+VALUES($1, $2, $3)
 ON CONFLICT (file_id) DO UPDATE
 SET file_name = EXCLUDED.file_name,
-    tsv_content = EXCLUDED.tsv_content,
-    summary = EXCLUDED.summary,
-    category = EXCLUDED.category,
-    pages = EXCLUDED.pages;
-""", document.file_id, file_name, tsv_content, summary, category, pages)
+    tsv_content = EXCLUDED.tsv_content;
+""", document.file_id, document.file_name, tsv_content)
 
-                logger.info(f"📚 Indexed book: {file_name}")
-            except Exception as e:
-                logger.error(f"❌ Error indexing book: {e}")
+        logger.info(f"📚 Indexed book: {document.file_name}")
+        os.remove(file_path)
 
 # ===============================================
 # البحث المباشر مع الصفحات
@@ -142,8 +135,8 @@ SET file_name = EXCLUDED.file_name,
 BOOKS_PER_PAGE = 10
 
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "channel":
-        return
+    if update.effective_chat.type != "private":
+        return  # البحث فقط في الخاص
 
     query = update.message.text.strip()
     if not query:
@@ -156,10 +149,9 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         books = await conn.fetch("""
-SELECT id, file_id, file_name, summary, category, pages
+SELECT id, file_id, file_name
 FROM books
-WHERE file_name ILIKE '%' || $1 || '%'
-   OR tsv_content @@ plainto_tsquery('arabic_simple', $1)
+WHERE tsv_content @@ plainto_tsquery('arabic_simple', $1)
 ORDER BY uploaded_at DESC;
 """, query)
     except Exception as e:
@@ -176,37 +168,34 @@ ORDER BY uploaded_at DESC;
     await send_books_page(update, context)
 
 async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        books = context.user_data.get("search_results", [])
-        page = context.user_data.get("current_page", 0)
-        total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1
+    books = context.user_data.get("search_results", [])
+    page = context.user_data.get("current_page", 0)
+    total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1
 
-        start = page * BOOKS_PER_PAGE
-        end = start + BOOKS_PER_PAGE
-        current_books = books[start:end]
+    start = page * BOOKS_PER_PAGE
+    end = start + BOOKS_PER_PAGE
+    current_books = books[start:end]
 
-        text = f"📚 النتائج ({len(books)} كتاب)\nالصفحة {page + 1} من {total_pages}\n\n"
-        keyboard = []
+    text = f"📚 النتائج ({len(books)} كتاب)\nالصفحة {page + 1} من {total_pages}\n\n"
+    keyboard = []
 
-        for b in current_books:
-            key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
-            context.bot_data[f"file_{key}"] = b
-            keyboard.append([
-                InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
-            ])
+    for b in current_books:
+        key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
+        context.bot_data[f"file_{key}"] = b["file_id"]
+        keyboard.append([
+            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
+        ])
 
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
-        if end < len(books):
-            nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
-        if nav_buttons:
-            keyboard.append(nav_buttons)
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
+    if end < len(books):
+        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
 
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(text, reply_markup=reply_markup)
-    except Exception as e:
-        logger.error(f"❌ Error in send_books_page: {e}")
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
 # ===============================================
 # أزرار الملفات
@@ -218,10 +207,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("file:"):
         key = data.split(":")[1]
-        book = context.bot_data.get(f"file_{key}")
-        if book:
-            caption = f"📄 عدد الصفحات: {book['pages']}\n🏷️ التصنيف: {book['category']}\n📝 الملخص: {book['summary']}\n\nتم التنزيل بواسطة @Boooksfree1bot"
-            await query.message.reply_document(document=book['file_id'], caption=caption)
+        file_id = context.bot_data.get(f"file_{key}")
+        if file_id:
+            caption = "تم التنزيل بواسطة @Boooksfree1bot"
+            await query.message.reply_document(document=file_id, caption=caption)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
@@ -268,8 +257,7 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # لوحة الإدارة
-    register_admin_handlers(app, start)
+    register_admin_handlers(app, start)  # لوحة الإدارة
 
     if base_url:
         webhook_url = f"https://{base_url}"
