@@ -82,45 +82,27 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
-# الاشتراك الإجباري
-# ===============================================
-SUBSCRIPTION_CHANNEL = os.getenv("SUBSCRIPTION_CHANNEL")  # مثال: "@MyChannel"
-
-async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user_id = update.effective_user.id
-    try:
-        member = await context.bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
-        if member.status not in ["member", "administrator", "creator"]:
-            raise Exception("Not subscribed")
-        return True
-    except Exception:
-        text = f"🚫 يجب الاشتراك في القناة قبل استخدام البوت:\n{SUBSCRIPTION_CHANNEL}"
-        if update.message:
-            await update.message.reply_text(text)
-        elif update.callback_query:
-            await update.callback_query.message.reply_text(text)
-        return False
-
-# ===============================================
 # استقبال ملفات PDF من القنوات
 # ===============================================
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
+
         if not conn:
             logger.error("❌ Database not connected.")
             return
 
-        # حفظ البيانات الأساسية فقط (بدون تلخيص)
-        await conn.execute("""
+        try:
+            await conn.execute("""
 INSERT INTO books(file_id, file_name)
 VALUES($1, $2)
 ON CONFLICT (file_id) DO UPDATE
 SET file_name = EXCLUDED.file_name;
 """, document.file_id, document.file_name)
-
-        logger.info(f"📚 Indexed book: {document.file_name}")
+            logger.info(f"📚 Indexed book: {document.file_name}")
+        except Exception as e:
+            logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
 # البحث المباشر مع الصفحات
@@ -128,11 +110,8 @@ SET file_name = EXCLUDED.file_name;
 BOOKS_PER_PAGE = 10
 
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_subscription(update, context):
-        return
-
     if update.effective_chat.type != "private":
-        return
+        return  # البحث فقط في الخاص
 
     query = update.message.text.strip()
     if not query:
@@ -191,7 +170,6 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
     elif update.callback_query:
@@ -201,9 +179,6 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # أزرار الملفات
 # ===============================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_subscription(update, context):
-        return
-
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -227,8 +202,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # أوامر أساسية
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_subscription(update, context):
-        return
     await update.message.reply_text(
         "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
         "ابحث عن أي كتاب ببساطة عبر كتابة اسمه هنا.",
