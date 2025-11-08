@@ -3,14 +3,13 @@ import asyncpg
 import hashlib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, PicklePersistence, CallbackQueryHandler
+    Application, MessageHandler, filters,
+    ContextTypes, PicklePersistence, CallbackQueryHandler, CommandHandler
 )
-
 from admin_panel import register_admin_handlers  # لوحة التحكم
 
 # ===============================================
-# إعداد قاعدة البيانات
+#       إعداد قاعدة البيانات
 # ===============================================
 
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
@@ -62,13 +61,14 @@ async def close_db(app: Application):
         print("✅ Database connection closed.")
 
 # ===============================================
-# استقبال ملفات PDF من القنوات
+#       استقبال ملفات PDF من القنوات
 # ===============================================
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
+
         if conn:
             try:
                 file_name = document.file_name
@@ -85,7 +85,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# البحث عن الكتب مع نظام الصفحات
+#       البحث عن الكتب بدون أمر /search
 # ===============================================
 
 BOOKS_PER_PAGE = 10
@@ -133,6 +133,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
+        # زر لفتح الملف
         keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
 
     nav_buttons = []
@@ -150,7 +151,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=reply_markup)
 
 # ===============================================
-# معالجات الأزرار
+#       معالجات الأزرار وإرسال الملفات مع الترويج وزر المشاركة
 # ===============================================
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,15 +163,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            # إرسال الملف مع الكابشن الترويجي
-            file_name = None
-            books = context.user_data.get("search_results", [])
-            for b in books:
-                if b["file_id"] == file_id:
-                    file_name = b["file_name"]
-                    break
-            caption = f"{file_name}\nتم التنزيل بواسطة @Boooksfree1bot" if file_name else "تم التنزيل بواسطة @Boooksfree1bot"
-            await query.message.reply_document(document=file_id, caption=caption)
+            # كابشن للترويج
+            caption = "تم التنزيل بواسطة @Boooksfree1bot"
+            # زر المشاركة تحت الملف مباشرة
+            keyboard = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("شارك الملف", switch_inline_query=file_id)]]
+            )
+            await query.message.reply_document(
+                document=file_id,
+                caption=caption,
+                reply_markup=keyboard
+            )
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
@@ -181,18 +184,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
 
 # ===============================================
-# أوامر أساسية
+#       أمر /start
 # ===============================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
-        "ابحث عن أي كتاب بمجرد إرسال اسمه.",
+        "ابحث عن أي كتاب فقط بإرسال اسمه في المحادثة.",
         parse_mode="Markdown"
     )
 
 # ===============================================
-# تشغيل البوت
+#       تشغيل البوت
 # ===============================================
 
 def run_bot():
@@ -215,9 +218,9 @@ def run_bot():
 
     # الأوامر
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_books))
     app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))  # البحث مباشرة بدون /search
 
     # لوحة الإدارة
     register_admin_handlers(app, start)
