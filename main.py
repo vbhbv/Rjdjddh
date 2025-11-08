@@ -82,30 +82,24 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
-# التحقق من الاشتراك الإجباري
+# الاشتراك الإجباري
 # ===============================================
 SUBSCRIPTION_CHANNEL = os.getenv("SUBSCRIPTION_CHANNEL")  # مثال: "@MyChannel"
 
-async def is_subscribed(user_id: int, bot) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id=SUBSCRIPTION_CHANNEL, user_id=user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except Exception:
-        return False
-
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
-    if not await is_subscribed(user_id, context.bot):
+    try:
+        member = await context.bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
+        if member.status not in ["member", "administrator", "creator"]:
+            raise Exception("Not subscribed")
+        return True
+    except Exception:
+        text = f"🚫 يجب الاشتراك في القناة قبل استخدام البوت:\n{SUBSCRIPTION_CHANNEL}"
         if update.message:
-            await update.message.reply_text(
-                f"🚫 يجب الاشتراك في القناة قبل استخدام البوت:\n{SUBSCRIPTION_CHANNEL}"
-            )
+            await update.message.reply_text(text)
         elif update.callback_query:
-            await update.callback_query.message.reply_text(
-                f"🚫 يجب الاشتراك في القناة قبل استخدام البوت:\n{SUBSCRIPTION_CHANNEL}"
-            )
+            await update.callback_query.message.reply_text(text)
         return False
-    return True
 
 # ===============================================
 # استقبال ملفات PDF من القنوات
@@ -114,28 +108,19 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
-
         if not conn:
             logger.error("❌ Database not connected.")
             return
 
-        file_id = document.file_id
-        file_name = document.file_name
-
-        # فهرسة باسم الكتاب فقط (لتجنب مشاكل الاستخراج المعقدة)
-        tsv_content = await conn.fetchval(
-            "SELECT to_tsvector('arabic_simple', $1);", file_name
-        )
-
+        # حفظ البيانات الأساسية فقط (بدون تلخيص)
         await conn.execute("""
-INSERT INTO books(file_id, file_name, tsv_content)
-VALUES($1, $2, $3)
+INSERT INTO books(file_id, file_name)
+VALUES($1, $2)
 ON CONFLICT (file_id) DO UPDATE
-SET file_name = EXCLUDED.file_name,
-    tsv_content = EXCLUDED.tsv_content;
-""", file_id, file_name, tsv_content)
+SET file_name = EXCLUDED.file_name;
+""", document.file_id, document.file_name)
 
-        logger.info(f"📚 Indexed book: {file_name}")
+        logger.info(f"📚 Indexed book: {document.file_name}")
 
 # ===============================================
 # البحث المباشر مع الصفحات
@@ -143,10 +128,10 @@ SET file_name = EXCLUDED.file_name,
 BOOKS_PER_PAGE = 10
 
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        return  # البحث فقط في الخاص
-
     if not await check_subscription(update, context):
+        return
+
+    if update.effective_chat.type != "private":
         return
 
     query = update.message.text.strip()
@@ -162,7 +147,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         books = await conn.fetch("""
 SELECT id, file_id, file_name
 FROM books
-WHERE tsv_content @@ plainto_tsquery('arabic_simple', $1)
+WHERE file_name ILIKE '%' || $1 || '%'
 ORDER BY uploaded_at DESC;
 """, query)
     except Exception as e:
@@ -206,6 +191,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
+
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
     elif update.callback_query:
