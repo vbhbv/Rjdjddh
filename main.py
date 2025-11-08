@@ -82,6 +82,32 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
+# التحقق من الاشتراك الإجباري
+# ===============================================
+SUBSCRIPTION_CHANNEL = os.getenv("SUBSCRIPTION_CHANNEL")  # مثال: "@MyChannel"
+
+async def is_subscribed(user_id: int, bot) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=SUBSCRIPTION_CHANNEL, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except Exception:
+        return False
+
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    if not await is_subscribed(user_id, context.bot):
+        if update.message:
+            await update.message.reply_text(
+                f"🚫 يجب الاشتراك في القناة قبل استخدام البوت:\n{SUBSCRIPTION_CHANNEL}"
+            )
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(
+                f"🚫 يجب الاشتراك في القناة قبل استخدام البوت:\n{SUBSCRIPTION_CHANNEL}"
+            )
+        return False
+    return True
+
+# ===============================================
 # استقبال ملفات PDF من القنوات
 # ===============================================
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,9 +119,12 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error("❌ Database not connected.")
             return
 
-        # احفظ فقط اسم الملف للفهرسة
+        file_id = document.file_id
+        file_name = document.file_name
+
+        # فهرسة باسم الكتاب فقط (لتجنب مشاكل الاستخراج المعقدة)
         tsv_content = await conn.fetchval(
-            "SELECT to_tsvector('arabic_simple', $1);", document.file_name
+            "SELECT to_tsvector('arabic_simple', $1);", file_name
         )
 
         await conn.execute("""
@@ -104,9 +133,9 @@ VALUES($1, $2, $3)
 ON CONFLICT (file_id) DO UPDATE
 SET file_name = EXCLUDED.file_name,
     tsv_content = EXCLUDED.tsv_content;
-""", document.file_id, document.file_name, tsv_content)
+""", file_id, file_name, tsv_content)
 
-        logger.info(f"📚 Indexed book: {document.file_name}")
+        logger.info(f"📚 Indexed book: {file_name}")
 
 # ===============================================
 # البحث المباشر مع الصفحات
@@ -116,6 +145,9 @@ BOOKS_PER_PAGE = 10
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return  # البحث فقط في الخاص
+
+    if not await check_subscription(update, context):
+        return
 
     query = update.message.text.strip()
     if not query:
@@ -144,9 +176,9 @@ ORDER BY uploaded_at DESC;
 
     context.user_data["search_results"] = books
     context.user_data["current_page"] = 0
-    await send_books_page(update, context, edit=False)
+    await send_books_page(update, context)
 
-async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=True):
+async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1
@@ -161,7 +193,9 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
     for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
+        keyboard.append([
+            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
+        ])
 
     nav_buttons = []
     if page > 0:
@@ -172,19 +206,18 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    try:
-        if edit and update.callback_query:
-            await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text, reply_markup=reply_markup)
-    except Exception as e:
-        logger.error(f"❌ Error sending books page: {e}")
+    if update.message:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
 
 # ===============================================
-# أزرار الملفات والتنقل
+# أزرار الملفات
 # ===============================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_subscription(update, context):
+        return
+
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -208,6 +241,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # أوامر أساسية
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_subscription(update, context):
+        return
     await update.message.reply_text(
         "مرحبًا بك في 📚 *مكتبة المعرفة*\n"
         "ابحث عن أي كتاب ببساطة عبر كتابة اسمه هنا.",
@@ -241,8 +276,7 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # لوحة الإدارة
-    register_admin_handlers(app, start)
+    register_admin_handlers(app, start)  # لوحة الإدارة
 
     if base_url:
         webhook_url = f"https://{base_url}"
