@@ -2,3 +2,4 @@ python-telegram-bot
 asyncpg
 python-dotenv
 pypdf
+google-genai>=0.1.0
