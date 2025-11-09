@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات
+# إعداد قاعدة البيانات مع تحسين المزامنة وطباعة الأخطاء التفصيلية
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -30,8 +30,17 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             return
 
         conn = await asyncpg.connect(db_url)
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-        await conn.execute("""
+
+        # محاولة إنشاء امتداد unaccent
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+            logger.info("✅ Extension unaccent ensured.")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not create unaccent extension: {e}")
+
+        # محاولة إنشاء إعداد البحث العربي
+        try:
+            await conn.execute("""
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
@@ -40,13 +49,16 @@ BEGIN
 END
 $$;
 """)
-        await conn.execute("""
-ALTER TEXT SEARCH CONFIGURATION arabic_simple ALTER MAPPING
-FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
+            await conn.execute("""
+ALTER TEXT SEARCH CONFIGURATION arabic_simple
+ALTER MAPPING FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
 WITH unaccent, simple;
 """)
+            logger.info("✅ Arabic search configuration ensured.")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not configure arabic_simple search: {e}")
 
-        # الجداول
+        # الجداول الأساسية
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -70,10 +82,11 @@ CREATE TABLE IF NOT EXISTS settings (
 """)
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
 
+        # تخزين الاتصال في bot_data
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
-        logger.error(f"❌ Database setup error: {e}")
+        logger.error("❌ Database setup error", exc_info=True)
 
 async def close_db(app: Application):
     conn = app.bot_data.get("db_conn")
