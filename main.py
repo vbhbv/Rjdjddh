@@ -2,7 +2,6 @@ import os
 import asyncpg
 import hashlib
 import logging
-import unicodedata
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
@@ -21,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات مع العمود الجديد للبحث
+# إعداد قاعدة البيانات
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -53,7 +52,6 @@ CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     file_id TEXT UNIQUE,
     file_name TEXT,
-    normalized_name TEXT,
     uploaded_at TIMESTAMP DEFAULT NOW(),
     tsv_content tsvector
 );
@@ -74,17 +72,6 @@ CREATE TABLE IF NOT EXISTS settings (
 
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
-
-        # تحديث العمود normalized_name لجميع الكتب القديمة
-        books = await conn.fetch("SELECT id, file_name FROM books;")
-        for book in books:
-            norm_name = normalize_text(book["file_name"])
-            await conn.execute(
-                "UPDATE books SET normalized_name = $1 WHERE id = $2;",
-                norm_name, book["id"]
-            )
-        logger.info("✅ Normalized names updated for all existing books.")
-
     except Exception as e:
         logger.error(f"❌ Database setup error: {e}")
 
@@ -93,15 +80,6 @@ async def close_db(app: Application):
     if conn:
         await conn.close()
         logger.info("✅ Database connection closed.")
-
-# ===============================================
-# دالة لتطبيع النصوص
-# ===============================================
-def normalize_text(text: str) -> str:
-    text = unicodedata.normalize('NFKD', text)
-    text = ''.join(c for c in text if not unicodedata.combining(c))
-    text = text.replace('_', ' ')  # استبدال الشرطات بالمسافات
-    return text.lower()
 
 # ===============================================
 # استقبال ملفات PDF من القنوات
@@ -115,15 +93,13 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error("❌ Database not connected.")
             return
 
-        norm_name = normalize_text(document.file_name)
         try:
             await conn.execute("""
-INSERT INTO books(file_id, file_name, normalized_name)
-VALUES($1, $2, $3)
+INSERT INTO books(file_id, file_name)
+VALUES($1, $2)
 ON CONFLICT (file_id) DO UPDATE
-SET file_name = EXCLUDED.file_name,
-    normalized_name = EXCLUDED.normalized_name;
-""", document.file_id, document.file_name, norm_name)
+SET file_name = EXCLUDED.file_name;
+""", document.file_id, document.file_name)
             logger.info(f"📚 Indexed book: {document.file_name}")
         except Exception as e:
             logger.error(f"❌ Error indexing book: {e}")
@@ -137,7 +113,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return  # البحث فقط في الخاص
 
-    query = normalize_text(update.message.text.strip())
+    query = update.message.text.strip()
     if not query:
         return
 
@@ -150,7 +126,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         books = await conn.fetch("""
 SELECT id, file_id, file_name
 FROM books
-WHERE normalized_name ILIKE '%' || $1 || '%'
+WHERE file_name ILIKE '%' || $1 || '%'
 ORDER BY uploaded_at DESC;
 """, query)
     except Exception as e:
@@ -159,16 +135,13 @@ ORDER BY uploaded_at DESC;
         return
 
     if not books:
-        await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {update.message.text}")
+        await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {query}")
         return
 
     context.user_data["search_results"] = books
     context.user_data["current_page"] = 0
     await send_books_page(update, context)
 
-# ===============================================
-# إرسال صفحات الكتب وأزرار التحميل
-# ===============================================
 async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
@@ -238,9 +211,10 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# أمر start مع رسالة ودودة بعد الاشتراك
+# أوامر أساسية (start)
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # تحقق من الاشتراك الإجباري
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
@@ -253,10 +227,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # رسالة الترحيب بعد التحقق
     await update.message.reply_text(
-        "🎉 مرحبًا بك! وشكرا على الإشتراك، هذا أول بوت مكتبة سريع من نوعه 📚\n"
-        "ابحث عن أي كتاب مباشرة واحصل عليه في ثوانٍ.\n"
-        "تجربة سلسة، واجهة بسيطة، وسرعة فائقة.",
+        "🎉 أهلاً بك! هذا أول بوت مكتبة سريع من نوعه 📚\n"
+        "يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
+        "تجربة سلسة، واجهة بسيطة، وسرعة عالية.",
         parse_mode="Markdown"
     )
 
