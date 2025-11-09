@@ -7,8 +7,9 @@ from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     PicklePersistence, ContextTypes, filters
 )
-from admin_panel import register_admin_handlers
-from booksai import ai_search, ai_suggest_books, ai_search_by_keywords
+
+from admin_panel import register_admin_handlers  # لوحة التحكم
+from booksai import ai_search, ai_suggest_books  # ملف الذكاء الاصطناعي
 
 # ===============================================
 # إعداد اللوج
@@ -46,6 +47,7 @@ FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
 WITH unaccent, simple;
 """)
 
+        # الجداول
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -87,9 +89,11 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
+
         if not conn:
             logger.error("❌ Database not connected.")
             return
+
         try:
             await conn.execute("""
 INSERT INTO books(file_id, file_name)
@@ -102,37 +106,114 @@ SET file_name = EXCLUDED.file_name;
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# البحث والصفحات
+# الاشتراك الإجباري والقناة
+# ===============================================
+CHANNEL_USERNAME = "@iiollr"
+
+async def check_subscription(user_id: int, bot) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+# ===============================================
+# قائمة البحث الرئيسية
+# ===============================================
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🔍 بحث عادي بالاسم أو المؤلف", callback_data="search_normal")],
+        [InlineKeyboardButton("🤖 البحث بالذكاء الاصطناعي", callback_data="search_ai")],
+        [InlineKeyboardButton("💡 اقتراح كتاب", callback_data="suggest_book")],
+        [InlineKeyboardButton("📖 البحث بالكلمات المفتاحية", callback_data="search_keywords")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🎉 أهلاً بك! كيف تريد أن تبحث عن الكتاب؟",
+        reply_markup=reply_markup
+    )
+
+# ===============================================
+# أوامر أساسية (start)
+# ===============================================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_subscription(update.effective_user.id, context.bot):
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+        ])
+        await update.message.reply_text(
+            f"🚫 *المعذرة!* الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا.\n\n"
+            "اضغط على الزر ثم أعد إرسال الأمر.",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    await main_menu(update, context)
+
+# ===============================================
+# التعامل مع أزرار البحث
+# ===============================================
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "search_normal":
+        await query.message.edit_text("✏️ اكتب اسم الكتاب أو المؤلف للبحث:")
+        context.user_data["mode"] = "normal"
+    elif query.data == "search_ai":
+        await query.message.edit_text("🤖 اكتب اسم الكتاب ليقوم الذكاء الاصطناعي بجلب الوصف:")
+        context.user_data["mode"] = "ai"
+    elif query.data == "suggest_book":
+        await query.message.edit_text("💡 اكتب المجال الذي تريد اقتراح كتب فيه:")
+        context.user_data["mode"] = "suggest"
+    elif query.data == "search_keywords":
+        await query.message.edit_text("📖 اكتب كلمات مفتاحية عن الكتاب أو أحداثه:")
+        context.user_data["mode"] = "keywords"
+
+# ===============================================
+# البحث ومعالجة النصوص
 # ===============================================
 BOOKS_PER_PAGE = 10
 
-async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        return
-
-    query = update.message.text.strip()
-    if not query:
-        return
-
+async def search_books_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    mode = context.user_data.get("mode", "normal")
     conn = context.bot_data.get('db_conn')
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    try:
+    # بحث عادي
+    if mode == "normal":
+        query = text
         books = await conn.fetch("""
 SELECT id, file_id, file_name
 FROM books
 WHERE file_name ILIKE '%' || $1 || '%'
-ORDER BY uploaded_at DESC;
+ORDER BY uploaded_at DESC
 """, query)
-    except Exception as e:
-        logger.error(f"❌ Database query error: {e}")
-        await update.message.reply_text("❌ حدث خطأ في البحث.")
-        return
+
+    # بحث بالكلمات المفتاحية
+    elif mode == "keywords":
+        query = text
+        books = await conn.fetch("""
+SELECT id, file_id, file_name
+FROM books
+WHERE to_tsvector('arabic_simple', file_name) @@ plainto_tsquery('arabic_simple', $1)
+ORDER BY uploaded_at DESC
+""", query)
+
+    # اقتراح كتب
+    elif mode == "suggest":
+        books = await ai_suggest_books(text, conn)
+
+    # بحث بالذكاء الاصطناعي
+    elif mode == "ai":
+        books = await ai_search(text, conn)
 
     if not books:
-        await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {query}")
+        await update.message.reply_text("❌ لم يتم العثور على كتب مطابقة.")
         return
 
     context.user_data["search_results"] = books
@@ -154,7 +235,9 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
+        keyboard.append([
+            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
+        ])
 
     nav_buttons = []
     if page > 0:
@@ -165,15 +248,12 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup)
-    elif update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup)
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
 # ===============================================
-# أزرار الملفات
+# التعامل مع الأزرار داخل نتائج البحث
 # ===============================================
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -182,58 +262,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            # جلب الوصف عبر AI عند التنزيل
-            description = await ai_search(file_id)
-            caption = f"{description}\n\nتم التنزيل بواسطة @Boooksfree1bot"
-            share_button = InlineKeyboardMarkup([
-                [InlineKeyboardButton("شارك الكتاب", switch_inline_query=file_id)]
-            ])
+            caption = "📥 تم التنزيل بواسطة @Boooksfree1bot"
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 شارك الكتاب", switch_inline_query=file_id)]])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
-        if context.user_data.get("current_page", 0) < (len(context.user_data.get("search_results", [])) - 1) // BOOKS_PER_PAGE:
-            context.user_data["current_page"] += 1
-            await send_books_page(update, context)
+        context.user_data["current_page"] += 1
+        await send_books_page(update, context)
     elif data == "prev_page":
-        if context.user_data.get("current_page", 0) > 0:
-            context.user_data["current_page"] -= 1
-            await send_books_page(update, context)
-
-# ===============================================
-# الاشتراك الإجباري
-# ===============================================
-CHANNEL_USERNAME = "@iiollr"
-
-async def check_subscription(user_id: int, bot) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
-
-# ===============================================
-# أمر البدء مع أزرار اختيار طريقة البحث
-# ===============================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_subscription(update.effective_user.id, context.bot):
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]])
-        await update.message.reply_text(
-            f"🚫 الاشتراك في القناة {CHANNEL_USERNAME} مطلوب.\nاضغط على الزر وأعد إرسال الأمر.",
-            reply_markup=keyboard
-        )
-        return
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 بحث عادي بالاسم أو المؤلف", callback_data="search_normal")],
-        [InlineKeyboardButton("🤖 البحث بالذكاء الاصطناعي", callback_data="search_ai")],
-        [InlineKeyboardButton("💡 اقتراح كتاب", callback_data="suggest_book")],
-        [InlineKeyboardButton("📖 البحث عن الكتاب بواسطة الأحداث أو كلمات مفتاحية", callback_data="search_keywords")]
-    ])
-    await update.message.reply_text(
-        "🎉 أهلاً بك! اختر كيف تريد البحث عن الكتاب:",
-        reply_markup=keyboard
-    )
+        context.user_data["current_page"] -= 1
+        await send_books_page(update, context)
 
 # ===============================================
 # تشغيل البوت
@@ -256,11 +295,14 @@ def run_bot():
         .build()
     )
 
+    # أوامر
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
+    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(search_|suggest|keywords)$"))
+    app.add_handler(CallbackQueryHandler(callback_books, pattern="^(file:|next_page|prev_page)$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_handler))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    register_admin_handlers(app, start)
+
+    register_admin_handlers(app, start)  # لوحة الإدارة
 
     if base_url:
         webhook_url = f"https://{base_url}"
@@ -271,6 +313,7 @@ def run_bot():
             webhook_url=f"{webhook_url}/{token}"
         )
     else:
+        logger.info("⚠️ WEB_HOST not available. Running in polling mode.")
         app.run_polling(poll_interval=1.0)
 
 if __name__ == "__main__":
