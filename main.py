@@ -105,7 +105,17 @@ SET file_name = EXCLUDED.file_name;
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# البحث المباشر مع الصفحات
+# تطبيع النص العربي للبحث
+# ===============================================
+def normalize_text(text: str) -> str:
+    text = text.lower()
+    text = text.replace("_", " ")
+    text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    text = text.replace("ى", "ي")
+    return text
+
+# ===============================================
+# البحث المباشر مع الصفحات (محسن)
 # ===============================================
 BOOKS_PER_PAGE = 10
 
@@ -122,13 +132,17 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
+    normalized_query = normalize_text(query)
+
     try:
         books = await conn.fetch("""
 SELECT id, file_id, file_name
 FROM books
-WHERE file_name ILIKE '%' || $1 || '%'
+WHERE LOWER(REPLACE(
+        REPLACE(REPLACE(REPLACE(REPLACE(file_name,'أ','ا'),'إ','ا'),'آ','ا'),'ى','ي'),'_',' ')
+    ) LIKE '%' || $1 || '%'
 ORDER BY uploaded_at DESC;
-""", query)
+""", normalized_query)
     except Exception as e:
         logger.error(f"❌ Database query error: {e}")
         await update.message.reply_text("❌ حدث خطأ في البحث.")
