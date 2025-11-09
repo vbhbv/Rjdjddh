@@ -1,18 +1,15 @@
-# ===============================================
-# ملف البوت النهائي: booksai.py
-# ===============================================
-
 import os
 import asyncpg
 import hashlib
 import logging
-import re
-import difflib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
-    PicklePersistence, ContextTypes, ConversationHandler, filters
+    PicklePersistence, ContextTypes, filters
 )
+
+from admin_panel import register_admin_handlers  # لوحة التحكم
+from booksai import ai_search, ai_suggest_books  # ملف الذكاء الاصطناعي
 
 # ===============================================
 # إعداد اللوج
@@ -50,6 +47,7 @@ FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
 WITH unaccent, simple;
 """)
 
+        # الجداول
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -85,6 +83,18 @@ async def close_db(app: Application):
         logger.info("✅ Database connection closed.")
 
 # ===============================================
+# الاشتراك الإجباري والقناة
+# ===============================================
+CHANNEL_USERNAME = "@iiollr"
+
+async def check_subscription(user_id: int, bot) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+# ===============================================
 # استقبال ملفات PDF من القنوات
 # ===============================================
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,55 +118,57 @@ SET file_name = EXCLUDED.file_name;
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# الاشتراك الإجباري والقناة
-# ===============================================
-CHANNEL_USERNAME = "@iiollr"
-
-async def check_subscription(user_id: int, bot) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
-
-# ===============================================
-# دوال البحث الذكي
-# ===============================================
-def normalize_text(text: str) -> str:
-    """
-    إزالة الفروق في الحروف واستبدال الشرطات والسطر السفلي
-    """
-    replacements = {
-        'أ': 'ا', 'إ': 'ا', 'آ': 'ا',
-        'ة': 'ه', '_': ' ', '-': ' '
-    }
-    text = text.lower()
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
-
-async def fuzzy_search_books(query: str, conn) -> list:
-    """
-    بحث تسامح مع الأخطاء الإملائية والفروق
-    """
-    query_norm = normalize_text(query)
-    books = await conn.fetch("SELECT id, file_id, file_name FROM books")
-    results = []
-
-    for b in books:
-        book_name_norm = normalize_text(b['file_name'])
-        ratio = difflib.SequenceMatcher(None, query_norm, book_name_norm).ratio()
-        if ratio > 0.6:  # نسبة التشابه المقبولة
-            results.append(b)
-    # ترتيب حسب الأقرب
-    results.sort(key=lambda x: difflib.SequenceMatcher(None, query_norm, normalize_text(x['file_name'])).ratio(), reverse=True)
-    return results
-
-# ===============================================
-# عرض الكتب بالصفحات
+# البحث المتقدم مع التحسين والتسامح في الأخطاء
 # ===============================================
 BOOKS_PER_PAGE = 10
+
+def normalize_text(text: str) -> str:
+    replacements = {
+        "أ": "ا",
+        "إ": "ا",
+        "آ": "ا",
+        "ى": "ي",
+        "ؤ": "و",
+        "ئ": "ي",
+        "_": " ",  # إزالة الشريط السفلي
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        return
+
+    query = normalize_text(update.message.text.strip())
+    if not query:
+        return
+
+    conn = context.bot_data.get('db_conn')
+    if not conn:
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
+        return
+
+    try:
+        books = await conn.fetch("""
+SELECT id, file_id, file_name
+FROM books
+WHERE unaccent(file_name) ILIKE '%' || $1 || '%'
+ORDER BY uploaded_at DESC;
+""", query)
+    except Exception as e:
+        logger.error(f"❌ Database query error: {e}")
+        await update.message.reply_text("❌ حدث خطأ في البحث.")
+        return
+
+    if not books:
+        # إذا لم يجد أي كتاب، يمكن أن نقترح الذكاء الاصطناعي
+        await update.message.reply_text("❌ لم أجد أي كتب تطابق طلبك.")
+        return
+
+    context.user_data["search_results"] = books
+    context.user_data["current_page"] = 0
+    await send_books_page(update, context)
 
 async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
@@ -192,7 +204,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
 
 # ===============================================
-# أزرار الملفات
+# أزرار الملفات (زر المشاركة عند التنزيل)
 # ===============================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -204,10 +216,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
             caption = "تم التنزيل بواسطة @Boooksfree1bot"
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("شارك البوت مع صديقك", url="https://t.me/YourBotUsername")]
+            share_button = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 شارك الكتاب", url="https://t.me/share/url?url=https://t.me/Boooksfree1bot")],
             ])
-            await query.message.reply_document(document=file_id, caption=caption, reply_markup=keyboard)
+            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
@@ -218,9 +230,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
 
 # ===============================================
-# أوامر أساسية
+# أوامر أساسية (start مع خيارات البحث)
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # تحقق من الاشتراك الإجباري
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
@@ -233,16 +246,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # أزرار البحث عند البداية
+    # رسالة الترحيب مع خيارات البحث
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 البحث بالاسم أو المؤلف", callback_data="search_normal")],
-        [InlineKeyboardButton("🧠 البحث بالذكاء الاصطناعي", callback_data="search_ai")],
-        [InlineKeyboardButton("📖 اقتراح كتاب", callback_data="suggest_book")],
-        [InlineKeyboardButton("💡 البحث بالكلمات المفتاحية", callback_data="search_keywords")]
+        [InlineKeyboardButton("🔍 بحث عادي (اسم/مؤلف)", callback_data="normal_search")],
+        [InlineKeyboardButton("🤖 بحث بالذكاء الاصطناعي", callback_data="ai_search")],
+        [InlineKeyboardButton("💡 اقتراح كتاب", callback_data="suggest_book")],
     ])
     await update.message.reply_text(
-        "🎉 مرحبًا بك في 📚 *مكتبة المعرفة*\n"
-        "اختر الطريقة التي تريد البحث بها عن الكتب:",
+        "🎉 أهلاً بك في 📚 *مكتبة المعرفة*\n"
+        "كيف تريد أن تبحث عن الكتاب؟",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -274,9 +286,7 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # لوحة الإدارة
-    from admin_panel import register_admin_handlers
-    register_admin_handlers(app, start)
+    register_admin_handlers(app, start)  # لوحة الإدارة
 
     if base_url:
         webhook_url = f"https://{base_url}"
