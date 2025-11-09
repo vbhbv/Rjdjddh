@@ -1,76 +1,65 @@
 import os
-import openai
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
-import logging
+import google.generativeai as genai
 
-logger = logging.getLogger(__name__)
+# تهيئة مفتاح Gemini API من متغيرات البيئة
+genai.configure(api_key=os.getenv("AI_API_KEY"))
 
-# ===============================================
-# إعداد مفتاح OpenAI
-# ===============================================
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
+# إنشاء نموذج الذكاء الاصطناعي (يمكنك لاحقًا تغييره إلى gemini-1.5-pro)
+model = genai.GenerativeModel("gemini-1.5-flash")
 
-# ===============================================
-# البحث عن الكتب بالذكاء الاصطناعي
-# ===============================================
-async def ai_book_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_input = update.message.text.strip()
-    if not user_input:
-        await update.message.reply_text("❌ الرجاء كتابة وصف أو كلمات مفتاحية للبحث.")
-        return
 
-    conn = context.bot_data.get("db_conn")
-    if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
-        return
-
-    # طلب من الذكاء الاصطناعي اختيار أفضل 5 كتب من المكتبة
+# -----------------------------------------------------
+# 🔹 دالة توليد وصف للكتاب بناءً على عنوانه
+# -----------------------------------------------------
+async def generate_book_description(book_title: str) -> str:
+    """
+    تُولّد وصفًا موجزًا واحترافيًا لكتاب معيّن عبر Gemini AI.
+    """
     try:
-        # نحصل على جميع الكتب من قاعدة البيانات
-        books = await conn.fetch("SELECT id, file_id, file_name FROM books")
-        book_list = [b["file_name"] for b in books]
-
-        # نص الاستعلام للنموذج
         prompt = (
-            f"لدي قائمة كتب: {book_list}\n"
-            f"المستخدم وصف له: {user_input}\n"
-            "أعطني أفضل 5 كتب تتطابق مع وصفه. أجب فقط بأسماء الكتب من القائمة."
+            f"اكتب وصفًا قصيرًا وجذابًا لكتاب بعنوان '{book_title}'. "
+            "اشرح فكرته الأساسية وأهم ما يقدّمه دون مبالغة."
         )
-
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            max_tokens=200
-        )
-
-        text = response.choices[0].message.content.strip()
-        selected_books = []
-        for line in text.split("\n"):
-            line = line.strip()
-            if line in book_list:
-                selected_books.append(line)
-            if len(selected_books) >= 5:
-                break
-
-        if not selected_books:
-            await update.message.reply_text("❌ لم أتمكن من إيجاد كتب مطابقة لوصفك.")
-            return
-
-        # عرض الكتب المختارة مع أزرار التحميل
-        keyboard = []
-        for name in selected_books:
-            book = next((b for b in books if b["file_name"] == name), None)
-            if book:
-                key = book["id"]
-                context.bot_data[f"file_{key}"] = book["file_id"]
-                keyboard.append([InlineKeyboardButton(f"📘 {name}", callback_data=f"file:{key}")])
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("📚 أفضل كتب مطابقة لوصفك:", reply_markup=reply_markup)
-
+        response = model.generate_content(prompt)
+        return response.text.strip() if response.text else "لم أجد وصفًا متاحًا لهذا الكتاب."
     except Exception as e:
-        logger.error(f"❌ AI search error: {e}")
-        await update.message.reply_text("❌ حدث خطأ أثناء البحث بالذكاء الاصطناعي.")
+        print(f"[AI ERROR] أثناء توليد وصف الكتاب: {e}")
+        return "حدث خطأ أثناء توليد الوصف."
+
+
+# -----------------------------------------------------
+# 🔹 دالة اقتراح كتب مشابهة بناءً على المؤلف أو الموضوع
+# -----------------------------------------------------
+async def suggest_related_books(topic: str) -> str:
+    """
+    تُقترح كتبًا أخرى مشابهة بناءً على موضوع أو مؤلف معيّن.
+    """
+    try:
+        prompt = (
+            f"اقترح لي خمسة كتب رائعة تتناول موضوع '{topic}'، "
+            "واكتبها كقائمة بأسمائها فقط، دون شرح أو أرقام زائدة."
+        )
+        response = model.generate_content(prompt)
+        return response.text.strip() if response.text else "لم أجد كتبًا مشابهة."
+    except Exception as e:
+        print(f"[AI ERROR] أثناء اقتراح الكتب: {e}")
+        return "حدث خطأ أثناء اقتراح الكتب."
+
+
+# -----------------------------------------------------
+# 🔹 دالة البحث الذكي عن كتاب عبر القصة أو الوصف
+# -----------------------------------------------------
+async def search_by_story_or_description(query: str) -> str:
+    """
+    يحاول تخمين اسم الكتاب بناءً على قصة أو وصف المستخدم.
+    """
+    try:
+        prompt = (
+            f"بناءً على هذا الوصف أو القصة:\n'{query}'\n"
+            "ما هو الكتاب الأقرب لهذا الوصف؟ اكتب الاسم الأكثر احتمالاً فقط دون شرح."
+        )
+        response = model.generate_content(prompt)
+        return response.text.strip() if response.text else "لم أتمكن من تحديد الكتاب المقصود."
+    except Exception as e:
+        print(f"[AI ERROR] أثناء البحث عبر القصة: {e}")
+        return "حدث خطأ أثناء البحث."
