@@ -224,6 +224,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "prev_page":
         context.user_data["current_page"] -= 1
         await send_books_page(update, context)
+    elif data == "recheck_sub":
+        await start(update, context)  # إعادة التحقق من الاشتراك عند الضغط على الزر
 
 # ===============================================
 # الاشتراك الإجباري والقناة
@@ -242,13 +244,20 @@ async def check_subscription(user_id: int, bot) -> bool:
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # تحقق من الاشتراك الإجباري
-    if not await check_subscription(update.effective_user.id, context.bot):
+    is_subscribed = await check_subscription(update.effective_user.id, context.bot)
+    if not is_subscribed:
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+            [InlineKeyboardButton("📚 انضم إلى القناة", url=f"https://t.me/{CHANNEL_USERNAME}")],
+            [InlineKeyboardButton("🔄 تحقّق بعد الانضمام", callback_data="recheck_sub")]
         ])
         await update.message.reply_text(
-            f"🚫 *المعذرة!* الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا.\n\n"
-            "اضغط على الزر ثم أعد إرسال الأمر.",
+            f"🤍 أهلاً بك عزيزي القارئ!\n\n"
+            f"لقد عملنا بجدّ وشغف على جمع وفهرسة أكثر من *99,000 كتاب* 📖 "
+            f"لتكون متاحة لك مجانًا بسهولة وسرعة.\n\n"
+            f"كل ما نطلبه منك هو *الانضمام إلى قناتنا الرسمية* "
+            f"كلمسة تقدير بسيطة لدعم هذا المشروع الثقافي الرائع. 🌿\n\n"
+            f"📢 القناة: [@{CHANNEL_USERNAME.lstrip('@')}](https://t.me/{CHANNEL_USERNAME})\n\n"
+            f"بعد الانضمام، اضغط على زر *تحقّق بعد الانضمام* أدناه 👇",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
@@ -284,12 +293,12 @@ def run_bot():
     )
 
     # أوامر
-    app.add_handler(CommandHandler("start", start))
+    # ✅ لم نسجل /start هنا مباشرة، سيتم تسجيله عبر لوحة الإدارة
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    register_admin_handlers(app, start)  # لوحة الإدارة
+    register_admin_handlers(app, start)  # لوحة الإدارة تسجل /start مع التحقق وتتبع المستخدمين
 
     if base_url:
         webhook_url = f"https://{base_url}"
