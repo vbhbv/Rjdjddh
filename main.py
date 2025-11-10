@@ -1,3 +1,6 @@
+هذا هو الملف الرئيسي كذلك حلله واكتشف الخطأ
+
+
 import os
 import asyncpg
 import hashlib
@@ -20,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات
+# إعداد قاعدة البيانات مع تحسين المزامنة وطباعة الأخطاء التفصيلية
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -31,7 +34,34 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
 
         conn = await asyncpg.connect(db_url)
 
-        # إعداد الجداول
+        # محاولة إنشاء امتداد unaccent
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+            logger.info("✅ Extension unaccent ensured.")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not create unaccent extension: {e}")
+
+        # محاولة إنشاء إعداد البحث العربي
+        try:
+            await conn.execute("""
+DO $$
+BEGIN
+   IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
+       CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
+   END IF;
+END
+$$;
+""")
+            await conn.execute("""
+ALTER TEXT SEARCH CONFIGURATION arabic_simple
+ALTER MAPPING FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
+WITH unaccent, simple;
+""")
+            logger.info("✅ Arabic search configuration ensured.")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not configure arabic_simple search: {e}")
+
+        # الجداول الأساسية
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -55,9 +85,10 @@ CREATE TABLE IF NOT EXISTS settings (
 """)
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
 
+        # تخزين الاتصال في bot_data
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
-    except Exception:
+    except Exception as e:
         logger.error("❌ Database setup error", exc_info=True)
 
 async def close_db(app: Application):
@@ -90,10 +121,8 @@ SET file_name = EXCLUDED.file_name;
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# البحث في الكتب
+# تطبيع النص العربي للبحث
 # ===============================================
-BOOKS_PER_PAGE = 10
-
 def normalize_text(text: str) -> str:
     text = text.lower()
     text = text.replace("_", " ")
@@ -101,9 +130,14 @@ def normalize_text(text: str) -> str:
     text = text.replace("ى", "ي")
     return text
 
+# ===============================================
+# البحث المباشر مع الصفحات (محسن)
+# ===============================================
+BOOKS_PER_PAGE = 10
+
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
-        return
+        return  # البحث فقط في الخاص
 
     query = update.message.text.strip()
     if not query:
@@ -115,12 +149,14 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     normalized_query = normalize_text(query)
+
     try:
         books = await conn.fetch("""
 SELECT id, file_id, file_name
 FROM books
-WHERE LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(file_name,'أ','ا'),'إ','ا'),'آ','ا'),'ى','ي'),'_',' ')) 
-LIKE '%' || $1 || '%'
+WHERE LOWER(REPLACE(
+        REPLACE(REPLACE(REPLACE(REPLACE(file_name,'أ','ا'),'إ','ا'),'آ','ا'),'ى','ي'),'_',' ')
+    ) LIKE '%' || $1 || '%'
 ORDER BY uploaded_at DESC;
 """, normalized_query)
     except Exception as e:
@@ -193,12 +229,40 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
 
 # ===============================================
-# أمر البدء
+# الاشتراك الإجباري والقناة
+# ===============================================
+CHANNEL_USERNAME = "@iiollr"
+
+async def check_subscription(user_id: int, bot) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+# ===============================================
+# أوامر أساسية (start)
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # تحقق من الاشتراك الإجباري
+    if not await check_subscription(update.effective_user.id, context.bot):
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+        ])
+        await update.message.reply_text(
+            f"🚫 *المعذرة!* الاشتراك في القناة {CHANNEL_USERNAME} هو دليل دعمك لنا.\n\n"
+            "اضغط على الزر ثم أعد إرسال الأمر.",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    # رسالة الترحيب بعد التحقق
     await update.message.reply_text(
-        "🎉 أهلاً بك! يمكنك الآن البحث عن أي كتاب مباشرة.\n"
-        "اكتب اسم الكتاب الذي تريده وسأجده لك فوراً 📚"
+        "🎉 أهلاً بك! هذا أول بوت مكتبة سريع من نوعه 📚\n"
+        "يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
+        "تجربة سلسة، واجهة بسيطة، وسرعة عالية.",
+        parse_mode="Markdown"
     )
 
 # ===============================================
@@ -222,13 +286,13 @@ def run_bot():
         .build()
     )
 
-    # ✅ حذف تسجيل /start المكرر
+    # أوامر
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # تسجيل لوحة المشرفين (وفيها /start الصحيح مع التتبع)
-    register_admin_handlers(app, start)
+    register_admin_handlers(app, start)  # لوحة الإدارة
 
     if base_url:
         webhook_url = f"https://{base_url}"
