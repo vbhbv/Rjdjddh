@@ -1,6 +1,3 @@
-هذا هو الملف الرئيسي كذلك حلله واكتشف الخطأ
-
-
 import os
 import asyncpg
 import hashlib
