@@ -1,6 +1,5 @@
 import os
 import asyncpg
-import hashlib
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -9,7 +8,7 @@ from telegram.ext import (
 )
 
 from admin_panel import register_admin_handlers  # لوحة التحكم
-from search_handler import search_books, search_similar_books, send_books_page  # استدعاء البحث الجديد
+from search_handler import search_books, send_books_page, handle_callbacks  # استدعاء البحث الجديد
 
 # ===============================================
 # إعداد اللوج
@@ -32,7 +31,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
 
         conn = await asyncpg.connect(db_url)
 
-        # محاولة إنشاء امتداد unaccent
+        # إنشاء الامتداد unaccent
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
             logger.info("✅ Extension unaccent ensured.")
@@ -45,8 +44,7 @@ CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     file_id TEXT UNIQUE,
     file_name TEXT,
-    uploaded_at TIMESTAMP DEFAULT NOW(),
-    tsv_content tsvector
+    uploaded_at TIMESTAMP DEFAULT NOW()
 );
 """)
         await conn.execute("""
@@ -61,8 +59,8 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 """)
-        await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
 
+        # تخزين الاتصال في bot_data
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
@@ -81,7 +79,6 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
-
         if not conn:
             logger.error("❌ Database not connected.")
             return
@@ -119,17 +116,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")]
         ])
         await update.message.reply_text(
-            f"🚫 *المعذرة!* لقد تعبنا في فهرسة أكثر من 99,000 كتاب 📚\n"
-            f"كل ما نطلبه منك هو الانضمام إلى قناتنا: @{channel_username} فضلاً 🙏\n\n"
-            "اضغط على الزر أدناه ثم أعد إرسال الأمر.",
+            f"🚫 *المعذرة!* يرجى الانضمام إلى القناة @{channel_username} لإكمال استخدام البوت.",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
         return
 
     await update.message.reply_text(
-        "🎉 أهلاً بك! هذا أول بوت مكتبة سريع من نوعه 📚\n"
-        "يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
+        "🎉 أهلاً بك! يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
         "تجربة سلسة، واجهة بسيطة، وسرعة عالية.",
         parse_mode="Markdown"
     )
@@ -158,9 +152,9 @@ def run_bot():
     # تسجيل معالجات البحث والتحميل
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(send_books_page))  # إعادة استخدام صفحة الكتب
+    app.add_handler(CallbackQueryHandler(handle_callbacks))  # معالجة أزرار الكتب والاقتراحات
 
-    # تسجيل لوحة المشرفين + start مع تتبع المستخدم
+    # تسجيل لوحة المشرفين + start
     register_admin_handlers(app, start)
 
     if base_url:
