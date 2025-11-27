@@ -7,8 +7,8 @@ from telegram.ext import (
     PicklePersistence, ContextTypes, filters
 )
 
-from admin_panel import register_admin_handlers
-from search_handler import search_books, send_books_page, handle_callbacks
+from admin_panel import register_admin_handlers  # لوحة التحكم
+from search_handler import search_books, send_books_page, handle_callbacks  # البحث الجديد
 
 # ===============================================
 # إعداد اللوج
@@ -31,12 +31,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
 
         conn = await asyncpg.connect(db_url)
 
-        try:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-            logger.info("✅ Extension unaccent ensured.")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not create unaccent extension: {e}")
-
+        # الجداول الأساسية
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -45,14 +40,12 @@ CREATE TABLE IF NOT EXISTS books (
     uploaded_at TIMESTAMP DEFAULT NOW()
 );
 """)
-
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT PRIMARY KEY,
     joined_at TIMESTAMP DEFAULT NOW()
 );
 """)
-
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -81,7 +74,6 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not conn:
             logger.error("❌ Database not connected.")
             return
-
         try:
             await conn.execute("""
 INSERT INTO books(file_id, file_name)
@@ -94,7 +86,7 @@ SET file_name = EXCLUDED.file_name;
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# الاشتراك الإجباري
+# الاشتراك الإجباري والقناة
 # ===============================================
 CHANNEL_USERNAME = "@iiollr"
 
@@ -106,24 +98,24 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# start
+# أوامر أساسية (start)
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel_username = CHANNEL_USERNAME.lstrip('@')
-
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")]
         ])
         await update.message.reply_text(
-            f"🚫 *يرجى الانضمام إلى القناة @{channel_username} لاستخدام البوت.*",
+            f"🚫 *المعذرة!* يرجى الانضمام إلى القناة @{channel_username} لإكمال استخدام البوت.",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
         return
 
     await update.message.reply_text(
-        "🎉 أهلاً بك! أرسل اسم أي كتاب وسأبحث لك عنه فوراً.",
+        "🎉 أهلاً بك! يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
+        "تجربة سلسة، واجهة بسيطة، وسرعة عالية.",
         parse_mode="Markdown"
     )
 
@@ -136,7 +128,7 @@ def run_bot():
     port = int(os.getenv("PORT", 8080))
 
     if not token:
-        logger.error("🚨 BOT_TOKEN not found.")
+        logger.error("🚨 BOT_TOKEN not found in environment.")
         return
 
     app = (
@@ -148,14 +140,12 @@ def run_bot():
         .build()
     )
 
-    # البحث
+    # تسجيل معالجات البحث والتحميل
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
-    # استقبال PDF من القنوات
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    # أزرار الصفحات + التحميل + الاقتراحات
     app.add_handler(CallbackQueryHandler(handle_callbacks))
 
-    # لوحة المشرف + start
+    # تسجيل لوحة المشرفين + start
     register_admin_handlers(app, start)
 
     if base_url:
@@ -167,8 +157,8 @@ def run_bot():
             webhook_url=f"{webhook_url}/{token}"
         )
     else:
-        logger.info("⚠️ Running in polling mode.")
-        app.run_polling()
+        logger.info("⚠️ WEB_HOST not available. Running in polling mode.")
+        app.run_polling(poll_interval=1.0)
 
 if __name__ == "__main__":
     run_bot()
