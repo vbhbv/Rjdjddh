@@ -1,6 +1,7 @@
 import hashlib
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import asyncpg
 
 BOOKS_PER_PAGE = 10
 BOT_USERNAME = "@boooksfree1bot"
@@ -27,7 +28,7 @@ def remove_common_words(text: str) -> str:
 # -----------------------------
 # إرسال صفحة الكتب
 # -----------------------------
-async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1
@@ -42,11 +43,8 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-
-        # زر تنزيل الملف + زر مشاركة
         keyboard.append([
-            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}"),
-            InlineKeyboardButton("🔗 مشاركة", switch_inline_query=b['file_name'])
+            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
         ])
 
     nav_buttons = []
@@ -58,7 +56,6 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
     elif update.callback_query:
@@ -67,7 +64,7 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------
 # البحث الرئيسي
 # -----------------------------
-async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
 
@@ -75,7 +72,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         return
 
-    conn = context.bot_data.get("db_conn")
+    conn: asyncpg.Connection = context.bot_data.get("db_conn")
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
@@ -85,23 +82,20 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         books = await conn.fetch("""
-            SELECT id, file_id, file_name
-            FROM books
-            WHERE LOWER(REPLACE(
-                REPLACE(REPLACE(REPLACE(REPLACE(file_name,'أ','ا'),'إ','ا'),'آ','ا'),'ى','ي'),'_',' ')
-            ) LIKE '%' || $1 || '%'
-            ORDER BY uploaded_at DESC;
+        SELECT id, file_id, file_name
+        FROM books
+        WHERE LOWER(REPLACE(
+            REPLACE(REPLACE(REPLACE(REPLACE(file_name,'أ','ا'),'إ','ا'),'آ','ا'),'ى','ي'),'_',' ')
+        ) LIKE '%' || $1 || '%'
+        ORDER BY uploaded_at DESC;
         """, normalized_query)
-    except Exception as e:
+    except Exception:
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
 
     if not books:
-        # إذا لم توجد نتائج، إرسال زر البحث عن كتب مشابهة
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
-        await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {query}\nيمكنك البحث عن كتب مشابهة:", reply_markup=keyboard)
-        context.user_data["search_results"] = []
-        context.user_data["current_page"] = 0
+        # البحث السياقي الذكي: اقتراح كتب مشابهة حسب كلمات الاستعلام
+        await search_similar_books(update, context)
         return
 
     context.user_data["search_results"] = books
@@ -109,26 +103,28 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_books_page(update, context)
 
 # -----------------------------
-# البحث عن كتب مشابهة
+# البحث السياقي الذكي
 # -----------------------------
-async def search_similar_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = context.bot_data.get("db_conn")
+async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
+    conn: asyncpg.Connection = context.bot_data.get("db_conn")
     last_query = context.user_data.get("last_query")
     if not last_query or not conn:
         await update.callback_query.message.reply_text("❌ لا يوجد موضوع للبحث عنه.")
         return
 
-    # البحث عن كتب تحتوي على أي كلمة من الاستعلام الأصلي
     words = last_query.split()
+
+    # البحث عن أي كلمة موجودة في اسم الكتاب
+    where_clause = " OR ".join([f"file_name ILIKE '%' || '{w}' || '%'" for w in words])
 
     try:
         books = await conn.fetch(f"""
-            SELECT id, file_id, file_name
-            FROM books
-            WHERE {" OR ".join([f"LOWER(file_name) LIKE '%' || '{w}' || '%'" for w in words])}
-            ORDER BY uploaded_at DESC;
+        SELECT id, file_id, file_name
+        FROM books
+        WHERE {where_clause}
+        ORDER BY uploaded_at DESC;
         """)
-    except Exception as e:
+    except Exception:
         await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
         return
 
@@ -141,9 +137,9 @@ async def search_similar_books(update: Update, context: ContextTypes.DEFAULT_TYP
     await send_books_page(update, context)
 
 # -----------------------------
-# معالجة أزرار الكتب والاقتراحات
+# معالجة أزرار الكتب
 # -----------------------------
-async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -153,7 +149,11 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
             caption = f"تم التنزيل بواسطة {BOT_USERNAME}"
-            await query.message.reply_document(document=file_id, caption=caption)
+            # زر مشاركة
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔗 شارك هذا الكتاب", switch_inline_query=f"{file_id}")
+            ]])
+            await query.message.reply_document(document=file_id, caption=caption, reply_markup=keyboard)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
