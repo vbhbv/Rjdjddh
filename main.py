@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 
 from admin_panel import register_admin_handlers  # لوحة التحكم
-from search_handler import search_books, suggest_books, send_books_page  # استدعاء البحث الجديد
+from search_handler import search_books, search_similar_books, send_books_page  # استدعاء البحث الجديد
 
 # ===============================================
 # إعداد اللوج
@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات مع تحسين المزامنة وطباعة الأخطاء التفصيلية
+# إعداد قاعدة البيانات
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -38,26 +38,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             logger.info("✅ Extension unaccent ensured.")
         except Exception as e:
             logger.warning(f"⚠️ Could not create unaccent extension: {e}")
-
-        # محاولة إنشاء إعداد البحث العربي
-        try:
-            await conn.execute("""
-DO $$
-BEGIN
-   IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'arabic_simple') THEN
-       CREATE TEXT SEARCH CONFIGURATION arabic_simple (PARSER = default);
-   END IF;
-END
-$$;
-""")
-            await conn.execute("""
-ALTER TEXT SEARCH CONFIGURATION arabic_simple
-ALTER MAPPING FOR word, hword, hword_part, asciiword, asciihword, hword_asciipart
-WITH unaccent, simple;
-""")
-            logger.info("✅ Arabic search configuration ensured.")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not configure arabic_simple search: {e}")
 
         # الجداول الأساسية
         await conn.execute("""
@@ -83,7 +63,6 @@ CREATE TABLE IF NOT EXISTS settings (
 """)
         await conn.execute("CREATE INDEX IF NOT EXISTS tsv_idx ON books USING GIN (tsv_content);")
 
-        # تخزين الاتصال في bot_data
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
@@ -119,31 +98,6 @@ SET file_name = EXCLUDED.file_name;
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# أزرار الملفات و callback handler
-# ===============================================
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data.startswith("file:"):
-        key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
-        if file_id:
-            caption = "تم التنزيل بواسطة @Boooksfree1bot"
-            await query.message.reply_document(document=file_id, caption=caption)
-        else:
-            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
-    elif data.startswith("suggest:"):
-        await suggest_books(update, context)
-    elif data == "next_page":
-        context.user_data["current_page"] += 1
-        await send_books_page(update, context)
-    elif data == "prev_page":
-        context.user_data["current_page"] -= 1
-        await send_books_page(update, context)
-
-# ===============================================
 # الاشتراك الإجباري والقناة
 # ===============================================
 CHANNEL_USERNAME = "@iiollr"
@@ -160,7 +114,6 @@ async def check_subscription(user_id: int, bot) -> bool:
 # ===============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel_username = CHANNEL_USERNAME.lstrip('@')
-    # تحقق من الاشتراك الإجباري
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")]
@@ -174,7 +127,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # رسالة الترحيب بعد التحقق
     await update.message.reply_text(
         "🎉 أهلاً بك! هذا أول بوت مكتبة سريع من نوعه 📚\n"
         "يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
@@ -203,10 +155,10 @@ def run_bot():
         .build()
     )
 
-    # تسجيل معالجات البحث من الملف الجديد
+    # تسجيل معالجات البحث والتحميل
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(CallbackQueryHandler(send_books_page))  # إعادة استخدام صفحة الكتب
 
     # تسجيل لوحة المشرفين + start مع تتبع المستخدم
     register_admin_handlers(app, start)
