@@ -1,6 +1,6 @@
 import hashlib
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, Update
 
 BOOKS_PER_PAGE = 10
 
@@ -16,7 +16,7 @@ def normalize_text(text: str) -> str:
     return text
 
 # -----------------------------
-# إزالة كلمات عامة مثل كتاب/رواية
+# إزالة كلمات مثل (كتاب / رواية)
 # -----------------------------
 def remove_common_words(text: str) -> str:
     for word in ["كتاب", "رواية"]:
@@ -29,7 +29,7 @@ def remove_common_words(text: str) -> str:
 async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
-    total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1
+    total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
 
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
@@ -41,25 +41,32 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
+
+        keyboard.append([
+            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
+        ])
 
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
     if end < len(books):
         nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
+
     if nav_buttons:
         keyboard.append(nav_buttons)
 
+    # زر البحث عن مشابهات
     if not books and context.user_data.get("last_query"):
-        keyboard.append([InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")])
+        keyboard.append([
+            InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")
+        ])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
-    elif update.callback_query:
-        await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+    else:
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
 # البحث الرئيسي
@@ -74,7 +81,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = context.bot_data.get("db_conn")
     if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
         return
 
     normalized_query = normalize_text(remove_common_words(query))
@@ -89,14 +96,17 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ) LIKE '%' || $1 || '%'
         ORDER BY uploaded_at DESC;
         """, normalized_query)
-    except Exception:
-        await update.message.reply_text("❌ حدث خطأ في البحث.")
+
+    except:
+        await update.message.reply_text("❌ حدث خطأ أثناء البحث.")
         return
 
     if not books:
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]
+        ])
         await update.message.reply_text(
-            f"❌ لم أجد أي كتب تطابق: {query}\nيمكنك البحث عن كتب مشابهة:",
+            f"❌ لا توجد نتائج للبحث: {query}",
             reply_markup=keyboard
         )
         context.user_data["search_results"] = []
@@ -105,6 +115,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["search_results"] = books
     context.user_data["current_page"] = 0
+
     await send_books_page(update, context)
 
 # -----------------------------
@@ -114,21 +125,21 @@ async def search_similar_books(update: Update, context: ContextTypes.DEFAULT_TYP
     conn = context.bot_data.get("db_conn")
     last_query = context.user_data.get("last_query")
 
-    if not last_query or not conn:
-        await update.callback_query.message.reply_text("❌ لا يوجد موضوع للبحث عنه.")
+    if not conn or not last_query:
+        await update.callback_query.message.reply_text("❌ لا يوجد ما أبحث عنه.")
         return
 
     words = last_query.split()
 
     try:
-        books = await conn.fetch(f"""
+        books = await conn.fetch("""
         SELECT id, file_id, file_name
         FROM books
-        WHERE {" OR ".join([f"file_name ILIKE '%' || '{w}' || '%'" for w in words])}
+        WHERE """ + " OR ".join([f"file_name ILIKE '%{w}%'" for w in words]) + """
         ORDER BY uploaded_at DESC;
         """)
-    except Exception:
-        await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
+    except:
+        await update.callback_query.message.reply_text("❌ خطأ أثناء البحث عن مشابهات.")
         return
 
     if not books:
@@ -137,4 +148,43 @@ async def search_similar_books(update: Update, context: ContextTypes.DEFAULT_TYP
 
     context.user_data["search_results"] = books
     context.user_data["current_page"] = 0
+
     await send_books_page(update, context)
+
+# -----------------------------
+# معالج الأزرار بالكامل
+# -----------------------------
+async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+
+    # فتح ملف PDF
+    if data.startswith("file:"):
+        key = data.split("file:")[1]
+        file_id = context.bot_data.get(f"file_{key}")
+
+        await query.answer()
+        await query.message.reply_document(file_id)
+        return
+
+    # التالي
+    if data == "next_page":
+        context.user_data["current_page"] += 1
+        await query.answer()
+        await send_books_page(update, context)
+        return
+
+    # السابق
+    if data == "prev_page":
+        context.user_data["current_page"] -= 1
+        await query.answer()
+        await send_books_page(update, context)
+        return
+
+    # بحث مشابهات
+    if data == "search_similar":
+        await query.answer()
+        await search_similar_books(update, context)
+        return
+
+    await query.answer("❌ أمر غير معروف.")
