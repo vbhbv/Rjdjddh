@@ -1,14 +1,14 @@
 import os
 import asyncpg
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     PicklePersistence, ContextTypes, filters
 )
 
 from admin_panel import register_admin_handlers  # لوحة التحكم
-from search_handler import search_books, send_books_page, handle_callbacks  # البحث الجديد
+from search_handler import search_books, send_books_page, handle_callbacks  # استدعاء البحث الجديد
 
 # ===============================================
 # إعداد اللوج
@@ -30,6 +30,13 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             return
 
         conn = await asyncpg.connect(db_url)
+
+        # إنشاء الامتداد unaccent
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+            logger.info("✅ Extension unaccent ensured.")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not create unaccent extension: {e}")
 
         # الجداول الأساسية
         await conn.execute("""
@@ -53,6 +60,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """)
 
+        # تخزين الاتصال في bot_data
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
@@ -67,13 +75,14 @@ async def close_db(app: Application):
 # ===============================================
 # استقبال ملفات PDF من القنوات
 # ===============================================
-async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_pdf(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
         if not conn:
             logger.error("❌ Database not connected.")
             return
+
         try:
             await conn.execute("""
 INSERT INTO books(file_id, file_name)
@@ -100,7 +109,7 @@ async def check_subscription(user_id: int, bot) -> bool:
 # ===============================================
 # أوامر أساسية (start)
 # ===============================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
     channel_username = CHANNEL_USERNAME.lstrip('@')
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
@@ -143,7 +152,7 @@ def run_bot():
     # تسجيل معالجات البحث والتحميل
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(handle_callbacks))
+    app.add_handler(CallbackQueryHandler(handle_callbacks))  # معالجة أزرار الكتب والاقتراحات
 
     # تسجيل لوحة المشرفين + start
     register_admin_handlers(app, start)
