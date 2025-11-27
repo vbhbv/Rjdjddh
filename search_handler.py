@@ -1,6 +1,6 @@
 import hashlib
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ContextTypes
 
 BOOKS_PER_PAGE = 10
 
@@ -51,11 +51,11 @@ async def send_books_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    # إضافة زر البحث عن كتب مشابهة إذا لم توجد نتائج
     if not books and context.user_data.get("last_query"):
         keyboard.append([InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
+
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
     elif update.callback_query:
@@ -89,14 +89,16 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ) LIKE '%' || $1 || '%'
         ORDER BY uploaded_at DESC;
         """, normalized_query)
-    except Exception as e:
+    except Exception:
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
 
     if not books:
-        # إذا لم توجد نتائج، إرسال رسالة مع زر البحث عن كتب مشابهة
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
-        await update.message.reply_text(f"❌ لم أجد أي كتب تطابق: {query}\nيمكنك البحث عن كتب مشابهة:", reply_markup=keyboard)
+        await update.message.reply_text(
+            f"❌ لم أجد أي كتب تطابق: {query}\nيمكنك البحث عن كتب مشابهة:",
+            reply_markup=keyboard
+        )
         context.user_data["search_results"] = []
         context.user_data["current_page"] = 0
         return
@@ -111,13 +113,12 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_similar_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
     last_query = context.user_data.get("last_query")
+
     if not last_query or not conn:
         await update.callback_query.message.reply_text("❌ لا يوجد موضوع للبحث عنه.")
         return
 
-    # البحث عن كتب تحتوي على أي كلمة من الاستعلام الأصلي
     words = last_query.split()
-    query_like = " | ".join(words)
 
     try:
         books = await conn.fetch(f"""
@@ -126,7 +127,7 @@ async def search_similar_books(update: Update, context: ContextTypes.DEFAULT_TYP
         WHERE {" OR ".join([f"file_name ILIKE '%' || '{w}' || '%'" for w in words])}
         ORDER BY uploaded_at DESC;
         """)
-    except Exception as e:
+    except Exception:
         await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
         return
 
