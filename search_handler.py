@@ -41,28 +41,43 @@ def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
 
 # -----------------------------
-# دالة التقييم الوزني فائق الدقة
+# تقشير بسيط للكلمات (light stemming)
+# -----------------------------
+def light_stem(word: str) -> str:
+    """إزالة بعض اللواحق واللاحقات الشائعة لتوحيد الجذر."""
+    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
+    for suf in suffixes:
+        if word.endswith(suf):
+            word = word[:-len(suf)]
+            break
+    if word.startswith("ال"):
+        word = word[2:]
+    return word
+
+# -----------------------------
+# دالة التقييم الوزني فائق الذكاء
 # -----------------------------
 def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> int:
-    """يحسب التقييم الوزني للكتاب بناءً على نوع ومكان المطابقة في العنوان."""
+    """يحسب التقييم الوزني للكتاب بناءً على نوع ومكان المطابقة مع دعم الجذر."""
     score = 0
     book_name = normalize_text(book.get('file_name', ''))
 
     # التطابق الحرفي الكامل
     if normalized_query == book_name:
         score += 50
-    # تطابق الجملة كعبارة
+    # تطابق الجملة
     elif normalized_query in book_name:
         score += 20
 
-    # تقييم الكلمات المفتاحية
     title_words = book_name.split()
     for k in keywords:
+        k_stem = light_stem(k)
         for t_word in title_words:
-            if t_word.startswith(k):
+            t_stem = light_stem(t_word)
+            if t_stem.startswith(k_stem):
                 score += 10
-            elif k in t_word:
-                score += 5
+            elif k_stem in t_stem:
+                score += 8  # أي مكان في الكلمة بعد تطبيق الجذر
     return score
 
 # -----------------------------
@@ -110,7 +125,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي متعدد المراحل (MSSA) المطور
+# البحث الذكي متعدد المراحل المطور جداً
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -164,17 +179,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             ORDER BY uploaded_at DESC;
             """)
 
-        # المرحلة 4: تطابق بداية الكلمة
-        if not books and keywords:
-            search_stage_text = "فحص متقدم للكلمات الرئيسية"
-            start_conditions = " OR ".join([f"LOWER(file_name) LIKE '{get_db_safe_query(k)}%' OR LOWER(file_name) LIKE '% {get_db_safe_query(k)}%'" for k in keywords])
-            books = await conn.fetch(f"""
-            SELECT id, file_id, file_name, uploaded_at
-            FROM books
-            WHERE {start_conditions}
-            ORDER BY uploaded_at DESC;
-            """)
-
     except Exception as e:
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
@@ -186,7 +190,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_page"] = 0
         return
 
-    # التقييم الذكي باستخدام calculate_score
+    # التقييم الذكي باستخدام التقشير والجذر
     scored_books = []
     for book in books:
         score = calculate_score(book, keywords, normalized_query)
