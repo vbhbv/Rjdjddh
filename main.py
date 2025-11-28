@@ -60,7 +60,6 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """)
 
-        # تخزين الاتصال في bot_data
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
     except Exception as e:
@@ -95,7 +94,7 @@ SET file_name = EXCLUDED.file_name;
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# الاشتراك الإجباري والقناة
+# الاشتراك الإجباري
 # ===============================================
 CHANNEL_USERNAME = "@iiollr"
 
@@ -107,24 +106,30 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# أوامر أساسية (start)
+# رسالة البدء /start
 # ===============================================
 async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
     channel_username = CHANNEL_USERNAME.lstrip('@')
+
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")]
         ])
         await update.message.reply_text(
-            f"🚫 *المعذرة!* يرجى الانضمام إلى القناة @{channel_username} لإكمال استخدام البوت.",
+            f"🚫 المعذرة! يرجى الانضمام إلى القناة تقديرا لجهودنا المبذولة لتحقيق هذا البوت@{channel_username} لإكمال استخدام البوت.",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
         return
 
+    # 🔥 رسالة الترحيب الجديدة — *تم استبدالها فقط*
     await update.message.reply_text(
-        "🎉 أهلاً بك! يمكنك البحث عن أي كتاب مباشرة والحصول عليه في ثوانٍ.\n"
-        "تجربة سلسة، واجهة بسيطة، وسرعة عالية.",
+        "اهلاً بك في بوت مكتبة الكتب 📚\n"
+        "انا بوت ذكي استطيع مساعدتك في إيجاد الكتاب الذي تبحث عنه "
+        "أو إيجاد كتب مشابهة للموضوع الذي تريده لأنني أحتوي على مئات الآلاف من الكتب.\n\n"
+        "طريقة الاستخدام:\n"
+        "البحث سهل جداً — اكتب اسم الكتاب الذي تريده، أو اكتب كلمات مفتاحية حول موضوعك مثل: برمجة، اعراب، فلسفة، اقتصاد...\n\n"
+        "وسأبحث لك عن أقرب النتائج خلال ثوانٍ وأعرض لك ما هو متوفر.",
         parse_mode="Markdown"
     )
 
@@ -149,12 +154,10 @@ def run_bot():
         .build()
     )
 
-    # تسجيل معالجات البحث والتحميل
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(handle_callbacks))  # معالجة أزرار الكتب والاقتراحات
+    app.add_handler(CallbackQueryHandler(handle_callbacks))
 
-    # تسجيل لوحة المشرفين + start
     register_admin_handlers(app, start)
 
     if base_url:
