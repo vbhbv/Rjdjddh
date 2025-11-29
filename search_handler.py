@@ -1,7 +1,3 @@
-كتبت الموت الصغير لم تظهر
-وكتبت موت صغير ظهرت
-ضع هذا في ملاحظاتك وجد حل له كذلك وطبق كل ما قلنا عليه بدقة متناهية في الكود ادناه
-
 import hashlib
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
