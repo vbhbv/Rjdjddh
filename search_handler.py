@@ -3,8 +3,18 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import re
 from typing import List, Dict, Any
+import os
 
 BOOKS_PER_PAGE = 10
+
+# -----------------------------
+# إعدادات المشرف
+# -----------------------------
+try:
+    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))  # معرف المشرف
+except ValueError:
+    ADMIN_USER_ID = 0
+    print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
 # دوال التطبيع والتنظيف
@@ -79,6 +89,23 @@ def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query:
             elif k_stem in t_stem:
                 score += 8  # أي مكان في الكلمة بعد تطبيق الجذر
     return score
+
+# -----------------------------
+# إشعار المشرف بعد كل بحث
+# -----------------------------
+async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
+    """إرسال إشعار للمشرف عن البحث الذي قام به المستخدم."""
+    if ADMIN_USER_ID == 0:
+        return  # لا يوجد مشرف محدد
+
+    bot = context.bot
+    status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
+    username_text = f"@{username}" if username else "(بدون يوزر)"
+    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}"
+    try:
+        await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
+    except Exception as e:
+        print(f"Failed to notify admin: {e}")
 
 # -----------------------------
 # إرسال صفحة الكتب
@@ -182,6 +209,10 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
+
+    # إرسال إشعار للمشرف
+    found_results = bool(books)
+    await notify_admin_search(context, update.effective_user.username, query, found_results)
 
     if not books:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
