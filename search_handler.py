@@ -4,15 +4,15 @@ from telegram.ext import ContextTypes
 import re
 from typing import List, Dict, Any
 import os
+import math
 
 BOOKS_PER_PAGE = 10
 
 # -----------------------------
 # إعدادات المشرف
 # -----------------------------
-
 try:
-    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))  # معرف المشرف
+    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
     ADMIN_USER_ID = 0
     print("⚠️ ADMIN_ID environment variable is not valid.")
@@ -20,9 +20,7 @@ except ValueError:
 # -----------------------------
 # دوال التطبيع والتنظيف
 # -----------------------------
-
 def normalize_text(text: str) -> str:
-    """لتطبيع النص العربي للبحث."""
     if not text:
         return ""
     text = text.lower()
@@ -33,7 +31,6 @@ def normalize_text(text: str) -> str:
     return text
 
 def remove_common_words(text: str) -> str:
-    """إزالة الكلمات العامة مثل كتاب/رواية/نسخة."""
     if not text:
         return ""
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
@@ -41,7 +38,6 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 def extract_keywords(text: str) -> List[str]:
-    """استخراج الكلمات المفتاحية المهمة (أطول من 3 أحرف)."""
     if not text:
         return []
     clean_text = re.sub(r'[^\w\s]', '', text)
@@ -49,15 +45,12 @@ def extract_keywords(text: str) -> List[str]:
     return [w for w in words if len(w) >= 3]
 
 def get_db_safe_query(normalized_query: str) -> str:
-    """بناء استعلام آمن من SQL Injection البسيط."""
     return normalized_query.replace("'", "''")
 
 # -----------------------------
 # تقشير بسيط للكلمات (light stemming)
 # -----------------------------
-
 def light_stem(word: str) -> str:
-    """إزالة بعض اللواحق واللاحقات الشائعة لتوحيد الجذر."""
     suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
     for suf in suffixes:
         if word.endswith(suf):
@@ -68,21 +61,15 @@ def light_stem(word: str) -> str:
     return word
 
 # -----------------------------
-# دالة التقييم الوزني فائق الذكاء
+# دالة التقييم القديم
 # -----------------------------
-
 def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> int:
-    """يحسب التقييم الوزني للكتاب بناءً على نوع ومكان المطابقة مع دعم الجذر."""
     score = 0
     book_name = normalize_text(book.get('file_name', ''))
-
-    # التطابق الحرفي الكامل
     if normalized_query == book_name:
         score += 50
-    # تطابق الجملة
     elif normalized_query in book_name:
         score += 20
-
     title_words = book_name.split()
     for k in keywords:
         k_stem = light_stem(k)
@@ -91,18 +78,15 @@ def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query:
             if t_stem.startswith(k_stem):
                 score += 10
             elif k_stem in t_stem:
-                score += 8  # أي مكان في الكلمة بعد تطبيق الجذر
+                score += 8
     return score
 
 # -----------------------------
-# إشعار المشرف بعد كل بحث
+# إشعار المشرف
 # -----------------------------
-
 async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
-    """إرسال إشعار للمشرف عن البحث الذي قام به المستخدم."""
     if ADMIN_USER_ID == 0:
-        return  # لا يوجد مشرف محدد
-
+        return
     bot = context.bot
     status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
     username_text = f"@{username}" if username else "(بدون يوزر)"
@@ -115,7 +99,6 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
 # -----------------------------
 # إرسال صفحة الكتب
 # -----------------------------
-
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
@@ -158,13 +141,46 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي متعدد المراحل المطور جداً
+# دوال BM25
 # -----------------------------
+def compute_bm25(book_name: str, keywords: List[str], avg_doc_len: float, doc_len: int, N: int, df_dict: Dict[str, int], k1=1.5, b=0.75) -> float:
+    score = 0.0
+    words = normalize_text(book_name).split()
+    for q in keywords:
+        f = sum(1 for w in words if w == q)
+        df = df_dict.get(q, 0)
+        if df == 0:
+            continue
+        idf = math.log((N - df + 0.5) / (df + 0.5) + 1)
+        denom = f + k1 * (1 - b + b * (doc_len / avg_doc_len))
+        score += idf * f * (k1 + 1) / denom
+    return score
 
+async def compute_bm25_data(conn):
+    books = await conn.fetch("SELECT file_name FROM books")
+    N = len(books)
+    total_len = 0
+    df_dict = {}
+    for book in books:
+        title = normalize_text(book['file_name'])
+        words = list(set(title.split()))
+        total_len += len(title.split())
+        for w in words:
+            df_dict[w] = df_dict.get(w, 0) + 1
+    avg_doc_len = total_len / N if N > 0 else 1
+    return N, avg_doc_len, df_dict
+
+def combined_score(book: Dict[str, Any], keywords: List[str], normalized_query: str, N: int, avg_doc_len: float, df_dict: Dict[str, int], alpha=0.6, beta=0.4) -> float:
+    old = calculate_score(book, keywords, normalized_query)
+    bm = compute_bm25(book.get('file_name', ''), keywords, avg_doc_len, len(book.get('file_name', '').split()), N, df_dict)
+    return alpha * old + beta * bm
+
+# -----------------------------
+# البحث الذكي متعدد المراحل مع BM25
+# -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
-
     query = update.message.text.strip()
     if not query:
         return
@@ -227,9 +243,17 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_page"] = 0
         return
 
+    # -----------------------------
+    # حساب بيانات BM25
+    # -----------------------------
+    N, avg_doc_len, df_dict = await compute_bm25_data(conn)
+
+    # -----------------------------
+    # حساب الدرجات المدمجة
+    # -----------------------------
     scored_books = []
     for book in books:
-        score = calculate_score(book, keywords, normalized_query)
+        score = combined_score(book, keywords, normalized_query, N, avg_doc_len, df_dict)
         book_dict = dict(book)
         book_dict['score'] = score
         scored_books.append(book_dict)
@@ -243,7 +267,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------
 # البحث عن كتب مشابهة
 # -----------------------------
-
 async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
     keywords = context.user_data.get("last_keywords")
@@ -263,9 +286,11 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
         return
 
+    N, avg_doc_len, df_dict = await compute_bm25_data(conn)
+
     scored_books = []
     for book in books:
-        score = calculate_score(book, keywords, context.user_data.get("last_query", ""))
+        score = combined_score(book, keywords, context.user_data.get("last_query", ""), N, avg_doc_len, df_dict)
         book_dict = dict(book)
         book_dict['score'] = score
         scored_books.append(book_dict)
@@ -284,7 +309,6 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------
 # التعامل مع أزرار الكتب والمشاركة
 # -----------------------------
-
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
