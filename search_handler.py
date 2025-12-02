@@ -4,8 +4,6 @@ from telegram.ext import ContextTypes
 import re
 from typing import List, Dict, Any
 import os
-import math
-from collections import Counter
 
 BOOKS_PER_PAGE = 10
 
@@ -24,6 +22,7 @@ except ValueError:
 # -----------------------------
 
 def normalize_text(text: str) -> str:
+    """لتطبيع النص العربي للبحث."""
     if not text:
         return ""
     text = text.lower()
@@ -34,6 +33,7 @@ def normalize_text(text: str) -> str:
     return text
 
 def remove_common_words(text: str) -> str:
+    """إزالة الكلمات العامة مثل كتاب/رواية/نسخة."""
     if not text:
         return ""
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
@@ -41,116 +41,127 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 def extract_keywords(text: str) -> List[str]:
+    """استخراج الكلمات المفتاحية المهمة (أطول من 3 أحرف)."""
     if not text:
         return []
     clean_text = re.sub(r'[^\w\s]', '', text)
     words = clean_text.split()
     return [w for w in words if len(w) >= 3]
 
-# -----------------------------
-# TF-IDF + Cosine Similarity
-# -----------------------------
-
-def tokenize(text: str):
-    return extract_keywords(normalize_text(remove_common_words(text)))
-
-def compute_tf(words):
-    count = Counter(words)
-    total = len(words) or 1
-    return {w: count[w] / total for w in count}
-
-def compute_idf(documents):
-    N = len(documents)
-    idf = {}
-    for doc in documents:
-        for term in set(doc):
-            idf[term] = idf.get(term, 0) + 1
-    return {term: math.log(N / freq) for term, freq in idf.items()}
-
-def compute_tfidf(words, idf):
-    tf = compute_tf(words)
-    return {term: tf.get(term, 0) * idf.get(term, 0) for term in idf}
-
-def cosine_similarity(vec1, vec2):
-    dot = sum(vec1.get(k, 0) * vec2.get(k, 0) for k in vec1)
-    mag1 = math.sqrt(sum(v * v for v in vec1.values()))
-    mag2 = math.sqrt(sum(v * v for v in vec2.values()))
-    if mag1 == 0 or mag2 == 0:
-        return 0
-    return dot / (mag1 * mag2)
+def get_db_safe_query(normalized_query: str) -> str:
+    """بناء استعلام آمن من SQL Injection البسيط."""
+    return normalized_query.replace("'", "''")
 
 # -----------------------------
-# إشعار المشرف
+# تقشير بسيط للكلمات (light stemming)
 # -----------------------------
 
-async def notify_admin_search(context, username: str, query: str, found: bool):
+def light_stem(word: str) -> str:
+    """إزالة بعض اللواحق واللاحقات الشائعة لتوحيد الجذر."""
+    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
+    for suf in suffixes:
+        if word.endswith(suf):
+            word = word[:-len(suf)]
+            break
+    if word.startswith("ال"):
+        word = word[2:]
+    return word
+
+# -----------------------------
+# دالة التقييم الوزني فائق الذكاء
+# -----------------------------
+
+def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> int:
+    """يحسب التقييم الوزني للكتاب بناءً على نوع ومكان المطابقة مع دعم الجذر."""
+    score = 0
+    book_name = normalize_text(book.get('file_name', ''))
+
+    # التطابق الحرفي الكامل
+    if normalized_query == book_name:
+        score += 50
+    # تطابق الجملة
+    elif normalized_query in book_name:
+        score += 20
+
+    title_words = book_name.split()
+    for k in keywords:
+        k_stem = light_stem(k)
+        for t_word in title_words:
+            t_stem = light_stem(t_word)
+            if t_stem.startswith(k_stem):
+                score += 10
+            elif k_stem in t_stem:
+                score += 8  # أي مكان في الكلمة بعد تطبيق الجذر
+    return score
+
+# -----------------------------
+# إشعار المشرف بعد كل بحث
+# -----------------------------
+
+async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
+    """إرسال إشعار للمشرف عن البحث الذي قام به المستخدم."""
     if ADMIN_USER_ID == 0:
-        return
+        return  # لا يوجد مشرف محدد
 
     bot = context.bot
-    status_text = "✅ نتائج" if found else "❌ لا يوجد نتائج"
+    status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
     username_text = f"@{username}" if username else "(بدون يوزر)"
-
-    message = (
-        f"🔔 قام المستخدم {username_text} بالبحث عن:\n"
-        f"`{query}`\nالحالة: {status_text}"
-    )
+    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}"
     try:
         await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
-    except:
-        pass
+    except Exception as e:
+        print(f"Failed to notify admin: {e}")
 
 # -----------------------------
-# إرسال صفحات الكتب
+# إرسال صفحة الكتب
 # -----------------------------
 
-async def send_books_page(update, context):
+async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
-    stage = context.user_data.get("search_stage", "")
-
-    total_pages = max(1, (len(books) - 1) // BOOKS_PER_PAGE + 1)
+    search_stage = context.user_data.get("search_stage", "تطابق دقيق")
+    total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
 
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
 
-    text = (
-        f"📚 النتائج ({len(books)} كتاب)\n"
-        f"{stage}\n"
-        f"الصفحة {page + 1} من {total_pages}\n\n"
-    )
+    if "بحث موسع" in search_stage:
+        stage_note = "⚠️ نتائج بحث موسع (بحثنا بالكلمات المفتاحية)"
+    elif "تطابق جميع الكلمات" in search_stage:
+        stage_note = "✅ نتائج دلالية (تطابق جميع كلماتك)"
+    else:
+        stage_note = "✅ نتائج مطابقة (تطابق العبارة كاملة)"
 
+    text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
 
     for b in current_books:
+        if not b.get("file_name") or not b.get("file_id"):
+            continue
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([
-            InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")
-        ])
+        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
 
-    nav = []
+    nav_buttons = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
     if end < len(books):
-        nav.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
+        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
 
-    if nav:
-        keyboard.append(nav)
-
-    markup = InlineKeyboardMarkup(keyboard)
-
+    reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
-        await update.message.reply_text(text, reply_markup=markup)
-    else:
-        await update.callback_query.message.edit_text(text, reply_markup=markup)
+        await update.message.reply_text(text, reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الجديد (TF-IDF فقط)
+# البحث الذكي متعدد المراحل المطور جداً
 # -----------------------------
 
-async def search_books(update, context):
+async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
 
@@ -160,102 +171,121 @@ async def search_books(update, context):
 
     conn = context.bot_data.get("db_conn")
     if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # جلب كل الكتب
-    books = await conn.fetch("SELECT id, file_id, file_name, uploaded_at FROM books;")
+    normalized_query = normalize_text(remove_common_words(query))
+    keywords = extract_keywords(normalized_query)
+    context.user_data["last_query"] = normalized_query
+    context.user_data["last_keywords"] = keywords
+
+    books = []
+    search_stage_text = "تطابق دقيق"
+
+    try:
+        # المرحلة 1: تطابق الجملة
+        books = await conn.fetch("""
+            SELECT id, file_id, file_name, uploaded_at
+            FROM books
+            WHERE LOWER(file_name) LIKE '%' || $1 || '%'
+            ORDER BY uploaded_at DESC;
+        """, normalized_query)
+
+        # المرحلة 2: تطابق جميع الكلمات
+        if not books and keywords:
+            search_stage_text = "تطابق جميع الكلمات"
+            and_conditions = " AND ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
+            books = await conn.fetch(f"""
+                SELECT id, file_id, file_name, uploaded_at
+                FROM books
+                WHERE {and_conditions}
+                ORDER BY uploaded_at DESC;
+            """)
+
+        # المرحلة 3: البحث الموسع (OR)
+        if not books and keywords:
+            search_stage_text = "بحث موسع بالكلمات المفتاحية"
+            or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
+            books = await conn.fetch(f"""
+                SELECT id, file_id, file_name, uploaded_at
+                FROM books
+                WHERE {or_conditions}
+                ORDER BY uploaded_at DESC;
+            """)
+
+    except Exception as e:
+        await update.message.reply_text("❌ حدث خطأ في البحث.")
+        return
+
+    found_results = bool(books)
+    await notify_admin_search(context, update.effective_user.username, query, found_results)
 
     if not books:
-        await update.message.reply_text("❌ لا توجد كتب.")
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
+        await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
+        context.user_data["search_results"] = []
+        context.user_data["current_page"] = 0
         return
 
-    # تجهيز النصوص
-    query_tokens = tokenize(query)
-    titles_tokens = [tokenize(book["file_name"]) for book in books]
-
-    # حساب IDF
-    idf = compute_idf(titles_tokens + [query_tokens])
-
-    # متجه استعلام
-    query_vec = compute_tfidf(query_tokens, idf)
-
-    # حساب التشابه
     scored_books = []
-    for book, tokens in zip(books, titles_tokens):
-        book_vec = compute_tfidf(tokens, idf)
-        score = cosine_similarity(query_vec, book_vec)
-        bd = dict(book)
-        bd["score"] = score
-        scored_books.append(bd)
+    for book in books:
+        score = calculate_score(book, keywords, normalized_query)
+        book_dict = dict(book)
+        book_dict['score'] = score
+        scored_books.append(book_dict)
 
-    # فرز النتائج
-    scored_books.sort(key=lambda b: (b["score"], b["uploaded_at"]), reverse=True)
-
-    found = any(b["score"] > 0.01 for b in scored_books)
-
-    # إشعار المشرف
-    await notify_admin_search(context, update.effective_user.username, query, found)
-
-    if not found:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔍 بحث مشابه", callback_data="search_similar")]
-        ])
-        await update.message.reply_text(
-            f"❌ لا توجد نتائج لـ: {query}", reply_markup=keyboard)
-        return
-
-    # حفظ وإرسال
+    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     context.user_data["search_results"] = scored_books
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "🔎 بحث ذكاء اصطناعي (TF-IDF)"
-
+    context.user_data["search_stage"] = search_stage_text
     await send_books_page(update, context)
 
 # -----------------------------
-# بحث مشابه
+# البحث عن كتب مشابهة
 # -----------------------------
 
-async def search_similar_books(update, context):
+async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
-    last_query = context.user_data.get("last_keywords")
-
-    if not conn:
-        await update.callback_query.message.reply_text("❌ قاعدة البيانات غير متصلة.")
+    keywords = context.user_data.get("last_keywords")
+    if not keywords or not conn:
+        await update.callback_query.message.reply_text("❌ لا يوجد موضوع للبحث عنه.")
         return
 
-    books = await conn.fetch("SELECT id, file_id, file_name, uploaded_at FROM books;")
-
-    titles_tokens = [tokenize(book["file_name"]) for book in books]
-
-    idf = compute_idf(titles_tokens)
-    query_vec = compute_tfidf(last_query, idf)
+    try:
+        or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
+        books = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
+            FROM books
+            WHERE {or_conditions}
+            ORDER BY uploaded_at DESC;
+        """)
+    except Exception as e:
+        await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
+        return
 
     scored_books = []
-    for book, tokens in zip(books, titles_tokens):
-        book_vec = compute_tfidf(tokens, idf)
-        score = cosine_similarity(query_vec, book_vec)
-        bd = dict(book)
-        bd["score"] = score
-        scored_books.append(bd)
+    for book in books:
+        score = calculate_score(book, keywords, context.user_data.get("last_query", ""))
+        book_dict = dict(book)
+        book_dict['score'] = score
+        scored_books.append(book_dict)
 
-    scored_books.sort(key=lambda b: (b["score"], b["uploaded_at"]), reverse=True)
+    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
 
-    if not any(b["score"] > 0.01 for b in scored_books):
+    if not scored_books:
         await update.callback_query.message.reply_text("❌ لم أجد كتب مشابهة.")
         return
 
     context.user_data["search_results"] = scored_books
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "🔎 بحث مشابه (TF-IDF)"
-
+    context.user_data["search_stage"] = "بحث موسع (مشابه)"
     await send_books_page(update, context)
 
 # -----------------------------
-# التعامل مع الكولباك
+# التعامل مع أزرار الكتب والمشاركة
 # -----------------------------
 
-async def handle_callbacks(update, context):
+async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -265,14 +295,12 @@ async def handle_callbacks(update, context):
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
             caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📤 شارك البوت", switch_inline_query="")]
+            share_button = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]
             ])
-            await query.message.reply_document(
-                document=file_id, caption=caption, reply_markup=share
-            )
+            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
-            await query.message.reply_text("❌ الملف غير موجود.")
+            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
