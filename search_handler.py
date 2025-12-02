@@ -8,17 +8,17 @@ import os
 BOOKS_PER_PAGE = 10
 
 # -----------------------------
-# إعدادات المشرف (لم يتم تغييرها)
+# إعدادات المشرف
 # -----------------------------
 
 try:
-    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))  # معرف المشرف
+    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
     ADMIN_USER_ID = 0
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
-# دوال التطبيع والتنظيف (مُبقاة للتعامل مع استعلام المستخدم)
+# دوال التطبيع والتنظيف
 # -----------------------------
 
 def normalize_text(text: str) -> str:
@@ -27,23 +27,21 @@ def normalize_text(text: str) -> str:
         return ""
     text = text.lower()
     text = text.replace("_", " ")
-    # FTS في PostgreSQL سيعالج الهمزات والتاء المربوطة بشكل أفضل، لكن نبقي هذا للتنظيف الأولي
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     text = text.replace("ى", "ي")
     text = text.replace("ه", "ة")
     return text
 
 def remove_common_words(text: str) -> str:
-    """إزالة الكلمات العامة مثل كتاب/رواية/نسخة (أصبح دورها أقل أهمية)."""
+    """إزالة الكلمات العامة مثل كتاب/رواية/نسخة."""
     if not text:
         return ""
-    # ملاحظة: FTS يزيل stop words تلقائياً، لكن نترك هذه الدالة لمعالجة بعض الحالات الخاصة
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
         text = text.replace(word, "")
     return text.strip()
 
 def extract_keywords(text: str) -> List[str]:
-    """استخراج الكلمات المفتاحية المهمة (لم تعد تستخدم في الخوارزمية الجديدة، لكن تم الإبقاء عليها)."""
+    """استخراج الكلمات المفتاحية المهمة (أطول من 3 أحرف)."""
     if not text:
         return []
     clean_text = re.sub(r'[^\w\s]', '', text)
@@ -55,29 +53,72 @@ def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
 
 # -----------------------------
-# دالة التقييم الوزني القديمة (لم تعد تستخدم في search_books)
+# تقشير بسيط للكلمات (light stemming) - ضروري لدالة calculate_score
 # -----------------------------
-# تم تركها في الكود ولكن لن يتم استدعاؤها في دالة البحث الرئيسية
+
+def light_stem(word: str) -> str:
+    """إزالة بعض اللواحق واللاحقات الشائعة لتوحيد الجذر."""
+    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
+    for suf in suffixes:
+        if word.endswith(suf):
+            word = word[:-len(suf)]
+            break
+    if word.startswith("ال"):
+        word = word[2:]
+    return word
 
 # -----------------------------
-# إشعار المشرف وإرسال صفحة الكتب (لم يتم تغييرهما)
+# 🛠️ إعادة إضافة دالة التقييم الوزني القديمة (للبحث الاحتياطي فقط)
 # -----------------------------
-# ... (notify_admin_search و send_books_page كما هي)
+
+def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> int:
+    """يحسب التقييم الوزني للكتاب بناءً على نوع ومكان المطابقة مع دعم الجذر."""
+    score = 0
+    book_name = normalize_text(book.get('file_name', ''))
+
+    # التطابق الحرفي الكامل
+    if normalized_query == book_name:
+        score += 50
+    # تطابق الجملة
+    elif normalized_query in book_name:
+        score += 20
+
+    title_words = book_name.split()
+    for k in keywords:
+        k_stem = light_stem(k)
+        for t_word in title_words:
+            t_stem = light_stem(t_word)
+            if t_stem.startswith(k_stem):
+                score += 10
+            elif k_stem in t_stem:
+                score += 8  # أي مكان في الكلمة بعد تطبيق الجذر
+    return score
+
+# -----------------------------
+# إشعار المشرف بعد كل بحث
+# -----------------------------
+
 async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
     """إرسال إشعار للمشرف عن البحث الذي قام به المستخدم."""
     if ADMIN_USER_ID == 0:
-        return 
+        return
 
     bot = context.bot
     status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
     username_text = f"@{username}" if username else "(بدون يوزر)"
-    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}"
+    # 💡 تم تعديل طريقة تضمين الاستعلام لتجنب خطأ Markdown parsing
+    message = f"🔔 قام المستخدم {username_text} بالبحث عن: {query}\nالحالة: {status_text}"
     try:
-        await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
+        await bot.send_message(ADMIN_USER_ID, message) # لا نستخدم Markdown لتجنب الخطأ 400
     except Exception as e:
         print(f"Failed to notify admin: {e}")
 
+# -----------------------------
+# إرسال صفحة الكتب
+# -----------------------------
+
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
+    # 💡 إضافة قيمة افتراضية لـ 'current_page' و 'search_stage'
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
     search_stage = context.user_data.get("search_stage", "تطابق دقيق")
@@ -90,7 +131,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     if "بحث دلالي مُعزز" in search_stage:
         stage_note = "⭐ نتائج بحث ذكية ومُعززة (مرتبة حسب الصلة)"
     else:
-        stage_note = "⚠️ نتائج بحث موسع (Fallback)"
+        stage_note = "⚠️ نتائج بحث موسع (Fallback - غير مُفهرس)"
 
     text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
@@ -116,9 +157,8 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
-
 # -----------------------------
-# 🥇 خوارزمية البحث الجديدة (PostgreSQL FTS)
+# خوارزمية البحث الجديدة (FTS)
 # -----------------------------
 
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,59 +174,49 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # 1. التنظيف الأولي للاستعلام
     normalized_query = normalize_text(remove_common_words(query))
     ts_query_text = get_db_safe_query(normalized_query)
     
     context.user_data["last_query"] = normalized_query
-    context.user_data["last_keywords"] = extract_keywords(normalized_query) # نحتاجها في دالة Fallback
+    context.user_data["last_keywords"] = extract_keywords(normalized_query)
     
     books = []
     search_stage_text = "بحث دلالي مُعزز"
 
     try:
-        # 2. الاستعلام: استخدام FTS والترتيب بالـ ts_rank
-        # ملاحظة: plainto_tsquery('arabic', $1) يقوم بتجذير كلمات الاستعلام تلقائياً
-        
+        # 1. محاولة البحث الذكي (FTS)
         books = await conn.fetch("""
             SELECT 
                 id, 
                 file_id, 
                 file_name, 
                 uploaded_at,
-                -- حساب درجة التقييم الوزني الذكية
                 ts_rank(file_name_tsvector, plainto_tsquery('arabic', $1)) AS rank_score
             FROM books
-            -- البحث: يجب أن يكون هناك تطابق في الفهرس
             WHERE file_name_tsvector @@ plainto_tsquery('arabic', $1)
-            -- الترتيب حسب درجة الصلة، ثم بتاريخ التحميل
             ORDER BY rank_score DESC, uploaded_at DESC
             LIMIT 1000;
         """, ts_query_text)
 
     except Exception as e:
-        # في حالة فشل الاستعلام (قد يكون الفهرس file_name_tsvector غير موجود)
+        # 2. في حالة فشل FTS (مثل عدم وجود العمود)، نعود لخطة البحث الاحتياطية
         print(f"FTS Query Failed: {e}. Falling back to old OR search.")
-        books = []
-        search_stage_text = "بحث موسع (Fallback)"
-        # يمكن إضافة هنا كود البحث الموسع القديم (المرحلة 3) كخطة بديلة (Fallback)
+        books = [] # تأكد من أن books فارغة لبدء الـ fallback
 
     found_results = bool(books)
     await notify_admin_search(context, update.effective_user.username, query, found_results)
 
     if not books:
-        # إذا لم نجد شيئاً باستخدام FTS، نعود للبحث الموسع القديم (المرحلة 3)
+        # 3. العودة إلى البحث الموسع القديم (Fallback) في حالة الفشل
         return await search_similar_books(update, context, is_fallback=True)
 
-    # 3. الترتيب النهائي (نستخدم الدرجة rank_score القادمة من FTS)
+    # 4. الترتيب النهائي لنتائج FTS
     scored_books = []
     for book in books:
         book_dict = dict(book)
-        # نستخدم rank_score كدرجة التقييم
         book_dict['score'] = book.get('rank_score', 0) 
         scored_books.append(book_dict)
 
-    # الترتيب: تم مسبقاً في SQL، لكن نعيد ترتيب قائمة البايثون
     scored_books.sort(key=lambda b: b['score'], reverse=True)
     
     context.user_data["search_results"] = scored_books
@@ -195,12 +225,11 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     await send_books_page(update, context)
 
 # -----------------------------
-# البحث عن كتب مشابهة (تم تعديلها لتعمل كـ Fallback)
+# البحث عن كتب مشابهة (Fallback - يستخدم calculate_score)
 # -----------------------------
 
 async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE, is_fallback=False):
     conn = context.bot_data.get("db_conn")
-    # نستخدم last_query الأصلي إذا كنا في callback
     query = context.user_data.get("last_query")
     keywords = context.user_data.get("last_keywords")
     
@@ -209,8 +238,8 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE, is_fa
         await message_to_edit.reply_text("❌ لا يوجد موضوع للبحث عنه.")
         return
 
-    # **هذه المرحلة تستخدم الطريقة القديمة (OR LIKE) كـ FALLBACK فقط**
     try:
+        # البحث الموسع (OR LIKE) - القديم
         or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
         books = await conn.fetch(f"""
             SELECT id, file_id, file_name, uploaded_at
@@ -223,11 +252,10 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE, is_fa
         await message_to_edit.reply_text("❌ حدث خطأ أثناء البحث الموسع.")
         return
 
-    # نستخدم دالة التقييم القديمة لترتيب نتائج Fallback
+    # التقييم باستخدام دالة calculate_score التي تم استرجاعها
     scored_books = []
     for book in books:
-        # نحتاج إلى دالة calculate_score القديمة لترتيب نتائج الـ Fallback
-        score = calculate_score(book, keywords, context.user_data.get("last_query", ""))
+        score = calculate_score(book, keywords, query)
         book_dict = dict(book)
         book_dict['score'] = score
         scored_books.append(book_dict)
@@ -243,11 +271,10 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE, is_fa
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = "بحث موسع (Fallback)"
     
-    # تحديد مصدر الـ update ليرد بشكل صحيح (رسالة جديدة أو تعديل رسالة Callback)
     await send_books_page(update, context)
 
 # -----------------------------
-# التعامل مع أزرار الكتب والمشاركة (لم يتم تغييره)
+# التعامل مع أزرار الكتب والمشاركة
 # -----------------------------
 
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
@@ -267,11 +294,12 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
-        context.user_data["current_page"] += 1
+        # 💡 تم إضافة قيمة افتراضية لـ current_page
+        context.user_data["current_page"] = context.user_data.get("current_page", 0) + 1
         await send_books_page(update, context)
     elif data == "prev_page":
-        context.user_data["current_page"] -= 1
+        # 💡 تم إضافة قيمة افتراضية لـ current_page
+        context.user_data["current_page"] = context.user_data.get("current_page", 0) - 1
         await send_books_page(update, context)
     elif data == "search_similar":
         await search_similar_books(update, context, is_fallback=True)
-
