@@ -9,7 +9,7 @@ from telegram.ext import (
 
 from admin_panel import register_admin_handlers  # لوحة التحكم
 from search_handler import search_books, send_books_page, handle_callbacks  # استدعاء البحث الجديد
-from index_handler import show_index, search_by_index  # استدعاء الفهرس الجديد
+from index_handler import show_index, search_by_index, download_book  # استدعاء الفهرس الجديد مع التحميل
 
 # ===============================================
 # إعداد اللوج
@@ -112,8 +112,9 @@ async def check_subscription(user_id: int, bot) -> bool:
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    data = query.data
 
-    if query.data == "check_subscription":
+    if data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
@@ -140,23 +141,12 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ لم يتم الاشتراك بعد. يرجى الاشتراك أولاً.\n\n"
                 "اضغط على زر '✅ اشترك الآن' للانضمام إلى القناة."
             )
-
-    elif query.data == "show_index":
+    elif data == "show_index":
         await show_index(update, context)
-
-    elif query.data.startswith("index:"):
-        # عند الضغط على زر كتاب من الفهرس
-        key = query.data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
-        if not file_id:
-            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
-            return
-
-        caption = "تم التنزيل بواسطة @boooksfree1bot"
-        share_button = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]
-        ])
-        await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
+    elif data.startswith("index:"):
+        await search_by_index(update, context)
+    elif data.startswith("download:"):
+        await download_book(update, context)
 
 # ===============================================
 # رسالة البدء /start
@@ -221,6 +211,7 @@ def run_bot():
         .build()
     )
 
+    # إضافة جميع الHandlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
