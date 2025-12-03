@@ -139,9 +139,9 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("index:"):
         await search_by_index(update, context)
 
-    # تنقل صفحات الفهرس
-    elif data in ["next_index_page", "prev_index_page"]:
-        await navigate_index_pages(update, context, data)
+    # تنقل صفحات الفهرس (التالي/السابق)
+    elif data.startswith("index_page:"):
+        await navigate_index_pages(update, context)
 
     # أزرار البحث العادي (ملفات/تنقل/كتب مشابهة)
     elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
