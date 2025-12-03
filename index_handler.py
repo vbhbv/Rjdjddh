@@ -1,14 +1,20 @@
-# index_handler.py
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from search_handler import send_books_page
 
+BOOKS_PER_PAGE = 10
+INDEXES_PER_PAGE = 10
+
+# -----------------------------
+# دوال التطبيع والتنظيف
+# -----------------------------
 def normalize_text(text: str) -> str:
     if not text: return ""
-    text = text.lower().replace("_", " ")
+    text = text.lower()
+    text = text.replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي").replace("ه", "ة")
+    text = text.replace("ى", "ي")
+    text = text.replace("ه", "ة")
     return text
 
 def remove_common_words(text: str) -> str:
@@ -54,60 +60,59 @@ INDEXES = [
 ]
 
 # -----------------------------
-# إرسال صفحة الفهرس مع زر العودة للواجهة
+# عرض الفهرس (الصفحة الحالية)
 # -----------------------------
-async def send_index_page(update, context: ContextTypes.DEFAULT_TYPE):
+async def show_index(update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["index_page"] = 0
+    await navigate_index_pages(update, context, "show")
+
+# -----------------------------
+# الملاحة بين صفحات الفهرس
+# -----------------------------
+async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE, action: str):
     page = context.user_data.get("index_page", 0)
-    start = page * 10
-    end = start + 10
+
+    if action == "next_index_page":
+        page += 1
+    elif action == "prev_index_page":
+        page -= 1
+    elif action == "show":
+        page = 0
+    elif action == "home_index":
+        page = 0
+
+    total_pages = (len(INDEXES) - 1) // INDEXES_PER_PAGE + 1
+    if page < 0: page = 0
+    if page >= total_pages: page = total_pages - 1
+    context.user_data["index_page"] = page
+
+    start = page * INDEXES_PER_PAGE
+    end = start + INDEXES_PER_PAGE
     current_indexes = INDEXES[start:end]
 
     keyboard = [[InlineKeyboardButton(name, callback_data=f"index:{key}")] for name, key, _ in current_indexes]
 
+    # أزرار الملاحة
     nav_buttons = []
-    if start > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="index_prev"))
-    if end < len(INDEXES):
-        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="index_next"))
-    # زر العودة للفهرس
-    nav_buttons.append(InlineKeyboardButton("🏠 العودة للفهرس", callback_data="show_index"))
-    keyboard.append(nav_buttons)
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_index_page"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_index_page"))
+    nav_buttons.append(InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index"))
+
+    if nav_buttons:
+        keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     query = update.callback_query
-    text = "📚 اختر الفهرس المطلوب (مظهر مختلف عن البحث العادي):"
     if query:
         await query.answer()
-        await query.message.edit_text(text, reply_markup=reply_markup)
-    elif update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup)
+        await query.message.edit_text("📚 اختر الفهرس الذي تريد استعراضه:", reply_markup=reply_markup)
+    else:
+        await context.bot.send_message(chat_id=context._chat_id, text="📚 اختر الفهرس الذي تريد استعراضه:", reply_markup=reply_markup)
 
 # -----------------------------
-# بدء عرض الفهرس
-# -----------------------------
-async def show_index(update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["index_page"] = 0
-    await send_index_page(update, context)
-
-# -----------------------------
-# التعامل مع أزرار الملاحة للفهرس
-# -----------------------------
-async def handle_index_navigation(update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    page = context.user_data.get("index_page", 0)
-
-    if query.data == "index_next":
-        context.user_data["index_page"] = page + 1
-    elif query.data == "index_prev":
-        context.user_data["index_page"] = page - 1
-    elif query.data == "show_index":
-        context.user_data["index_page"] = 0
-
-    await send_index_page(update, context)
-
-# -----------------------------
-# البحث عبر الفهرس وتحميل الكتب
+# البحث عبر الفهرس
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -119,6 +124,7 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
+    # العثور على الكلمات المفتاحية للفهرس
     keywords = []
     for name, key, kws in INDEXES:
         if key == index_key:
@@ -129,7 +135,10 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ لا توجد كلمات مفتاحية لهذا الفهرس.")
         return
 
+    # تطبيع الكلمات
     keywords = [normalize_text(remove_common_words(k)) for k in keywords]
+
+    # استعلام OR
     or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
 
     try:
@@ -147,7 +156,11 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ لم يتم العثور على أي كتب ضمن هذا الفهرس.")
         return
 
+    # حفظ نتائج البحث لزر التحميل
     context.user_data["search_results"] = [dict(b) for b in books]
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = f"فهرس: {index_key}"
+
+    # استدعاء نفس دالة البحث العادي لعرض الكتب
+    from search_handler import send_books_page
     await send_books_page(update, context)
