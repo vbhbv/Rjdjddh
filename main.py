@@ -106,7 +106,7 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# التعامل مع أزرار callback
+# التعامل مع أزرار callback (محدث لربط العودة للفهرس)
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -131,18 +131,19 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "اضغط على زر '✅ اشترك الآن' للانضمام إلى القناة."
             )
 
-    # عرض الفهرس
-    elif data == "show_index":
+    # عرض الفهرس أو العودة له
+    elif data == "show_index" or data == "home_index":
         await show_index(update, context)
-    # اختيار فهرس
+
+    # اختيار فهرس فرعي
     elif data.startswith("index:"):
         await search_by_index(update, context)
 
     # تنقل صفحات الفهرس
-    elif data in ["next_index_page", "prev_index_page", "home_index"]:
+    elif data in ["next_index_page", "prev_index_page"]:
         await navigate_index_pages(update, context, data)
 
-    # أزرار البحث العادي (ملفات/تنقل)
+    # أزرار البحث العادي (ملفات/تنقل/كتب مشابهة)
     elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
         await handle_callbacks(update, context)
 
