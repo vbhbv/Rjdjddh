@@ -113,7 +113,8 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
 
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")]
+            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")],
+            [InlineKeyboardButton("🔄 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
             "🚫 المعذرة! للوصول إلى جميع ميزات البوت، يجب الاشتراك في القناة التالية:\n"
@@ -146,6 +147,22 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
+
+# ===============================================
+# التعامل مع أزرار callback
+# ===============================================
+async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "check_subscription":
+        if await check_subscription(query.from_user.id, context.bot):
+            await query.message.reply_text("✅ تم التحقق من اشتراكك. يمكنك الآن استخدام البوت بالكامل!")
+        else:
+            await query.message.reply_text("❌ لم يتم الاشتراك بعد. يرجى الاشتراك أولاً.")
+    else:
+        await handle_callbacks(update, context)  # يبقى التعامل مع باقي الـ callbacks الموجودة في search_handler
 
 # ===============================================
 # تشغيل البوت
