@@ -2,9 +2,8 @@ import hashlib
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import re
-from typing import List, Dict, Any
+from typing import List
 import os
-import math
 
 BOOKS_PER_PAGE = 10
 
@@ -52,7 +51,8 @@ def extract_keywords(text: str) -> List[str]:
         return []
     clean_text = re.sub(r'[^\w\s]', '', text)
     words = clean_text.split()
-    return [w for w in words if len(w) >= 2]
+    # إزالة الكلمات القصيرة جدًا (لتقليل النتائج غير الدقيقة)
+    return [w for w in words if len(w) >= 3]
 
 def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
@@ -70,7 +70,42 @@ def expand_root(word: str) -> List[str]:
             variations.add(word[:-len(suf)])
     if word.startswith("ال"):
         variations.add(word[2:])
+    # حذف بعض الحروف الأخيرة إذا كان الكلمة طويلة جدًا (للتقريب)
+    if len(word) > 5:
+        variations.add(word[:-1])
+        variations.add(word[:-2])
     return list(variations)
+
+# -----------------------------
+# دالة التقييم الوزني (محسّنة)
+# -----------------------------
+def calculate_score(book_name: str, keywords: List[str]) -> int:
+    score = 0
+    name = normalize_text(book_name)
+    words_in_name = name.split()
+
+    for kw in keywords:
+        roots = expand_root(kw)
+        matched_root = False
+        for root in roots:
+            for w in words_in_name:
+                if w == root:
+                    score += 20  # تطابق كامل
+                    matched_root = True
+                elif w.startswith(root):
+                    score += 12
+                    matched_root = True
+                elif root in w:
+                    score += 8
+                    matched_root = True
+        # زيادة النقاط للكلمة الكاملة في الاسم
+        if kw in name:
+            score += 15
+            matched_root = True
+        # خصم النقاط للكلمات غير المطابقة
+        if not matched_root:
+            score -= 3
+    return score
 
 # -----------------------------
 # إشعار المشرف
@@ -86,42 +121,6 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
         await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
     except Exception as e:
         print(f"Failed to notify admin: {e}")
-
-# -----------------------------
-# BM25: حساب الدرجات
-# -----------------------------
-def compute_bm25_scores(books: List[Dict[str, Any]], keywords: List[str], k1: float = 1.5, b: float = 0.75) -> List[Dict[str, Any]]:
-    N = len(books)
-    if N == 0:
-        return []
-
-    # حساب متوسط طول المستندات
-    avgdl = sum(len(normalize_text(book['file_name']).split()) for book in books) / N
-
-    # حساب IDF لكل كلمة
-    idf = {}
-    for kw in keywords:
-        df = sum(1 for book in books if any(root in normalize_text(book['file_name']) for root in expand_root(kw)))
-        idf_val = math.log((N - df + 0.5) / (df + 0.5) + 1)
-        idf[kw] = idf_val
-
-    # حساب درجات BM25 لكل كتاب
-    scored_books = []
-    for book in books:
-        score = 0
-        text = normalize_text(book['file_name'])
-        words_in_doc = text.split()
-        dl = len(words_in_doc)
-        for kw in keywords:
-            roots = expand_root(kw)
-            tf = sum(sum(1 for w in words_in_doc if w.startswith(root)) for root in roots)
-            score += idf[kw] * ((tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / avgdl))) if tf > 0 else 0
-        book_dict = dict(book)
-        book_dict['score'] = score
-        scored_books.append(book_dict)
-
-    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
-    return scored_books
 
 # -----------------------------
 # إرسال صفحة الكتب
@@ -159,7 +158,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث بالدقة العالية باستخدام BM25
+# البحث السريع والدقيق (محسّن)
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -183,8 +182,9 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ لا يمكن البحث عن كلمات قصيرة جدًا.")
         return
 
-    # استعلام سريع لجلب الكتب المحتملة
+    books = []
     try:
+        # بحث دقيق أكثر: LIKE لكل كلمة مع ترتيب بحسب الأقرب للكلمة الأولى
         or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
         books = await conn.fetch(f"""
             SELECT id, file_id, file_name, uploaded_at
@@ -196,8 +196,16 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
 
-    # حساب درجات BM25
-    scored_books = compute_bm25_scores(books, keywords)
+    # تقييم وزني صارم لزيادة الدقة
+    scored_books = []
+    for book in books:
+        score = calculate_score(book['file_name'], keywords)
+        if score > 0:  # تجاهل النتائج التي أقل من الصفر
+            book_dict = dict(book)
+            book_dict['score'] = score
+            scored_books.append(book_dict)
+
+    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     found_results = bool(scored_books)
     await notify_admin_search(context, update.effective_user.username, query, found_results)
 
@@ -210,7 +218,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["search_results"] = scored_books
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث دقيق (BM25)"
+    context.user_data["search_stage"] = "بحث سريع ودقيق"
     await send_books_page(update, context)
 
 # -----------------------------
@@ -235,14 +243,22 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
         return
 
-    scored_books = compute_bm25_scores(books, keywords)
+    scored_books = []
+    for book in books:
+        score = calculate_score(book['file_name'], keywords)
+        if score > 0:
+            book_dict = dict(book)
+            book_dict['score'] = score
+            scored_books.append(book_dict)
+
+    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     if not scored_books:
         await update.callback_query.message.reply_text("❌ لم أجد كتب مشابهة.")
         return
 
     context.user_data["search_results"] = scored_books
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث موسع (BM25 مشابه)"
+    context.user_data["search_stage"] = "بحث موسع (مشابه)"
     await send_books_page(update, context)
 
 # -----------------------------
