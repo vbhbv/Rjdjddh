@@ -80,7 +80,7 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     index_key = query.data.replace("index:", "")
 
-    # البحث في قاعدة البيانات
+    # الاتصال بقاعدة البيانات
     conn = context.bot_data.get("db_conn")
     if not conn:
         await query.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
@@ -117,10 +117,27 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ لم يتم العثور على أي كتب ضمن هذا الفهرس.")
         return
 
-    # عرض النتائج
-    context.user_data["search_results"] = [dict(b) for b in books]
-    context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = f"فهرس: {index_key}"
+    # حفظ file_id لكل كتاب لتمكين التحميل عبر الزر
+    context.bot_data["index_files"] = {str(b["id"]): b["file_id"] for b in books}
 
-    from search_handler import send_books_page
-    await send_books_page(update, context)
+    # عرض النتائج كأزرار
+    keyboard = []
+    for book in books:
+        book_id = str(book["id"])
+        keyboard.append([InlineKeyboardButton(book["file_name"], callback_data=f"download:{book_id}")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("📚 نتائج الفهرس:", reply_markup=reply_markup)
+
+# -----------------------------
+# تحميل الكتاب عند الضغط على الزر
+# -----------------------------
+async def download_book(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    book_id = query.data.replace("download:", "")
+    file_id = context.bot_data.get("index_files", {}).get(book_id)
+    if not file_id:
+        await query.message.reply_text("❌ الملف غير متوفر حالياً.")
+        return
+
+    await query.message.reply_document(document=file_id, caption="✅ تم التنزيل بواسطة البوت")
