@@ -4,7 +4,7 @@ import math
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from typing import List, Dict, Any
+from typing import List, Dict
 import os
 
 BOOKS_PER_PAGE = 10
@@ -19,19 +19,16 @@ except ValueError:
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
-# قاموس تحويل الجمع إلى المفرد (قابل للتوسيع)
+# قاموس تحويل الجمع إلى المفرد
 # -----------------------------
 WORD_MAP = {
     "روايات": "رواية",
     "كتب": "كتاب",
     "مجلات": "مجلة",
-    "قصص": "قصة",
-    # يمكن إضافة المزيد لاحقاً
+    "قصص": "قصة"
 }
 
-STOP_WORDS = {
-    "في", "على", "من", "إلى", "عن", "مع", "كل", "و", "أو", "أن", "إن"
-}
+STOP_WORDS = {"في", "على", "من", "إلى", "عن", "مع", "كل", "و", "أو", "أن", "إن"}
 
 # -----------------------------
 # دوال التطبيع والتنظيف
@@ -39,11 +36,10 @@ STOP_WORDS = {
 def normalize_text(text: str) -> str:
     if not text:
         return ""
-    text = text.lower()
+    text = text.lower().replace("_", " ")
     text = re.sub(r'[^\w\s]', '', text)
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     text = text.replace("ى", "ي").replace("ه", "ة")
-    # تحويل الجمع إلى المفرد
     words = text.split()
     normalized_words = [WORD_MAP.get(w, w) for w in words if w not in STOP_WORDS]
     return " ".join(normalized_words)
@@ -65,7 +61,7 @@ def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
 
 # -----------------------------
-# توسيع الجذر والاشتقاقات
+# توسيع الجذر والكلمات المشتقة
 # -----------------------------
 def expand_root(word: str) -> List[str]:
     variations = set()
@@ -79,7 +75,7 @@ def expand_root(word: str) -> List[str]:
     return list(variations)
 
 # -----------------------------
-# دوال BM25 خفيفة
+# دوال BM25
 # -----------------------------
 def compute_idf(N: int, df: int) -> float:
     return math.log((N - df + 0.5) / (df + 0.5) + 1.0)
@@ -193,7 +189,8 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if not keywords:
         await update.message.reply_text("❌ لا يمكن البحث عن كلمات خالية.")
         return
-    # --- فلترة SQL أولية ---
+
+    # فلترة SQL سريعة
     try:
         or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
         candidates = await conn.fetch(f"""
@@ -206,12 +203,26 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("❌ حدث خطأ أثناء استدعاء قاعدة البيانات.")
         return
-    # --- BM25 + heuristic ---
+
+    if not candidates:
+        try:
+            or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
+            candidates = await conn.fetch(f"""
+                SELECT id, file_id, file_name, uploaded_at
+                FROM books
+                WHERE {or_conditions}
+                ORDER BY uploaded_at DESC;
+            """)
+        except Exception:
+            await update.message.reply_text("❌ حدث خطأ أثناء استدعاء قاعدة البيانات.")
+            return
+
     try:
         N_row = await conn.fetchval("SELECT COUNT(*) FROM books;")
         N = int(N_row or 0) if N_row is not None else 1
     except Exception:
         N = 1
+
     idf_map = {}
     for k in keywords:
         try:
@@ -220,6 +231,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             df = 0
         idf_map[k] = compute_idf(N, df)
+
     candidate_docs = []
     candidate_lens = []
     for c in candidates:
@@ -228,9 +240,11 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         candidate_docs.append((c, terms))
         candidate_lens.append(len(terms) or 1)
     avgdl = sum(candidate_lens) / len(candidate_lens) if candidate_lens else 1.0
+
     scored = []
     query_terms_expanded = list(dict.fromkeys([k for k in keywords] + [r for k in keywords for r in expand_root(k)]))
     alpha, beta, gamma = 1.0, 0.7, 15.0
+
     for (c, terms) in candidate_docs:
         idf_map_expanded = {qt: idf_map.get(qt, 0.0) for qt in query_terms_expanded}
         bm25_s = bm25_score_for_doc(terms, query_terms_expanded, idf_map_expanded, avgdl)
@@ -241,15 +255,18 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             d = dict(c)
             d['score'] = total_score
             scored.append(d)
+
     scored.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     found_results = bool(scored)
     await notify_admin_search(context, update.effective_user.username, query, found_results)
+
     if not scored:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
         await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
         context.user_data["search_results"] = []
         context.user_data["current_page"] = 0
         return
+
     context.user_data["search_results"] = scored
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = "بحث محسّن (BM25 + heuristics)"
