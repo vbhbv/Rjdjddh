@@ -24,8 +24,10 @@ def normalize_text(text: str) -> str:
     text = text.lower()
     text = text.replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي")
-    text = text.replace("ه", "ة")
+    text = text.replace("ى", "ي").replace("ة", "ه")
+    text = text.replace("ـ", "")
+    # إزالة التنوين
+    text = re.sub(r"[ًٌٍَُِ]", "", text)
     return text
 
 def remove_common_words(text: str) -> str:
@@ -35,10 +37,12 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 def extract_keywords(text: str) -> List[str]:
-    if not text: return []
+    if not text:
+        return []
     clean_text = re.sub(r'[^\w\s]', '', text)
     words = clean_text.split()
-    return [w for w in words if len(w) >= 3]
+    # السماح بالكلمات القصيرة جدًا (1 حرف على الأقل)
+    return [w for w in words if len(w) >= 1]
 
 def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
@@ -47,13 +51,30 @@ def get_db_safe_query(normalized_query: str) -> str:
 # تقشير بسيط للكلمات (light stemming)
 # -----------------------------
 def light_stem(word: str) -> str:
-    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
+    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين", "ه"]
     for suf in suffixes:
-        if word.endswith(suf):
+        if word.endswith(suf) and len(word) > len(suf) + 2:
             word = word[:-len(suf)]
             break
-    if word.startswith("ال"): word = word[2:]
+    if word.startswith("ال") and len(word) > 3:
+        word = word[2:]
     return word
+
+# -----------------------------
+# دوال المرادفات البسيطة
+# -----------------------------
+SYNONYMS = {
+    "مهندس": ["هندسة", "مقاول", "معماري"],
+    "الهندسة": ["مهندس", "معمار", "بناء"],
+    "المهدي": ["المنقذ", "القائم"],
+}
+
+def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
+    expanded = set(keywords)
+    for k in keywords:
+        if k in SYNONYMS:
+            expanded.update(SYNONYMS[k])
+    return list(expanded)
 
 # -----------------------------
 # دالة التقييم الوزني
@@ -61,19 +82,26 @@ def light_stem(word: str) -> str:
 def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> int:
     score = 0
     book_name = normalize_text(book.get('file_name', ''))
+    
+    # التطابق الكامل للنص
     if normalized_query == book_name:
-        score += 50
+        score += 100
     elif normalized_query in book_name:
-        score += 20
+        score += 50
+
     title_words = book_name.split()
+    
     for k in keywords:
         k_stem = light_stem(k)
         for t_word in title_words:
             t_stem = light_stem(t_word)
+            # تطابق البداية يعطي نقاط أعلى
             if t_stem.startswith(k_stem):
-                score += 10
+                score += 20 if len(k) > 2 else 10
             elif k_stem in t_stem:
-                score += 8
+                score += 15 if len(k) > 2 else 5
+            elif k in t_word:
+                score += 10 if len(k) > 2 else 3
     return score
 
 # -----------------------------
@@ -153,6 +181,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     normalized_query = normalize_text(remove_common_words(query))
     keywords = extract_keywords(normalized_query)
+    keywords = expand_keywords_with_synonyms(keywords)
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
 
@@ -160,6 +189,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     search_stage_text = "تطابق دقيق"
 
     try:
+        # المرحلة 1: تطابق كامل
         books = await conn.fetch("""
             SELECT id, file_id, file_name, uploaded_at
             FROM books
@@ -167,6 +197,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             ORDER BY uploaded_at DESC;
         """, normalized_query)
 
+        # المرحلة 2: تطابق جميع الكلمات
         if not books and keywords:
             search_stage_text = "تطابق جميع الكلمات"
             and_conditions = " AND ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
@@ -177,6 +208,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 ORDER BY uploaded_at DESC;
             """)
 
+        # المرحلة 3: البحث الموسع
         if not books and keywords:
             search_stage_text = "بحث موسع بالكلمات المفتاحية"
             or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
@@ -186,6 +218,20 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 WHERE {or_conditions}
                 ORDER BY uploaded_at DESC;
             """)
+
+        # المرحلة 4: البحث بالكلمات القصيرة
+        if not books and keywords:
+            short_keywords = [k for k in keywords if len(k) <= 3]
+            if short_keywords:
+                search_stage_text = "بحث بالكلمات القصيرة"
+                or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in short_keywords])
+                books = await conn.fetch(f"""
+                    SELECT id, file_id, file_name, uploaded_at
+                    FROM books
+                    WHERE {or_conditions}
+                    ORDER BY uploaded_at DESC;
+                """)
+
     except Exception as e:
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
