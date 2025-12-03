@@ -1,15 +1,15 @@
 # index_handler.py
-
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from search_handler import send_books_page  # الربط مع البحث العادي
 
 # -----------------------------
-# دوال التطبيع والنظافة
+# دوال التطبيع والتنظيف
 # -----------------------------
 def normalize_text(text: str) -> str:
-    """لتطبيع النص العربي للبحث."""
-    if not text: return ""
+    if not text:
+        return ""
     text = text.lower()
     text = text.replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
@@ -18,8 +18,8 @@ def normalize_text(text: str) -> str:
     return text
 
 def remove_common_words(text: str) -> str:
-    """إزالة الكلمات العامة من البحث."""
-    if not text: return ""
+    if not text:
+        return ""
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
         text = text.replace(word, "")
     return text.strip()
@@ -60,26 +60,17 @@ INDEXES = [
     ("قصص الأطفال", "children_stories", ["قصص", "أطفال", "حكاية", "مغامرة"])
 ]
 
-INDEXES_PER_PAGE = 10  # عدد الفهارس في الصفحة الواحدة
-
 # -----------------------------
-# عرض صفحة الفهرس
+# عرض صفحة الفهرس مع تقسيم كل 10 أزرار
 # -----------------------------
-async def show_index(update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["index_page"] = 0  # البداية من الصفحة الأولى
-    await send_index_page(update, context)
-
 async def send_index_page(update, context: ContextTypes.DEFAULT_TYPE):
     page = context.user_data.get("index_page", 0)
-    start = page * INDEXES_PER_PAGE
-    end = start + INDEXES_PER_PAGE
+    start = page * 10
+    end = start + 10
     current_indexes = INDEXES[start:end]
 
-    keyboard = []
-    for name, key, _ in current_indexes:
-        keyboard.append([InlineKeyboardButton(f"📂 {name}", callback_data=f"index:{key}")])
+    keyboard = [[InlineKeyboardButton(name, callback_data=f"index:{key}")] for name, key, _ in current_indexes]
 
-    # أزرار التنقل
     nav_buttons = []
     if start > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="index_prev"))
@@ -89,36 +80,37 @@ async def send_index_page(update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
+    query = update.callback_query
 
-    if update.message:
-        await update.message.reply_text(
-            "📚 اختر الفهرس المطلوب (مظهر مختلف عن البحث العادي):",
-            reply_markup=reply_markup
-        )
-    elif update.callback_query:
-        await update.callback_query.message.edit_text(
-            "📚 اختر الفهرس المطلوب (اضغط على المجال الذي تريده):",
-            reply_markup=reply_markup
-        )
-        await update.callback_query.answer()
+    text = "📚 اختر الفهرس المطلوب (اضغط على المجال الذي تريده):"
+    if query:
+        await query.answer()
+        await query.message.edit_text(text, reply_markup=reply_markup)
+    elif update.message:
+        await update.message.reply_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# التعامل مع أزرار التنقل داخل الفهرس
+# بدء عرض الفهرس
+# -----------------------------
+async def show_index(update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["index_page"] = 0
+    await send_index_page(update, context)
+
+# -----------------------------
+# التعامل مع أزرار التالي/السابق للفهرس
 # -----------------------------
 async def handle_index_navigation(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     page = context.user_data.get("index_page", 0)
-
     if query.data == "index_next":
         context.user_data["index_page"] = page + 1
     elif query.data == "index_prev":
         context.user_data["index_page"] = page - 1
-
     await send_index_page(update, context)
 
 # -----------------------------
-# البحث عبر الفهرس
+# البحث عبر الفهرس (تحميل الكتب)
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -130,18 +122,19 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # العثور على الكلمات المفتاحية للفهرس
     keywords = []
     for name, key, kws in INDEXES:
         if key == index_key:
             keywords = kws
             break
+
     if not keywords:
         await query.message.reply_text("❌ لا توجد كلمات مفتاحية لهذا الفهرس.")
         return
 
     keywords = [normalize_text(remove_common_words(k)) for k in keywords]
     or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
+
     try:
         books = await conn.fetch(f"""
             SELECT id, file_id, file_name, uploaded_at
@@ -149,7 +142,7 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
             WHERE {or_conditions}
             ORDER BY uploaded_at DESC;
         """)
-    except Exception as e:
+    except Exception:
         await query.message.reply_text("❌ حدث خطأ أثناء البحث عن الكتب.")
         return
 
@@ -157,22 +150,9 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ لم يتم العثور على أي كتب ضمن هذا الفهرس.")
         return
 
-    context.bot_data["index_files"] = {str(b["id"]): b["file_id"] for b in books}
+    context.user_data["search_results"] = [dict(b) for b in books]
+    context.user_data["current_page"] = 0
+    context.user_data["search_stage"] = f"فهرس: {index_key}"
 
-    # عرض الكتب مع تصميم مختلف عن البحث العادي
-    keyboard = [[InlineKeyboardButton(f"📖 {b['file_name']}", callback_data=f"download:{b['id']}")] for b in books]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("🔹 نتائج الفهرس:", reply_markup=reply_markup)
-
-# -----------------------------
-# تحميل الكتاب عند الضغط على الزر
-# -----------------------------
-async def download_book(update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    book_id = query.data.replace("download:", "")
-    file_id = context.bot_data.get("index_files", {}).get(book_id)
-    if not file_id:
-        await query.message.reply_text("❌ الملف غير متوفر حالياً.")
-        return
-    await query.message.reply_document(document=file_id, caption="✅ تم التنزيل بواسطة البوت")
+    # استخدام send_books_page من البحث العادي
+    await send_books_page(update, context)
