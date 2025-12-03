@@ -19,20 +19,19 @@ except ValueError:
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
-# قاموس تحويل الجمع إلى المفرد
+# قاموس تحويل الجمع إلى المفرد (قابل للتوسيع)
 # -----------------------------
 WORD_MAP = {
     "روايات": "رواية",
     "كتب": "كتاب",
     "مجلات": "مجلة",
     "قصص": "قصة",
-    # يمكن إضافة المزيد لاحقًا
+    # يمكن إضافة المزيد لاحقاً
 }
 
-# -----------------------------
-# كلمات توقف لتقليل الضوضاء
-# -----------------------------
-STOPWORDS = {"في", "على", "من", "و", "إلى", "عن", "مع", "هذا", "أن", "ما"}
+STOP_WORDS = {
+    "في", "على", "من", "إلى", "عن", "مع", "كل", "و", "أو", "أن", "إن"
+}
 
 # -----------------------------
 # دوال التطبيع والتنظيف
@@ -40,11 +39,13 @@ STOPWORDS = {"في", "على", "من", "و", "إلى", "عن", "مع", "هذا",
 def normalize_text(text: str) -> str:
     if not text:
         return ""
-    text = text.lower().replace("_", " ")
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     text = text.replace("ى", "ي").replace("ه", "ة")
+    # تحويل الجمع إلى المفرد
     words = text.split()
-    normalized_words = [WORD_MAP.get(w, w) for w in words if w not in STOPWORDS]
+    normalized_words = [WORD_MAP.get(w, w) for w in words if w not in STOP_WORDS]
     return " ".join(normalized_words)
 
 def remove_common_words(text: str) -> str:
@@ -55,18 +56,16 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 def extract_keywords(text: str) -> List[str]:
-    """استخرج كلمات البحث."""
     if not text:
         return []
-    clean_text = re.sub(r'[^\w\s]', '', text)
-    words = [w for w in clean_text.split() if len(w) >= 1 and w not in STOPWORDS]
-    return words
+    words = text.split()
+    return [w for w in words if len(w) >= 1]
 
 def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
 
 # -----------------------------
-# توسع جذور متقدم قليلًا
+# توسيع الجذر والاشتقاقات
 # -----------------------------
 def expand_root(word: str) -> List[str]:
     variations = set()
@@ -74,11 +73,9 @@ def expand_root(word: str) -> List[str]:
     variations.add(w)
     if w.startswith("ال"):
         variations.add(w[2:])
-    for suffix in ("ة", "ي", "ون", "ين", "ات", "ان"):
-        if w.endswith(suffix):
-            variations.add(w[:-len(suffix)])
-    # إزالة الضوضاء مثل الأرقام أو الرموز
-    variations = {v for v in variations if v.isalpha()}
+    for suf in ("ة", "ي", "ون", "ين", "ات", "ان"):
+        if w.endswith(suf):
+            variations.add(w[:-len(suf)])
     return list(variations)
 
 # -----------------------------
@@ -105,19 +102,17 @@ def bm25_score_for_doc(doc_terms: List[str], query_terms: List[str], idf_map: Di
     return score
 
 # -----------------------------
-# تقييم هيوريستيك مُحسن
+# التقييم الهيوريستيكي
 # -----------------------------
 def heuristic_score(book_name: str, keywords: List[str]) -> int:
     score = 0
     name = normalize_text(book_name)
     title_words = name.split()
     normalized_query = " ".join(keywords)
-
     if normalized_query == name:
-        score += 40
+        score += 50
     elif normalized_query in name:
-        score += 15
-
+        score += 20
     for kw in keywords:
         roots = expand_root(kw)
         for w in title_words:
@@ -146,35 +141,25 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
         print(f"Failed to notify admin: {e}")
 
 # -----------------------------
-# إرسال صفحة الكتب
+# إرسال صفحة النتائج
 # -----------------------------
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
     search_stage = context.user_data.get("search_stage", "نتيجة البحث")
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
-
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
-
-    if "بحث موسع" in search_stage:
-        stage_note = "⚠️ نتائج بحث موسع"
-    elif "تطابق" in search_stage:
-        stage_note = "✅ نتائج دلالية"
-    else:
-        stage_note = search_stage
-
+    stage_note = search_stage
     text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
-
     for b in current_books:
         if not b.get("file_name") or not b.get("file_id"):
             continue
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
         keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
-
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
@@ -182,7 +167,6 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
     if nav_buttons:
         keyboard.append(nav_buttons)
-
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
@@ -190,30 +174,25 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الرئيسي (BM25 + heuristics + فلترة محسنة)
+# البحث الرئيسي المحسّن
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
-
     query = update.message.text.strip()
     if not query:
         return
-
     conn = context.bot_data.get("db_conn")
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
-
     normalized_query = normalize_text(remove_common_words(query))
     keywords = extract_keywords(normalized_query)
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
-
     if not keywords:
         await update.message.reply_text("❌ لا يمكن البحث عن كلمات خالية.")
         return
-
     # --- فلترة SQL أولية ---
     try:
         or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
@@ -224,17 +203,15 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             ORDER BY uploaded_at DESC
             LIMIT 150;
         """)
-    except Exception as e:
+    except Exception:
         await update.message.reply_text("❌ حدث خطأ أثناء استدعاء قاعدة البيانات.")
         return
-
-    # --- IDF map ---
+    # --- BM25 + heuristic ---
     try:
         N_row = await conn.fetchval("SELECT COUNT(*) FROM books;")
-        N = int(N_row or 1)
+        N = int(N_row or 0) if N_row is not None else 1
     except Exception:
         N = 1
-
     idf_map = {}
     for k in keywords:
         try:
@@ -243,50 +220,36 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             df = 0
         idf_map[k] = compute_idf(N, df)
-
-    # --- avgdl ---
     candidate_docs = []
     candidate_lens = []
     for c in candidates:
         name = normalize_text(c['file_name'] or "")
-        terms = [w for w in re.sub(r'[^\w\s]', '', name).split() if w]
+        terms = [w for w in name.split() if w]
         candidate_docs.append((c, terms))
         candidate_lens.append(len(terms) or 1)
-    avgdl = (sum(candidate_lens) / len(candidate_lens)) if candidate_lens else 1.0
-
-    # --- حساب الدرجات ---
+    avgdl = sum(candidate_lens) / len(candidate_lens) if candidate_lens else 1.0
     scored = []
-    alpha = 1.0
-    beta = 0.7
-    gamma = 12.0
-    query_terms_expanded = []
-    for k in keywords:
-        query_terms_expanded.append(k)
-        query_terms_expanded.extend(expand_root(k))
-    query_terms_expanded = list(dict.fromkeys(query_terms_expanded))
-    idf_map_expanded = {qt: idf_map.get(qt, 0.0) for qt in query_terms_expanded}
-
+    query_terms_expanded = list(dict.fromkeys([k for k in keywords] + [r for k in keywords for r in expand_root(k)]))
+    alpha, beta, gamma = 1.0, 0.7, 15.0
     for (c, terms) in candidate_docs:
+        idf_map_expanded = {qt: idf_map.get(qt, 0.0) for qt in query_terms_expanded}
         bm25_s = bm25_score_for_doc(terms, query_terms_expanded, idf_map_expanded, avgdl)
         heur = heuristic_score(c['file_name'] or "", keywords)
-        full_bonus = gamma if normalized_query and normalized_query in normalize_text(c['file_name'] or "") else 0.0
+        full_bonus = gamma if normalized_query and normalized_query in normalize_text(c['file_name'] or "") else 0
         total_score = alpha * bm25_s + beta * heur + full_bonus
         if total_score > 0:
             d = dict(c)
             d['score'] = total_score
             scored.append(d)
-
     scored.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     found_results = bool(scored)
     await notify_admin_search(context, update.effective_user.username, query, found_results)
-
     if not scored:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
         await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
         context.user_data["search_results"] = []
         context.user_data["current_page"] = 0
         return
-
     context.user_data["search_results"] = scored
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = "بحث محسّن (BM25 + heuristics)"
@@ -301,13 +264,11 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     if not keywords or not conn:
         await update.callback_query.message.reply_text("❌ لا يوجد موضوع للبحث عنه.")
         return
-
     try:
         rows = await conn.fetch("SELECT id, file_id, file_name, uploaded_at FROM books;")
     except Exception:
         await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
         return
-
     scored = []
     for r in rows:
         sc = heuristic_score(r['file_name'] or "", keywords)
@@ -315,12 +276,10 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
             d = dict(r)
             d['score'] = sc
             scored.append(d)
-
     scored.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     if not scored:
         await update.callback_query.message.reply_text("❌ لم أجد كتب مشابهة.")
         return
-
     context.user_data["search_results"] = scored
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = "بحث موسع (مشابه)"
@@ -333,7 +292,6 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-
     if data.startswith("file:"):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
