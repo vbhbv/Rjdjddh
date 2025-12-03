@@ -8,8 +8,8 @@ from telegram.ext import (
 )
 
 from admin_panel import register_admin_handlers  # لوحة التحكم
-from search_handler import search_books, send_books_page, handle_callbacks  # البحث
-import index_handler  # استدعاء ملف الفهرس المنفصل
+from search_handler import search_books, send_books_page, handle_callbacks  # استدعاء البحث الجديد
+from index_handler import show_index, search_by_index  # استدعاء الفهرس الجديد
 
 # ===============================================
 # إعداد اللوج
@@ -60,9 +60,6 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 """)
-
-        # تهيئة جدول الفهرس
-        await index_handler.init_index_table(conn)
 
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and setup complete.")
@@ -118,19 +115,34 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")],
-                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")]
+                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
+                [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")]
             ])
             await context.bot.send_message(
                 chat_id=query.from_user.id,
-                text="👋 أهلاً بك في مكتبة الكتب 📚",
-                reply_markup=keyboard
+                text=(
+                    "👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
+                    "أنا بوت ذكي احتوي على نصف مليون كتاب أستطيع مساعدتك في العثور على أي كتاب تبحث عنه، "
+                    "أو اقتراح كتب مشابهة للموضوع الذي تهتم به.\n\n"
+                    "💡 طريقة الاستخدام:\n"
+                    "- اكتب اسم الكتاب مباشرة، أو اكتب كلمات مفتاحية مثل: برمجة، فلسفة، اقتصاد...\n"
+                    "- سأعرض لك أقرب النتائج بسرعة.\n\n"
+                    "🔹 البوت تم تطويره بجهود فردية من قبل الاستاذ مجول شعلان الحيالي ودون أي دعم خارجي، "
+                    "ويتم تحمل تكاليف تشغيل المشروع بشكل فردي، "
+                    "ونرحب بكل من يريد التعاون معنا لضمان استمرار عمل المكتبة بشكل مجاني!"
+                ),
+                reply_markup=keyboard,
+                parse_mode='Markdown'
             )
         else:
             await query.message.edit_text(
                 "❌ لم يتم الاشتراك بعد. يرجى الاشتراك أولاً.\n\n"
                 "اضغط على زر '✅ اشترك الآن' للانضمام إلى القناة."
             )
+    elif query.data == "show_index":
+        await show_index(update, context)
+    elif query.data.startswith("index:"):
+        await search_by_index(update, context)
 
 # ===============================================
 # رسالة البدء /start
@@ -151,22 +163,27 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
             "- استكشاف كتب مشابهة ومواضيع متنوعة.\n"
             "- الوصول إلى مكتبة ضخمة تحتوي على مئات الآلاف من الكتب.\n\n"
             "اشترك الآن لتتمكن من الاستفادة الكاملة من مكتبة الكتب!",
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            parse_mode='Markdown'
         )
         return
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")],
-        [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")]
+        [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
+        [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")]
     ])
     await update.message.reply_text(
         "👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
-        "أنا بوت ذكي أستطيع مساعدتك في العثور على أي كتاب تبحث عنه، أو اقتراح كتب مشابهة.\n\n"
+        "أنا بوت ذكي احتوي على نصف مليون كتاب أستطيع مساعدتك في العثور على أي كتاب تبحث عنه، "
+        "أو اقتراح كتب مشابهة للموضوع الذي تهتم به.\n\n"
         "💡 طريقة الاستخدام:\n"
         "- اكتب اسم الكتاب مباشرة، أو اكتب كلمات مفتاحية مثل: برمجة، فلسفة، اقتصاد...\n"
         "- سأعرض لك أقرب النتائج بسرعة.\n\n"
-        "🔹 تم تطوير البوت بجهود فردية ودون أي دعم خارجي.",
-        reply_markup=keyboard
+        "🔹 البوت تم تطويره بجهود فردية من قبل الاستاذ مجول شعلان الحيالي ودون أي دعم خارجي، "
+        "ويتم تحمل تكاليف تشغيل المشروع بشكل فردي، "
+        "ونرحب بكل من يريد التعاون معنا لضمان استمرار عمل المكتبة بشكل مجاني!",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
     )
 
 # ===============================================
@@ -190,17 +207,10 @@ def run_bot():
         .build()
     )
 
-    # -------------------
-    # إضافة Handlers
-    # -------------------
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(handle_start_callbacks, pattern="check_subscription"))
-    app.add_handler(CallbackQueryHandler(handle_callbacks))  # باقي أزرار البحث والكتب
-    # أزرار الفهرس
-    app.add_handler(CallbackQueryHandler(index_handler.show_index, pattern="show_index"))
-    app.add_handler(CallbackQueryHandler(index_handler.search_by_index, pattern="^index:"))
+    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
+    app.add_handler(CommandHandler("start", start))
 
     register_admin_handlers(app, start)
 
