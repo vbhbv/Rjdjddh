@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 from search_handler import send_books_page  # استخدام نفس عرض صفحات البحث العادي
 
 # -----------------------------
-# دوال التطبيع والنظافة
+# دوال التطبيع والتنظيف
 # -----------------------------
 def normalize_text(text: str) -> str:
     if not text: return ""
@@ -59,11 +59,11 @@ INDEXES = [
     ("قصص الأطفال", "children_stories", ["قصص", "أطفال", "حكاية", "مغامرة"])
 ]
 
-# -----------------------------
-# عرض الفهرس بصفحات 10 عناصر
-# -----------------------------
 INDEXES_PER_PAGE = 10
 
+# -----------------------------
+# عرض صفحة الفهرس
+# -----------------------------
 async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     start = page * INDEXES_PER_PAGE
     end = start + INDEXES_PER_PAGE
@@ -76,6 +76,10 @@ async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"index_page:{page-1}"))
     if end < len(INDEXES):
         nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data=f"index_page:{page+1}"))
+
+    # زر العودة للفهرس الرئيسي دائمًا
+    nav_buttons.append(InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index"))
+
     if nav_buttons:
         keyboard.append(nav_buttons)
 
@@ -85,7 +89,7 @@ async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     await query.message.edit_text("📚 اختر الفهرس الذي تريد استعراضه:", reply_markup=reply_markup)
 
 # -----------------------------
-# الملاحة بين صفحات الفهرس
+# التنقل بين صفحات الفهرس
 # -----------------------------
 async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -94,7 +98,7 @@ async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
     await show_index(update, context, page)
 
 # -----------------------------
-# البحث داخل الفهرس وعرض الكتب
+# اختيار فهرس فرعي والبحث عن الكتب
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -106,6 +110,7 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
+    # الحصول على كلمات مفتاحية للفهرس
     keywords = []
     for name, key, kws in INDEXES:
         if key == index_key:
