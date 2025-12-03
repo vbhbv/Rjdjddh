@@ -23,7 +23,7 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 # -----------------------------
-# قائمة الفهارس الموسعة - 54 مجال مع الطب والطب البديل
+# قائمة الفهارس الموسعة مع تعديلات الروايات والطب
 # -----------------------------
 INDEXES = [
     ("الروايات", "novels", ["رواية"]),
@@ -33,6 +33,7 @@ INDEXES = [
     ("الروايات التاريخية", "historical_novels", ["تاريخ", "رواية", "ملوك", "حروب"]),
     ("الروايات الرومانسية", "romance_novels", ["رومانسية", "حب", "عاطفة", "عشق"]),
     ("الروايات النفسية", "psychological_novels", ["نفسية", "تحليل", "سلوك", "عقل"]),
+    # باقي المجالات العلمية والأدبية
     ("قواعد اللغة العربية", "arabic_grammar", ["قواعد", "نحو", "صرف", "إملاء"]),
     ("الشعر", "poetry", ["شاعر", "قصيدة", "ديوان", "معلقات"]),
     ("النقد الأدبي", "literary_criticism", ["نقد", "تحليل", "أدب", "بلاغة"]),
@@ -81,7 +82,7 @@ INDEXES = [
 ]
 
 # -----------------------------
-# عرض الفهرس بصفحات 10 عناصر
+# عرض الفهرس
 # -----------------------------
 INDEXES_PER_PAGE = 10
 
@@ -123,7 +124,7 @@ async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
     await show_index(update, context, page)
 
 # -----------------------------
-# البحث داخل الفهرس وعرض الكتب مع زر العودة دائمًا
+# البحث داخل الفهرس مع زر العودة ثابت
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -147,8 +148,8 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
 
     keywords = [normalize_text(remove_common_words(k)) for k in keywords]
 
-    # البحث صارم فقط للروايات، باقي الأقسام OR
-    sql_condition = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
+    # البحث صارم للروايات فقط (AND)
+    sql_condition = " AND ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords]) if index_key == "novels" else " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
 
     try:
         books = await conn.fetch(f"""
@@ -171,5 +172,5 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["is_index"] = True
     context.user_data["index_key"] = index_key
 
-    # زر العودة للفهرس ثابت مهما كانت الصفحة
+    # زر العودة للفهرس دائمًا
     await send_books_page(update, context, include_index_home=True)
