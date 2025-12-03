@@ -1,3 +1,5 @@
+# search_handler.py
+
 import hashlib
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -75,7 +77,7 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
     bot = context.bot
     status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
     username_text = f"@{username}" if username else "(بدون يوزر)"
-    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}"
+    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n{query}\nالحالة: {status_text}"
     try:
         await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
     except Exception as e:
@@ -84,11 +86,10 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
 # -----------------------------
 # إرسال صفحة الكتب (موحدة للفهرس والبحث)
 # -----------------------------
-async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
+async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
     search_stage = context.user_data.get("search_stage", "تطابق دقيق")
-    show_index_button = context.user_data.get("show_index_button", False)  # زر العودة للفهرس
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
 
     start = page * BOOKS_PER_PAGE
@@ -109,13 +110,17 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         context.bot_data[f"file_{key}"] = b["file_id"]
         keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
 
+    # أزرار التنقل
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
     if end < len(books):
         nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
-    if show_index_button:  # إضافة زر العودة للفهرس فقط للكتب الناتجة من الفهرس
-        nav_buttons.append(InlineKeyboardButton("🏠 العودة للفهرس", callback_data="show_index"))
+
+    # زر العودة للفهرس إذا تم طلبه
+    if include_index_home:
+        nav_buttons.append(InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index"))
+
     if nav_buttons:
         keyboard.append(nav_buttons)
 
@@ -142,7 +147,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     keywords = extract_keywords(normalized_query)
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
-    context.user_data["show_index_button"] = False  # البحث الحر لا يظهر زر العودة للفهرس
 
     books, search_stage_text = [], "تطابق دقيق"
 
@@ -181,7 +185,10 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     if not books:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
-        await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
+        await update.message.reply_text(
+            f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:",
+            reply_markup=keyboard
+        )
         context.user_data.update({"search_results": [], "current_page": 0})
         return
 
@@ -193,7 +200,12 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         scored_books.append(book_dict)
 
     scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
-    context.user_data.update({"search_results": scored_books, "current_page": 0, "search_stage": search_stage_text})
+    context.user_data.update({
+        "search_results": scored_books,
+        "current_page": 0,
+        "search_stage": search_stage_text,
+        "is_index": False  # كتب البحث العادي
+    })
     await send_books_page(update, context)
 
 # -----------------------------
@@ -234,8 +246,7 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.update({
         "search_results": scored_books,
         "current_page": 0,
-        "search_stage": "بحث موسع (مشابه)",
-        "show_index_button": False
+        "search_stage": "بحث موسع (مشابه)"
     })
     await send_books_page(update, context)
 
@@ -260,9 +271,9 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
         context.user_data["current_page"] += 1
-        await send_books_page(update, context)
+        await send_books_page(update, context, include_index_home=context.user_data.get("is_index", False))
     elif data == "prev_page":
         context.user_data["current_page"] -= 1
-        await send_books_page(update, context)
+        await send_books_page(update, context, include_index_home=context.user_data.get("is_index", False))
     elif data == "search_similar":
         await search_similar_books(update, context)
