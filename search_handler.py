@@ -22,11 +22,9 @@ except ValueError:
 def normalize_text(text: str) -> str:
     if not text:
         return ""
-    text = text.lower()
-    text = text.replace("_", " ")
+    text = text.lower().replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي")
-    text = text.replace("ه", "ة")
+    text = text.replace("ى", "ي").replace("ه", "ة")
     return text
 
 def remove_common_words(text: str) -> str:
@@ -47,39 +45,46 @@ def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
 
 # -----------------------------
-# توسيع الجذر (Root Expansion)
+# توسيع الجذر
 # -----------------------------
 def expand_root(word: str) -> List[str]:
-    # بعض الامثلة البسيطة للتوسيع، يمكن تطويرها لاحقًا
     variations = set()
+    word = normalize_text(word)
     variations.add(word)
-    if word.endswith("ة"):
-        variations.add(word[:-1])
-    if word.endswith("ي"):
-        variations.add(word[:-1])
+    # إزالة لواحق شائعة
+    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
+    for suf in suffixes:
+        if word.endswith(suf):
+            variations.add(word[:-len(suf)])
+    # إزالة ال التعريف
     if word.startswith("ال"):
         variations.add(word[2:])
     return list(variations)
 
 # -----------------------------
-# دالة التقييم الوزني
+# دالة تقييم ذكية
 # -----------------------------
-def calculate_score(book_name: str, keywords: List[str]) -> int:
+def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> float:
+    book_name = normalize_text(book.get('file_name', ''))
+    title_words = book_name.split()
     score = 0
-    name = normalize_text(book_name)
-    words_in_name = name.split()
 
-    for kw in keywords:
-        roots = expand_root(kw)
-        for root in roots:
-            for w in words_in_name:
-                if w.startswith(root):
-                    score += 10
-                elif root in w:
-                    score += 8
-        # زيادة نقاط إذا تطابقت الكلمة بالكامل
-        if kw in name:
-            score += 15
+    # التطابق الحرفي الكامل
+    if normalized_query == book_name:
+        score += 50
+    elif normalized_query in book_name:
+        score += 20
+
+    # تطابق الكلمات مع توسيع الجذر
+    for k in keywords:
+        k_variations = expand_root(k)
+        for t_word in title_words:
+            t_variations = expand_root(t_word)
+            if set(k_variations) & set(t_variations):
+                score += 10
+
+    # تحسين بسيط بناء على طول الكتاب
+    score += min(len(title_words), 5)
     return score
 
 # -----------------------------
@@ -103,12 +108,20 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
+    search_stage = context.user_data.get("search_stage", "تطابق دقيق")
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
+
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
 
-    text = f"📚 النتائج ({len(books)} كتاب)\nالصفحة {page + 1} من {total_pages}\n\n"
+    stage_note = {
+        "بحث موسع": "⚠️ نتائج بحث موسع (بحثنا بالكلمات المفتاحية)",
+        "تطابق جميع الكلمات": "✅ نتائج دلالية (تطابق جميع كلماتك)",
+        "تطابق دقيق": "✅ نتائج مطابقة (تطابق العبارة كاملة)"
+    }.get(search_stage, search_stage)
+
+    text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
 
     for b in current_books:
@@ -133,12 +146,11 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الجديد السريع والدقيق
+# البحث الجديد السريع والدقيق مع التجذير الكامل
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
-
     query = update.message.text.strip()
     if not query:
         return
@@ -157,43 +169,35 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ لا يمكن البحث عن كلمات قصيرة جدًا.")
         return
 
-    books = []
     try:
-        # تصفية أولية سريعة باستخدام LIKE لكل الكلمات مع OR لتسريع البحث
-        or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
-        books = await conn.fetch(f"""
-            SELECT id, file_id, file_name, uploaded_at
-            FROM books
-            WHERE {or_conditions}
-            ORDER BY uploaded_at DESC;
-        """)
+        # تصفية سريعة أولية: جلب كل الكتب وتقييمها بالتجذير
+        books = await conn.fetch("SELECT id, file_id, file_name, uploaded_at FROM books;")
     except Exception as e:
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
 
-    found_results = bool(books)
+    scored_books = []
+    for book in books:
+        score = calculate_score(book, keywords, normalized_query)
+        if score > 0:
+            book_dict = dict(book)
+            book_dict['score'] = score
+            scored_books.append(book_dict)
+
+    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
+    found_results = bool(scored_books)
     await notify_admin_search(context, update.effective_user.username, query, found_results)
 
-    if not books:
+    if not scored_books:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
         await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
         context.user_data["search_results"] = []
         context.user_data["current_page"] = 0
         return
 
-    # حساب نقاط لكل كتاب بعد التصفية السريعة
-    scored_books = []
-    for book in books:
-        score = calculate_score(book['file_name'], keywords)
-        book_dict = dict(book)
-        book_dict['score'] = score
-        scored_books.append(book_dict)
-
-    # ترتيب حسب النقاط والتاريخ
-    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     context.user_data["search_results"] = scored_books
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث سريع ودقيق"
+    context.user_data["search_stage"] = "تطابق دقيق"
     await send_books_page(update, context)
 
 # -----------------------------
@@ -207,23 +211,18 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
-        books = await conn.fetch(f"""
-            SELECT id, file_id, file_name, uploaded_at
-            FROM books
-            WHERE {or_conditions}
-            ORDER BY uploaded_at DESC;
-        """)
+        books = await conn.fetch("SELECT id, file_id, file_name, uploaded_at FROM books;")
     except Exception as e:
         await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
         return
 
     scored_books = []
     for book in books:
-        score = calculate_score(book['file_name'], keywords)
-        book_dict = dict(book)
-        book_dict['score'] = score
-        scored_books.append(book_dict)
+        score = calculate_score(book, keywords, context.user_data.get("last_query", ""))
+        if score > 0:
+            book_dict = dict(book)
+            book_dict['score'] = score
+            scored_books.append(book_dict)
 
     scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     if not scored_books:
@@ -236,7 +235,7 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     await send_books_page(update, context)
 
 # -----------------------------
-# التعامل مع أزرار الكتب
+# التعامل مع أزرار الكتب والمشاركة
 # -----------------------------
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -248,7 +247,9 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
             caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]])
+            share_button = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]
+            ])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
