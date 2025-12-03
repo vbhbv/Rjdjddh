@@ -4,8 +4,7 @@ from telegram.ext import ContextTypes
 import re
 from typing import List, Dict, Any
 import os
-from sentence_transformers import SentenceTransformer, util
-import torch
+from datetime import datetime
 
 BOOKS_PER_PAGE = 10
 
@@ -19,12 +18,6 @@ except ValueError:
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
-# نموذج الذكاء الاصطناعي للتضمينات (Embeddings)
-# -----------------------------
-# يمكنك استخدام أي نموذج صغير لتقليل استهلاك الموارد
-model = SentenceTransformer('sentence-transformers/paraphrase-MiniLM-L6-v2')
-
-# -----------------------------
 # دوال التطبيع والتنظيف
 # -----------------------------
 def normalize_text(text: str) -> str:
@@ -35,12 +28,14 @@ def normalize_text(text: str) -> str:
     text = text.replace("ى", "ي").replace("ه", "ة")
     return text
 
+COMMON_WORDS = {"كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"}
+
 def remove_common_words(text: str) -> str:
     if not text:
         return ""
-    for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
-        text = text.replace(word, "")
-    return text.strip()
+    words = text.split()
+    filtered = [w for w in words if w not in COMMON_WORDS]
+    return " ".join(filtered).strip()
 
 def extract_keywords(text: str) -> List[str]:
     if not text:
@@ -53,15 +48,55 @@ def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
 
 # -----------------------------
-# إشعار المشرف
+# تقشير بسيط للكلمات (light stemming)
 # -----------------------------
-async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
+def light_stem(word: str) -> str:
+    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
+    for suf in suffixes:
+        if word.endswith(suf):
+            word = word[:-len(suf)]
+            break
+    if word.startswith("ال"):
+        word = word[2:]
+    return word
+
+# -----------------------------
+# دالة التقييم الوزني
+# -----------------------------
+def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> int:
+    score = 0
+    book_name = normalize_text(book.get('file_name', ''))
+    
+    # التطابق الحرفي الكامل
+    if normalized_query == book_name:
+        score += 50
+    elif normalized_query in book_name:
+        score += 20
+
+    # تطبيق light_stem مرة واحدة لكل كلمة
+    stemmed_keywords = [light_stem(k) for k in keywords]
+    title_words = book_name.split()
+    stemmed_title = [light_stem(t) for t in title_words]
+
+    for k_stem in stemmed_keywords:
+        for t_stem in stemmed_title:
+            if t_stem.startswith(k_stem):
+                score += 10
+            elif k_stem in t_stem:
+                score += 8
+    return score
+
+# -----------------------------
+# إشعار المشرف بعد كل بحث
+# -----------------------------
+async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool, results_count: int):
     if ADMIN_USER_ID == 0:
         return
     bot = context.bot
     status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
     username_text = f"@{username}" if username else "(بدون يوزر)"
-    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}\nعدد النتائج: {results_count}\nالوقت: {timestamp}"
     try:
         await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
     except Exception as e:
@@ -73,17 +108,20 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
-    search_stage = context.user_data.get("search_stage", "تطابق دقيق")
-    total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
+    total_pages = max((len(books) - 1) // BOOKS_PER_PAGE + 1, 1)
+    page = max(0, min(page, total_pages - 1))  # تأكد من عدم الخروج عن الحدود
 
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
 
-    if "بحث موسع" in search_stage:
-        stage_note = "⚠️ نتائج بحث موسع (بحثنا بالكلمات المفتاحية + AI)"
+    stage_note = context.user_data.get("search_stage", "تطابق دقيق")
+    if "بحث موسع" in stage_note:
+        stage_note = "⚠️ نتائج بحث موسع"
+    elif "تطابق جميع الكلمات" in stage_note:
+        stage_note = "✅ نتائج دلالية"
     else:
-        stage_note = "✅ نتائج مطابقة (تطابق العبارة كاملة أو الكلمات)"
+        stage_note = "✅ نتائج مطابقة"
 
     text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
@@ -108,100 +146,3 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=reply_markup)
     elif update.callback_query:
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
-
-# -----------------------------
-# البحث الهجين
-# -----------------------------
-async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        return
-
-    query = update.message.text.strip()
-    if not query:
-        return
-
-    conn = context.bot_data.get("db_conn")
-    if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
-        return
-
-    normalized_query = normalize_text(remove_common_words(query))
-    keywords = extract_keywords(normalized_query)
-    context.user_data["last_query"] = normalized_query
-    context.user_data["last_keywords"] = keywords
-
-    try:
-        # جلب جميع الكتب للمعالجة
-        books = await conn.fetch("""
-            SELECT id, file_id, file_name, uploaded_at
-            FROM books
-            ORDER BY uploaded_at DESC;
-        """)
-    except Exception as e:
-        await update.message.reply_text("❌ حدث خطأ في قاعدة البيانات.")
-        return
-
-    found_results = bool(books)
-    await notify_admin_search(context, update.effective_user.username, query, found_results)
-
-    if not books:
-        await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}")
-        context.user_data["search_results"] = []
-        context.user_data["current_page"] = 0
-        return
-
-    # -----------------------------
-    # التقييم الهجين
-    # -----------------------------
-    query_embedding = model.encode(normalized_query, convert_to_tensor=True)
-    scored_books = []
-    for book in books:
-        book_name = normalize_text(book['file_name'])
-        # التقييم الوزني القديم
-        score_weight = 0
-        if normalized_query == book_name:
-            score_weight += 50
-        elif normalized_query in book_name:
-            score_weight += 20
-        for k in keywords:
-            if k in book_name:
-                score_weight += 5
-        # التقييم الذكي باستخدام Embedding
-        book_embedding = model.encode(book_name, convert_to_tensor=True)
-        sim_score = util.cos_sim(query_embedding, book_embedding).item() * 50  # وزن 50 للـ AI
-        total_score = score_weight + sim_score
-        book_dict = dict(book)
-        book_dict['score'] = total_score
-        scored_books.append(book_dict)
-
-    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
-    context.user_data["search_results"] = scored_books
-    context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث موسع"
-    await send_books_page(update, context)
-
-# -----------------------------
-# التعامل مع أزرار الكتب والمشاركة
-# -----------------------------
-async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data.startswith("file:"):
-        key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
-        if file_id:
-            caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share_button = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]
-            ])
-            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
-        else:
-            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
-    elif data == "next_page":
-        context.user_data["current_page"] += 1
-        await send_books_page(update, context)
-    elif data == "prev_page":
-        context.user_data["current_page"] -= 1
-        await send_books_page(update, context)
