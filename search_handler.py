@@ -1,10 +1,11 @@
 # search_handler.py
+
 import hashlib
 import math
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from typing import List, Dict
+from typing import List, Dict, Any
 import os
 
 BOOKS_PER_PAGE = 10
@@ -28,8 +29,6 @@ WORD_MAP = {
     "قصص": "قصة"
 }
 
-STOP_WORDS = {"في", "على", "من", "إلى", "عن", "مع", "كل", "و", "أو", "أن", "إن"}
-
 # -----------------------------
 # دوال التطبيع والتنظيف
 # -----------------------------
@@ -37,11 +36,10 @@ def normalize_text(text: str) -> str:
     if not text:
         return ""
     text = text.lower().replace("_", " ")
-    text = re.sub(r'[^\w\s]', '', text)
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     text = text.replace("ى", "ي").replace("ه", "ة")
     words = text.split()
-    normalized_words = [WORD_MAP.get(w, w) for w in words if w not in STOP_WORDS]
+    normalized_words = [WORD_MAP.get(w, w) for w in words]
     return " ".join(normalized_words)
 
 def remove_common_words(text: str) -> str:
@@ -54,14 +52,15 @@ def remove_common_words(text: str) -> str:
 def extract_keywords(text: str) -> List[str]:
     if not text:
         return []
-    words = text.split()
+    clean_text = re.sub(r'[^\w\s]', '', text)
+    words = clean_text.split()
     return [w for w in words if len(w) >= 1]
 
 def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
 
 # -----------------------------
-# توسيع الجذر والكلمات المشتقة
+# توسيع جذور خفيف
 # -----------------------------
 def expand_root(word: str) -> List[str]:
     variations = set()
@@ -69,7 +68,11 @@ def expand_root(word: str) -> List[str]:
     variations.add(w)
     if w.startswith("ال"):
         variations.add(w[2:])
-    for suf in ("ة", "ي", "ون", "ين", "ات", "ان"):
+    if w.endswith("ة"):
+        variations.add(w[:-1])
+    if w.endswith("ي"):
+        variations.add(w[:-1])
+    for suf in ("ون", "ين", "ات", "ان"):
         if w.endswith(suf):
             variations.add(w[:-len(suf)])
     return list(variations)
@@ -80,8 +83,7 @@ def expand_root(word: str) -> List[str]:
 def compute_idf(N: int, df: int) -> float:
     return math.log((N - df + 0.5) / (df + 0.5) + 1.0)
 
-def bm25_score_for_doc(doc_terms: List[str], query_terms: List[str], idf_map: Dict[str, float],
-                       avgdl: float, k1: float = 1.5, b: float = 0.75) -> float:
+def bm25_score_for_doc(doc_terms: List[str], query_terms: List[str], idf_map: Dict[str, float], avgdl: float, k1: float = 1.5, b: float = 0.75) -> float:
     tf = {}
     for t in doc_terms:
         tf[t] = tf.get(t, 0) + 1
@@ -106,9 +108,9 @@ def heuristic_score(book_name: str, keywords: List[str]) -> int:
     title_words = name.split()
     normalized_query = " ".join(keywords)
     if normalized_query == name:
-        score += 50
+        score += 40
     elif normalized_query in name:
-        score += 20
+        score += 15
     for kw in keywords:
         roots = expand_root(kw)
         for w in title_words:
@@ -147,7 +149,12 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
-    stage_note = search_stage
+    if "بحث موسع" in search_stage:
+        stage_note = "⚠️ نتائج بحث موسع"
+    elif "تطابق" in search_stage:
+        stage_note = "✅ نتائج دلالية"
+    else:
+        stage_note = search_stage
     text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
     for b in current_books:
@@ -170,7 +177,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الرئيسي المحسّن
+# البحث الرئيسي
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -190,7 +197,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ لا يمكن البحث عن كلمات خالية.")
         return
 
-    # فلترة SQL سريعة
     try:
         or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
         candidates = await conn.fetch(f"""
@@ -236,14 +242,14 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     candidate_lens = []
     for c in candidates:
         name = normalize_text(c['file_name'] or "")
-        terms = [w for w in name.split() if w]
+        terms = [w for w in re.sub(r'[^\w\s]', '', name).split() if w]
         candidate_docs.append((c, terms))
         candidate_lens.append(len(terms) or 1)
     avgdl = sum(candidate_lens) / len(candidate_lens) if candidate_lens else 1.0
 
     scored = []
+    alpha, beta, gamma = 1.0, 0.7, 12.0
     query_terms_expanded = list(dict.fromkeys([k for k in keywords] + [r for k in keywords for r in expand_root(k)]))
-    alpha, beta, gamma = 1.0, 0.7, 15.0
 
     for (c, terms) in candidate_docs:
         idf_map_expanded = {qt: idf_map.get(qt, 0.0) for qt in query_terms_expanded}
