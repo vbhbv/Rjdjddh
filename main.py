@@ -9,7 +9,7 @@ from telegram.ext import (
 
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks  # البحث العادي
-from index_handler import show_index, search_by_index  # الفهرس
+from index_handler import show_index, search_by_index, navigate_index_pages  # الفهرس مع الملاحة
 
 # ===============================================
 # إعداد اللوج
@@ -113,6 +113,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
+    # تحقق الاشتراك
     if data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
@@ -130,10 +131,16 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "اضغط على زر '✅ اشترك الآن' للانضمام إلى القناة."
             )
 
+    # عرض الفهرس
     elif data == "show_index":
         await show_index(update, context)
+    # اختيار فهرس
     elif data.startswith("index:"):
         await search_by_index(update, context)
+
+    # تنقل صفحات الفهرس
+    elif data in ["next_index_page", "prev_index_page", "home_index"]:
+        await navigate_index_pages(update, context, data)
 
     # أزرار البحث العادي (ملفات/تنقل)
     elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
