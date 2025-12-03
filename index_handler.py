@@ -2,30 +2,23 @@
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from search_handler import send_books_page  # الربط مع البحث العادي
+from search_handler import send_books_page
 
-# -----------------------------
-# دوال التطبيع والتنظيف
-# -----------------------------
 def normalize_text(text: str) -> str:
-    if not text:
-        return ""
-    text = text.lower()
-    text = text.replace("_", " ")
+    if not text: return ""
+    text = text.lower().replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي")
-    text = text.replace("ه", "ة")
+    text = text.replace("ى", "ي").replace("ه", "ة")
     return text
 
 def remove_common_words(text: str) -> str:
-    if not text:
-        return ""
+    if not text: return ""
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
         text = text.replace(word, "")
     return text.strip()
 
 # -----------------------------
-# قائمة الفهارس (30 مجال)
+# قائمة الفهارس
 # -----------------------------
 INDEXES = [
     ("قواعد اللغة العربية", "arabic_grammar", ["قواعد", "نحو", "صرف", "إملاء", "لغوي"]),
@@ -61,7 +54,7 @@ INDEXES = [
 ]
 
 # -----------------------------
-# عرض صفحة الفهرس مع تقسيم كل 10 أزرار
+# إرسال صفحة الفهرس مع زر العودة للواجهة
 # -----------------------------
 async def send_index_page(update, context: ContextTypes.DEFAULT_TYPE):
     page = context.user_data.get("index_page", 0)
@@ -76,13 +69,13 @@ async def send_index_page(update, context: ContextTypes.DEFAULT_TYPE):
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="index_prev"))
     if end < len(INDEXES):
         nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="index_next"))
-    if nav_buttons:
-        keyboard.append(nav_buttons)
+    # زر العودة للفهرس
+    nav_buttons.append(InlineKeyboardButton("🏠 العودة للفهرس", callback_data="show_index"))
+    keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     query = update.callback_query
-
-    text = "📚 اختر الفهرس المطلوب (اضغط على المجال الذي تريده):"
+    text = "📚 اختر الفهرس المطلوب (مظهر مختلف عن البحث العادي):"
     if query:
         await query.answer()
         await query.message.edit_text(text, reply_markup=reply_markup)
@@ -97,20 +90,24 @@ async def show_index(update, context: ContextTypes.DEFAULT_TYPE):
     await send_index_page(update, context)
 
 # -----------------------------
-# التعامل مع أزرار التالي/السابق للفهرس
+# التعامل مع أزرار الملاحة للفهرس
 # -----------------------------
 async def handle_index_navigation(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     page = context.user_data.get("index_page", 0)
+
     if query.data == "index_next":
         context.user_data["index_page"] = page + 1
     elif query.data == "index_prev":
         context.user_data["index_page"] = page - 1
+    elif query.data == "show_index":
+        context.user_data["index_page"] = 0
+
     await send_index_page(update, context)
 
 # -----------------------------
-# البحث عبر الفهرس (تحميل الكتب)
+# البحث عبر الفهرس وتحميل الكتب
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -153,6 +150,4 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["search_results"] = [dict(b) for b in books]
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = f"فهرس: {index_key}"
-
-    # استخدام send_books_page من البحث العادي
     await send_books_page(update, context)
