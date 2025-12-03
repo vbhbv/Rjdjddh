@@ -23,10 +23,10 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 # -----------------------------
-# قائمة الفهارس الموسعة - 50 مجال
+# قائمة الفهارس الموسعة - 54 مجال مع الطب والطب البديل
 # -----------------------------
 INDEXES = [
-    ("الروايات والقصص", "novels_stories", ["رواية", "قصة", "قصّة"]),
+    ("الروايات", "novels", ["رواية"]),
     ("قصص الأطفال", "children_stories", ["قصص", "أطفال", "حكاية", "مغامرة"]),
     ("الخيال العلمي", "sci_fi", ["خيال", "علمي", "فضاء", "مستقبل"]),
     ("القصص البوليسية", "detective_stories", ["جريمة", "بوليسي", "تحقيق", "قضية"]),
@@ -36,7 +36,7 @@ INDEXES = [
     ("قواعد اللغة العربية", "arabic_grammar", ["قواعد", "نحو", "صرف", "إملاء"]),
     ("الشعر", "poetry", ["شاعر", "قصيدة", "ديوان", "معلقات"]),
     ("النقد الأدبي", "literary_criticism", ["نقد", "تحليل", "أدب", "بلاغة"]),
-    ("الأدب العالمي", "world_literature", ["أدب", "رواية", "قصّة", "كتّاب"]),
+    ("الأدب العالمي", "world_literature", ["أدب", "رواية", "كتّاب"]),
     ("الفيزياء", "physics", ["فيزياء", "طاقة", "كوانتم", "ميكانيكا"]),
     ("الكيمياء", "chemistry", ["كيمياء", "تفاعل", "مركب", "عنصر"]),
     ("الرياضيات", "math", ["رياضيات", "جبر", "هندسة", "إحصاء"]),
@@ -53,6 +53,10 @@ INDEXES = [
     ("التعليم", "education", ["تعليم", "مدرسة", "جامعة", "تدريس"]),
     ("اللغات", "languages", ["لغة", "تحدث", "ترجمة", "قاموس"]),
     ("الطب", "medicine", ["طب", "دواء", "تشخيص", "علاج"]),
+    ("صيدلة", "pharmacy", ["صيدلة", "دواء", "علاج", "عقاقير"]),
+    ("طب أسنان", "dentistry", ["أسنان", "طب", "تقويم", "جراحة"]),
+    ("أعشاب طبيعية", "herbal_medicine", ["أعشاب", "طبيعية", "علاج", "صحة"]),
+    ("بهارات", "spices", ["بهارات", "توابل", "نكهات", "طبخ"]),
     ("الطبخ", "cooking", ["طبخ", "وصفات", "اكل", "مطبخ"]),
     ("السفر", "travel", ["سفر", "رحلة", "دليل", "سياحة"]),
     ("الفنون", "arts", ["فن", "رسم", "موسيقى", "لوحة"]),
@@ -74,8 +78,6 @@ INDEXES = [
     ("الذكاء الاصطناعي", "ai", ["ذكاء", "اصطناعي", "روبوت"]),
     ("الموسيقى الكلاسيكية", "classical_music", ["موسيقى", "كلاسيك", "أوركسترا", "فن"]),
     ("الخيال والفانتازيا", "fantasy", ["خيال", "سحر", "عالم", "مغامرة"]),
-    ("الروايات التاريخية العالمية", "world_historical_novels", ["رواية", "تاريخ", "ملوك", "حروب"]),
-    ("القصص الواقعية", "realistic_stories", ["قصة", "واقعية", "حياة", "شخصية"]),
 ]
 
 # -----------------------------
@@ -88,6 +90,7 @@ async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     end = start + INDEXES_PER_PAGE
     current_indexes = INDEXES[start:end]
 
+    total_indexes = len(INDEXES)
     keyboard = [[InlineKeyboardButton(name, callback_data=f"index:{key}")] for name, key, _ in current_indexes]
 
     nav_buttons = []
@@ -99,11 +102,12 @@ async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
+    text = f"📚 اختر الفهرس الذي تريد استعراضه (عدد الفهارس: {total_indexes}):"
     if update.callback_query:
-        await update.callback_query.message.edit_text("📚 اختر الفهرس الذي تريد استعراضه:", reply_markup=reply_markup)
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
         await update.callback_query.answer()
     elif update.message:
-        await update.message.reply_text("📚 اختر الفهرس الذي تريد استعراضه:", reply_markup=reply_markup)
+        await update.message.reply_text(text, reply_markup=reply_markup)
 
 # -----------------------------
 # الملاحة بين صفحات الفهرس
@@ -119,7 +123,7 @@ async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
     await show_index(update, context, page)
 
 # -----------------------------
-# البحث داخل الفهرس وعرض الكتب
+# البحث داخل الفهرس وعرض الكتب مع زر العودة دائمًا
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -131,7 +135,6 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # الحصول على الكلمات المفتاحية
     keywords = []
     for name, key, kws in INDEXES:
         if key == index_key:
@@ -144,11 +147,8 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
 
     keywords = [normalize_text(remove_common_words(k)) for k in keywords]
 
-    # البحث صارم فقط في فهرس الروايات والقصص
-    if index_key == "novels_stories":
-        sql_condition = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
-    else:
-        sql_condition = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
+    # البحث صارم فقط للروايات، باقي الأقسام OR
+    sql_condition = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
 
     try:
         books = await conn.fetch(f"""
@@ -171,5 +171,5 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["is_index"] = True
     context.user_data["index_key"] = index_key
 
-    # إرسال الكتب مع زر العودة للفهرس دائمًا
+    # زر العودة للفهرس ثابت مهما كانت الصفحة
     await send_books_page(update, context, include_index_home=True)
