@@ -17,6 +17,16 @@ except ValueError:
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
+# قاموس تحويل الجمع إلى المفرد
+# -----------------------------
+WORD_MAP = {
+    "روايات": "رواية",
+    "كتب": "كتاب",
+    "مجلات": "مجلة",
+    "قصص": "قصة"
+}
+
+# -----------------------------
 # دوال التطبيع والتنظيف
 # -----------------------------
 def normalize_text(text: str) -> str:
@@ -25,7 +35,11 @@ def normalize_text(text: str) -> str:
     text = text.lower().replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     text = text.replace("ى", "ي").replace("ه", "ة")
-    return text
+    
+    # تحويل الجمع إلى مفرد
+    words = text.split()
+    normalized_words = [WORD_MAP.get(w, w) for w in words]
+    return " ".join(normalized_words)
 
 def remove_common_words(text: str) -> str:
     if not text:
@@ -39,7 +53,7 @@ def extract_keywords(text: str) -> List[str]:
         return []
     clean_text = re.sub(r'[^\w\s]', '', text)
     words = clean_text.split()
-    return [w for w in words if len(w) >= 2]
+    return [w for w in words if len(w) >= 2]  # دعم الكلمات القصيرة
 
 def get_db_safe_query(normalized_query: str) -> str:
     return normalized_query.replace("'", "''")
@@ -51,12 +65,10 @@ def expand_root(word: str) -> List[str]:
     variations = set()
     word = normalize_text(word)
     variations.add(word)
-    # إزالة اللواحق الشائعة
     suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
     for suf in suffixes:
         if word.endswith(suf):
             variations.add(word[:-len(suf)])
-    # إزالة "ال" في البداية
     if word.startswith("ال"):
         variations.add(word[2:])
     return list(variations)
@@ -70,14 +82,14 @@ def calculate_score(book_name: str, keywords: List[str]) -> int:
     words_in_name = name.split()
 
     for kw in keywords:
-        kw_roots = expand_root(kw)
-        for root in kw_roots:
+        roots = expand_root(kw)
+        for root in roots:
             for w in words_in_name:
-                w_roots = expand_root(w)
-                if root in w_roots or w.startswith(root):
+                if w.startswith(root):
                     score += 10
                 elif root in w:
                     score += 8
+        # زيادة نقاط إذا تطابقت الكلمة بالكامل
         if kw in name:
             score += 15
     return score
@@ -133,11 +145,12 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الجديد السريع والدقيق مع دعم التجذير
+# البحث السريع والدقيق مع دعم المفرد والجمع
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
+
     query = update.message.text.strip()
     if not query:
         return
@@ -156,8 +169,9 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ لا يمكن البحث عن كلمات قصيرة جدًا.")
         return
 
+    books = []
     try:
-        # البحث المباشر لكل كلمة مع OR لتغطية المفرد والمشتقات
+        # بحث سريع باستخدام LIKE لكل الكلمات مع OR
         or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
         books = await conn.fetch(f"""
             SELECT id, file_id, file_name, uploaded_at
@@ -169,6 +183,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
 
+    # حساب النقاط مع دعم توسيع الجذر
     scored_books = []
     for book in books:
         score = calculate_score(book['file_name'], keywords)
@@ -218,9 +233,10 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     scored_books = []
     for book in books:
         score = calculate_score(book['file_name'], keywords)
-        book_dict = dict(book)
-        book_dict['score'] = score
-        scored_books.append(book_dict)
+        if score > 0:
+            book_dict = dict(book)
+            book_dict['score'] = score
+            scored_books.append(book_dict)
 
     scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
     if not scored_books:
@@ -233,7 +249,7 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     await send_books_page(update, context)
 
 # -----------------------------
-# التعامل مع أزرار الكتب
+# التعامل مع أزرار الكتب والمشاركة
 # -----------------------------
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -245,9 +261,7 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
             caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share_button = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]
-            ])
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
