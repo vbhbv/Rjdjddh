@@ -88,6 +88,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
     search_stage = context.user_data.get("search_stage", "تطابق دقيق")
+    show_index_button = context.user_data.get("show_index_button", False)  # زر العودة للفهرس
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
 
     start = page * BOOKS_PER_PAGE
@@ -113,7 +114,10 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
     if end < len(books):
         nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
-    if nav_buttons: keyboard.append(nav_buttons)
+    if show_index_button:  # إضافة زر العودة للفهرس فقط للكتب الناتجة من الفهرس
+        nav_buttons.append(InlineKeyboardButton("🏠 العودة للفهرس", callback_data="show_index"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
@@ -138,6 +142,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     keywords = extract_keywords(normalized_query)
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
+    context.user_data["show_index_button"] = False  # البحث الحر لا يظهر زر العودة للفهرس
 
     books, search_stage_text = [], "تطابق دقيق"
 
@@ -226,7 +231,12 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text("❌ لم أجد كتب مشابهة.")
         return
 
-    context.user_data.update({"search_results": scored_books, "current_page": 0, "search_stage": "بحث موسع (مشابه)"})
+    context.user_data.update({
+        "search_results": scored_books,
+        "current_page": 0,
+        "search_stage": "بحث موسع (مشابه)",
+        "show_index_button": False
+    })
     await send_books_page(update, context)
 
 # -----------------------------
