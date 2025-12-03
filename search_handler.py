@@ -7,183 +7,147 @@ import os
 
 BOOKS_PER_PAGE = 10
 
+# -----------------------------
+# إعدادات المشرف
+# -----------------------------
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
     ADMIN_USER_ID = 0
+    print("⚠️ ADMIN_ID environment variable is not valid.")
 
+# -----------------------------
+# قاموس تحويل الجمع إلى المفرد
+# -----------------------------
+WORD_MAP = {
+    "روايات": "رواية",
+    "كتب": "كتاب",
+    "مجلات": "مجلة",
+    "قصص": "قصة"
+}
 
-# -----------------------------------------------------------
-# 1) تطبيع متقدم للنصوص (أقوى من السابق)
-# -----------------------------------------------------------
+# -----------------------------
+# دوال التطبيع والتنظيف
+# -----------------------------
 def normalize_text(text: str) -> str:
     if not text:
         return ""
+    text = text.lower().replace("_", " ")
+    text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    text = text.replace("ى", "ي").replace("ه", "ة")
+    
+    # تحويل الجمع إلى مفرد
+    words = text.split()
+    normalized_words = [WORD_MAP.get(w, w) for w in words]
+    return " ".join(normalized_words)
 
-    text = text.lower()
-    replacements = {
-        "أ": "ا", "إ": "ا", "آ": "ا",
-        "ة": "ه", "ى": "ي", "_": " ",
-        "ؤ": "و", "ئ": "ي"
-    }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
+def remove_common_words(text: str) -> str:
+    if not text:
+        return ""
+    for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
+        text = text.replace(word, "")
+    return text.strip()
 
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-# -----------------------------------------------------------
-# 2) خوارزمية جمع → مفرد محسّنة (Rule-based)
-# -----------------------------------------------------------
-def singularize(word: str) -> str:
-    word = normalize_text(word)
-
-    rules = [
-        (r"(.*)ات$", r"\1ه"),
-        (r"(.*)ون$", r"\1"),
-        (r"(.*)ين$", r"\1"),
-        (r"(.*)ان$", r"\1"),
-        (r"(.*)ات$", r"\1"),
-    ]
-
-    for pat, repl in rules:
-        if re.match(pat, word):
-            return re.sub(pat, repl, word)
-
-    return word
-
-
-# -----------------------------------------------------------
-# 3) Light Root Expander (مدمج – سريع جداً)
-# -----------------------------------------------------------
-def expand_root(word: str) -> List[str]:
-    word = normalize_text(word)
-    roots = {word, singularize(word)}
-
-    suffixes = ["يه", "ون", "ات", "ان", "ين", "ه"]
-    for s in suffixes:
-        if word.endswith(s):
-            roots.add(word[:-len(s)])
-
-    if word.startswith("ال"):
-        roots.add(word[2:])
-
-    return list(roots)
-
-
-# -----------------------------------------------------------
-# 4) Similarity Matching (تصحيح تلقائي بسيط)
-# -----------------------------------------------------------
-def char_similarity(a: str, b: str) -> float:
-    matches = sum(1 for x, y in zip(a, b) if x == y)
-    return matches / max(len(a), len(b), 1)
-
-
-# -----------------------------------------------------------
-# 5) استخراج الكلمات المفتاحية
-# -----------------------------------------------------------
 def extract_keywords(text: str) -> List[str]:
     if not text:
         return []
+    clean_text = re.sub(r'[^\w\s]', '', text)
+    words = clean_text.split()
+    return [w for w in words if len(w) >= 2]  # دعم الكلمات القصيرة
 
-    clean = re.sub(r"[^\w\s]", "", text)
-    words = clean.split()
+def get_db_safe_query(normalized_query: str) -> str:
+    return normalized_query.replace("'", "''")
 
-    final = []
-    for w in words:
-        w = singularize(w)
-        if len(w) >= 2:
-            final.append(w)
-    return final
+# -----------------------------
+# توسيع الجذر (Root Expansion)
+# -----------------------------
+def expand_root(word: str) -> List[str]:
+    variations = set()
+    word = normalize_text(word)
+    variations.add(word)
+    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين"]
+    for suf in suffixes:
+        if word.endswith(suf):
+            variations.add(word[:-len(suf)])
+    if word.startswith("ال"):
+        variations.add(word[2:])
+    return list(variations)
 
-
-# -----------------------------------------------------------
-# 6) تقييم ذكي (Hybrid Scoring)
-# -----------------------------------------------------------
+# -----------------------------
+# دالة التقييم الوزني
+# -----------------------------
 def calculate_score(book_name: str, keywords: List[str]) -> int:
-    name = normalize_text(book_name)
-    parts = name.split()
     score = 0
+    name = normalize_text(book_name)
+    words_in_name = name.split()
 
     for kw in keywords:
         roots = expand_root(kw)
-        for r in roots:
-            if name == r:
-                score += 25
-            if r in name:
-                score += 12
-            for w in parts:
-                if w.startswith(r):
+        for root in roots:
+            for w in words_in_name:
+                if w.startswith(root):
                     score += 10
-                elif char_similarity(w, r) >= 0.75:
+                elif root in w:
                     score += 8
-
+        # زيادة نقاط إذا تطابقت الكلمة بالكامل
         if kw in name:
             score += 15
-
     return score
 
-
-# -----------------------------------------------------------
-# إعلام المشرف
-# -----------------------------------------------------------
-async def notify_admin_search(context, username, query, found):
+# -----------------------------
+# إشعار المشرف
+# -----------------------------
+async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
     if ADMIN_USER_ID == 0:
         return
+    bot = context.bot
+    status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
+    username_text = f"@{username}" if username else "(بدون يوزر)"
+    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}"
     try:
-        msg = (
-            f"🔔 بحث جديد:\n"
-            f"👤 المستخدم: @{username if username else 'بدون'}\n"
-            f"🔎 البحث: `{query}`\n"
-            f"📌 الحالة: {'نتائج موجودة' if found else 'لا توجد نتائج'}"
-        )
-        await context.bot.send_message(ADMIN_USER_ID, msg, parse_mode="Markdown")
-    except:
-        pass
+        await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
+    except Exception as e:
+        print(f"Failed to notify admin: {e}")
 
-
-# -----------------------------------------------------------
+# -----------------------------
 # إرسال صفحة الكتب
-# -----------------------------------------------------------
-async def send_books_page(update, context):
+# -----------------------------
+async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
-
-    total_pages = max((len(books) - 1) // BOOKS_PER_PAGE + 1, 1)
-
+    total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
-    current = books[start:end]
+    current_books = books[start:end]
 
-    txt = f"📚 عدد النتائج: {len(books)}\n📖 الصفحة {page+1}/{total_pages}\n\n"
-
+    text = f"📚 النتائج ({len(books)} كتاب)\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
-    for b in current:
+
+    for b in current_books:
+        if not b.get("file_name") or not b.get("file_id"):
+            continue
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
         keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
 
-    nav = []
+    nav_buttons = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
     if end < len(books):
-        nav.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
-    if nav:
-        keyboard.append(nav)
+        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
 
-    markup = InlineKeyboardMarkup(keyboard)
-
+    reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
-        await update.message.reply_text(txt, reply_markup=markup)
-    else:
-        await update.callback_query.message.edit_text(txt, reply_markup=markup)
+        await update.message.reply_text(text, reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
-
-# -----------------------------------------------------------
-# البحث الرئيسي (مطوّر)
-# -----------------------------------------------------------
-async def search_books(update, context):
+# -----------------------------
+# البحث السريع والدقيق مع دعم المفرد والجمع
+# -----------------------------
+async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
 
@@ -193,93 +157,119 @@ async def search_books(update, context):
 
     conn = context.bot_data.get("db_conn")
     if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    normalized = normalize_text(query)
-    keywords = extract_keywords(normalized)
+    normalized_query = normalize_text(remove_common_words(query))
+    keywords = extract_keywords(normalized_query)
+    context.user_data["last_query"] = normalized_query
+    context.user_data["last_keywords"] = keywords
 
     if not keywords:
-        await update.message.reply_text("❌ أدخل كلمة مفيدة للبحث.")
+        await update.message.reply_text("❌ لا يمكن البحث عن كلمات قصيرة جدًا.")
         return
 
-    # LIKE Query
-    like_parts = [f"LOWER(file_name) LIKE '%{k}%'" for k in keywords]
-    where_clause = " OR ".join(like_parts)
-
+    books = []
     try:
-        rows = await conn.fetch(f"""
-            SELECT id, file_id, file_name, uploaded_at 
+        # بحث سريع باستخدام LIKE لكل الكلمات مع OR
+        or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
+        books = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
             FROM books
-            WHERE {where_clause}
+            WHERE {or_conditions}
+            ORDER BY uploaded_at DESC;
         """)
-    except:
-        await update.message.reply_text("❌ خطأ أثناء البحث.")
+    except Exception as e:
+        await update.message.reply_text("❌ حدث خطأ في البحث.")
         return
 
-    # Scoring
-    scored = []
-    for r in rows:
-        s = calculate_score(r["file_name"], keywords)
-        if s > 0:
-            d = dict(r)
-            d["score"] = s
-            scored.append(d)
+    # حساب النقاط مع دعم توسيع الجذر
+    scored_books = []
+    for book in books:
+        score = calculate_score(book['file_name'], keywords)
+        if score > 0:
+            book_dict = dict(book)
+            book_dict['score'] = score
+            scored_books.append(book_dict)
 
-    scored.sort(key=lambda x: (x["score"], x["uploaded_at"]), reverse=True)
+    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
+    found_results = bool(scored_books)
+    await notify_admin_search(context, update.effective_user.username, query, found_results)
 
-    await notify_admin_search(context, update.effective_user.username, query, bool(scored))
-
-    if not scored:
-        await update.message.reply_text("❌ لا توجد نتائج.\nجرّب كلمة مشابهة.")
+    if not scored_books:
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
+        await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
+        context.user_data["search_results"] = []
+        context.user_data["current_page"] = 0
         return
 
-    context.user_data["search_results"] = scored
+    context.user_data["search_results"] = scored_books
     context.user_data["current_page"] = 0
-
+    context.user_data["search_stage"] = "بحث سريع ودقيق"
     await send_books_page(update, context)
 
-
-# -----------------------------------------------------------
+# -----------------------------
 # البحث عن كتب مشابهة
-# -----------------------------------------------------------
-async def search_similar_books(update, context):
+# -----------------------------
+async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
+    conn = context.bot_data.get("db_conn")
     keywords = context.user_data.get("last_keywords")
-    if not keywords:
-        await update.callback_query.message.reply_text("❌ لا يوجد بحث سابق.")
+    if not keywords or not conn:
+        await update.callback_query.message.reply_text("❌ لا يوجد موضوع للبحث عنه.")
         return
-    await search_books(update.callback_query, context)
 
+    try:
+        or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
+        books = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
+            FROM books
+            WHERE {or_conditions}
+            ORDER BY uploaded_at DESC;
+        """)
+    except Exception as e:
+        await update.callback_query.message.reply_text("❌ حدث خطأ أثناء البحث عن كتب مشابهة.")
+        return
 
-# -----------------------------------------------------------
-# التعامل مع أزرار البوت
-# -----------------------------------------------------------
-async def handle_callbacks(update, context):
-    q = update.callback_query
-    await q.answer()
-    data = q.data
+    scored_books = []
+    for book in books:
+        score = calculate_score(book['file_name'], keywords)
+        if score > 0:
+            book_dict = dict(book)
+            book_dict['score'] = score
+            scored_books.append(book_dict)
+
+    scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
+    if not scored_books:
+        await update.callback_query.message.reply_text("❌ لم أجد كتب مشابهة.")
+        return
+
+    context.user_data["search_results"] = scored_books
+    context.user_data["current_page"] = 0
+    context.user_data["search_stage"] = "بحث موسع (مشابه)"
+    await send_books_page(update, context)
+
+# -----------------------------
+# التعامل مع أزرار الكتب والمشاركة
+# -----------------------------
+async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
 
     if data.startswith("file:"):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
-        if not file_id:
-            await q.message.reply_text("❌ الملف غير متاح.")
-            return
-        await q.message.reply_document(
-            document=file_id,
-            caption="📥 تم التحميل عبر @boooksfree1bot",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📤 شارك البوت", switch_inline_query="")]
-            ])
-        )
-
+        if file_id:
+            caption = "تم التنزيل بواسطة @boooksfree1bot"
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]])
+            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
+        else:
+            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
-
     elif data == "prev_page":
         context.user_data["current_page"] -= 1
         await send_books_page(update, context)
-
     elif data == "search_similar":
         await search_similar_books(update, context)
