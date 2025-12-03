@@ -1,137 +1,126 @@
-import asyncpg
+# index_handler.py
+
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-import hashlib
 
 # -----------------------------
-# دوال التطبيع والكلمات المرادفة
+# دوال التطبيع والنظافة
 # -----------------------------
 def normalize_text(text: str) -> str:
-    if not text:
-        return ""
+    """لتطبيع النص العربي للبحث."""
+    if not text: return ""
     text = text.lower()
     text = text.replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي").replace("ه", "ة")
+    text = text.replace("ى", "ي")
+    text = text.replace("ه", "ة")
     return text
 
 def remove_common_words(text: str) -> str:
-    for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء", "شاعر", "قصيدة"]:
+    """إزالة الكلمات العامة من البحث."""
+    if not text: return ""
+    for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء"]:
         text = text.replace(word, "")
     return text.strip()
 
-def extract_keywords(text: str):
-    clean_text = re.sub(r'[^\w\s]', '', text)
-    words = clean_text.split()
-    return [w for w in words if len(w) >= 3]
+# -----------------------------
+# قائمة الفهارس
+# -----------------------------
+INDEXES = [
+    ("قواعد اللغة العربية", "arabic_grammar", ["قواعد", "نحو", "صرف", "إملاء", "لغوي"]),
+    ("كتب إنكليزية", "english_books", ["english", "grammar", "literature", "novel"]),
+    ("كتب قانون", "law_books", ["قانون", "تشريع", "محاماة", "تشريعات"]),
+    ("الشعر", "poetry", ["شاعر", "قصيدة", "ديوان", "مقطوعة", "معلقات"]),
+    ("النقد الأدبي", "literary_criticism", ["نقد", "تحليل", "ادب", "بلاغة"]),
+    ("الفيزياء", "physics", ["فيزياء", "طاقة", "كوانتم", "ميكانيكا"]),
+    ("الكيمياء", "chemistry", ["كيمياء", "تفاعل", "مركب", "عنصر"]),
+    ("الرياضيات", "math", ["رياضيات", "جبر", "هندسة", "إحصاء"]),
+    ("الفلسفة", "philosophy", ["فلسفة", "ميتافيزيقيا", "منطق", "أخلاق"]),
+    ("الاقتصاد", "economics", ["اقتصاد", "مال", "تجارة", "سوق"]),
+    ("البرمجة", "programming", ["برمجة", "كود", "python", "java", "algorithm"]),
+    ("التاريخ", "history", ["تاريخ", "حضارة", "عصور", "ملوك"]),
+    ("الجغرافيا", "geography", ["جغرافيا", "خرائط", "مناخ", "بيئة"]),
+    ("الفنون", "arts", ["فن", "رسم", "موسيقى", "لوحة"]),
+    ("التصميم", "design", ["تصميم", "ديكور", "جرافيك", "ابداع"]),
+    ("الطب", "medicine", ["طب", "دواء", "تشخيص", "علاج"]),
+    ("الطبخ", "cooking", ["طبخ", "وصفات", "اكل", "مطبخ"]),
+    ("السفر", "travel", ["سفر", "رحلة", "دليل", "سياحة"]),
+    ("الدين", "religion", ["دين", "اسلام", "مسيحية", "يهودية"]),
+    ("السياسة", "politics", ["سياسة", "حكومة", "برلمان", "دولة"]),
+    ("الرياضة", "sports", ["رياضة", "كرة", "سباق", "تمارين"]),
+    ("علم النفس", "psychology", ["علم النفس", "تحليل نفسي", "سلوك", "عقل"]),
+    ("الأدب", "literature", ["أدب", "رواية", "قصة", "مقال"]),
+    ("علم الاجتماع", "sociology", ["علم الاجتماع", "مجتمع", "ثقافة", "علاقات"]),
+    ("التكنولوجيا", "technology", ["تكنولوجيا", "روبوت", "ذكاء اصطناعي", "تقنية"]),
+    ("الهندسة", "engineering", ["هندسة", "ميكانيكا", "كهرباء", "مدني"]),
+    ("التعليم", "education", ["تعليم", "مدرسة", "جامعة", "تدريس"]),
+    ("اللغات", "languages", ["لغة", "تحدث", "ترجمة", "قاموس"]),
+    ("الأساطير", "mythology", ["أسطورة", "خرافة", "أساطير", "أبطال"]),
+    ("قصص الأطفال", "children_stories", ["قصص", "أطفال", "حكاية", "مغامرة"])
+]
 
 # -----------------------------
-# إنشاء جدول الفهرس
-# -----------------------------
-async def init_index_table(conn: asyncpg.Connection):
-    await conn.execute("""
-    CREATE TABLE IF NOT EXISTS index_table (
-        id SERIAL PRIMARY KEY,
-        category TEXT UNIQUE,
-        keywords TEXT[]
-    );
-    """)
-
-    # أمثلة توسيع الفهرس: 30 فهرس
-    categories = {
-        "قواعد اللغة العربية": ["لغة", "نحو", "صرف", "إملاء", "صرفية"],
-        "كتب إنكليزية": ["english", "grammar", "literature", "english books"],
-        "كتب قانون": ["قانون", "تشريع", "محكمة", "قانوني"],
-        "شعر": ["شاعر", "قصيدة", "ديوان", "معلقات"],
-        "نقد أدبي": ["نقد", "أدب", "تحليل", "مراجعة"],
-        "فيزياء": ["فيزياء", "علوم", "طبيعة", "فيزيائي"],
-        "كيمياء": ["كيمياء", "مركبات", "تفاعلات"],
-        "رياضيات": ["رياضيات", "جبر", "هندسة", "تحليل"],
-        "فلسفة": ["فلسفة", "فلاسفة", "منطق", "أخلاق"],
-        "اقتصاد": ["اقتصاد", "مالية", "أسواق"],
-        "تاريخ": ["تاريخ", "حضارة", "أحداث", "سيرة"],
-        "جغرافيا": ["جغرافيا", "خرائط", "أرض", "عالم"],
-        "طب": ["طب", "دواء", "تشخيص", "علاج"],
-        "تقنية": ["برمجة", "حاسوب", "تقنية", "ذكاء اصطناعي"],
-        "دين": ["إسلام", "مسيحية", "يهودية", "دين"],
-        "سيرة ذاتية": ["سيرة", "حياة", "مذكرات", "ذكريات"],
-        "سياسة": ["سياسة", "حكومة", "انتخابات", "قرار"],
-        "أدب عالمي": ["رواية", "أدب", "كتاب", "قصص"],
-        "روايات": ["رواية", "خيال", "قصص", "روائي"],
-        "قصص أطفال": ["أطفال", "قصص", "تعليم", "حكايات"],
-        "رياضة": ["رياضة", "كرة", "ملاعب", "لاعبين"],
-        "علوم اجتماعية": ["علم الاجتماع", "سلوك", "مجتمع", "علاقات"],
-        "علم نفس": ["علم النفس", "سلوك", "شخصية", "تحليل"],
-        "تقارير وأبحاث": ["بحث", "تقرير", "دراسة", "ورقة"],
-        "مسلسلات وأفلام": ["سينما", "مسلسلات", "أفلام", "تمثيل"],
-        "فنون": ["فن", "لوحة", "موسيقى", "إبداع"],
-        "تصميم": ["تصميم", "جرافيك", "ديكور", "تصاميم"],
-        "موسوعات": ["موسوعة", "موسوعات", "مرجع", "كتاب"],
-        "برمجة": ["python", "java", "برمجة", "coding"],
-        "ذكاء اصطناعي": ["ai", "machine learning", "ذكاء", "تعلم آلي"],
-        "طبخ": ["طبخ", "وصفات", "أطعمة", "مأكولات"]
-    }
-
-    for cat, keys in categories.items():
-        await conn.execute("""
-        INSERT INTO index_table(category, keywords)
-        VALUES($1, $2)
-        ON CONFLICT (category) DO UPDATE
-        SET keywords = EXCLUDED.keywords;
-        """, cat, keys)
-
-# -----------------------------
-# عرض الفهرس بالأزرار
+# عرض الفهرس كأزرار
 # -----------------------------
 async def show_index(update, context: ContextTypes.DEFAULT_TYPE):
-    conn = context.bot_data.get("db_conn")
-    if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
-        return
-
-    rows = await conn.fetch("SELECT category FROM index_table ORDER BY category;")
     keyboard = []
-    for r in rows:
-        keyboard.append([InlineKeyboardButton(r["category"], callback_data=f"index:{r['category']}")])
-
+    for name, key, _ in INDEXES:
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"index:{key}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📚 اختر الفهرس:", reply_markup=reply_markup)
+    query = update.callback_query
+    await query.answer()
+    await query.message.edit_text("📚 اختر الفهرس الذي تريد استعراضه:", reply_markup=reply_markup)
 
 # -----------------------------
-# البحث عن كتب حسب الفهرس
+# البحث عبر الفهرس
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    category = query.data.split(":")[1]
+    index_key = query.data.replace("index:", "")
 
+    # البحث في قاعدة البيانات
     conn = context.bot_data.get("db_conn")
     if not conn:
         await query.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # جلب كلمات الفهرس
-    row = await conn.fetchrow("SELECT keywords FROM index_table WHERE category=$1;", category)
-    if not row:
-        await query.message.reply_text("❌ لم أجد هذا الفهرس.")
+    # العثور على الكلمات المفتاحية للفهرس
+    keywords = []
+    for name, key, kws in INDEXES:
+        if key == index_key:
+            keywords = kws
+            break
+
+    if not keywords:
+        await query.message.reply_text("❌ لا توجد كلمات مفتاحية لهذا الفهرس.")
         return
 
-    keywords = row["keywords"]
-    # البحث في جدول الكتب
-    conditions = " OR ".join([f"LOWER(file_name) LIKE '%{k.lower()}%'" for k in keywords])
-    books = await conn.fetch(f"SELECT file_id, file_name FROM books WHERE {conditions} ORDER BY uploaded_at DESC;")
+    # تطبيع الكلمات
+    keywords = [normalize_text(remove_common_words(k)) for k in keywords]
+
+    # إنشاء استعلام OR
+    or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
+    try:
+        books = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
+            FROM books
+            WHERE {or_conditions}
+            ORDER BY uploaded_at DESC;
+        """)
+    except Exception as e:
+        await query.message.reply_text("❌ حدث خطأ أثناء البحث عن الكتب.")
+        return
 
     if not books:
-        await query.message.reply_text(f"❌ لا توجد كتب ضمن الفهرس: {category}")
+        await query.message.reply_text("❌ لم يتم العثور على أي كتب ضمن هذا الفهرس.")
         return
 
-    text = f"📚 كتب الفهرس: {category}\n\n"
-    keyboard = []
-    for b in books:
-        key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
-        context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(b["file_name"], callback_data=f"file:{key}")])
+    # عرض النتائج
+    context.user_data["search_results"] = [dict(b) for b in books]
+    context.user_data["current_page"] = 0
+    context.user_data["search_stage"] = f"فهرس: {index_key}"
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text(text, reply_markup=reply_markup)
+    from search_handler import send_books_page
+    await send_books_page(update, context)
