@@ -4,11 +4,11 @@ from telegram.ext import ContextTypes
 import re
 from typing import List, Dict, Any
 import os
+import asyncio
 
 # -----------------------------
 # الإعدادات وقائمة Stop Words
 # -----------------------------
-
 BOOKS_PER_PAGE = 10
 
 ARABIC_STOP_WORDS = {
@@ -63,6 +63,9 @@ def light_stem(word: str) -> str:
         word = word[2:]
     return word if word else ""
 
+# -----------------------------
+# المرادفات لتحسين نتائج البحث
+# -----------------------------
 SYNONYMS = {
     "مهندس": ["هندسة", "مقاول", "معماري"],
     "الهندسة": ["مهندس", "معمار", "بناء"],
@@ -70,6 +73,7 @@ SYNONYMS = {
     "عدمية": ["نيتشه", "موت", "عبث"],
     "دين": ["إسلام", "مسيحية", "يهودية", "فقه"],
     "فلسفة": ["منطق", "مفهوم", "متافيزيقا"],
+    "صوفية": ["تصوف", "طرق صوفية", "الأولياء", "روحانية"]
 }
 
 def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
@@ -79,6 +83,9 @@ def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
             expanded.update(SYNONYMS[k])
     return list(expanded)
 
+# -----------------------------
+# تقييم النتائج بالكلمات القصيرة والطويلة
+# -----------------------------
 def calculate_score(book: Dict[str, Any], query_keywords: List[str], normalized_query: str) -> int:
     score = 0
     book_name = normalize_text(book.get('file_name', ''))
@@ -89,13 +96,11 @@ def calculate_score(book: Dict[str, Any], query_keywords: List[str], normalized_
         score += 100
 
     title_words = book_name.split()
-    
     for k in query_keywords:
         k_len = len(k)
         is_significant_short = k_len <= 3 and k not in ARABIC_STOP_WORDS
-        base_match_score = 30 if k_len > 3 else 20 
+        base_match_score = 30 if k_len > 3 else 20
         base_stem_score = 15 if k_len > 3 else 10
-
         k_stem = light_stem(k)
         if not k_stem: continue
 
@@ -106,11 +111,14 @@ def calculate_score(book: Dict[str, Any], query_keywords: List[str], normalized_
             elif k_stem in t_stem:
                 score += base_stem_score
             elif k in t_word:
-                score += 5 
+                score += 5
             if is_significant_short and k == t_word:
                 score += 50
     return score
 
+# -----------------------------
+# إشعار المشرف
+# -----------------------------
 async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
     if ADMIN_USER_ID == 0: return
     bot = context.bot
@@ -122,6 +130,9 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
     except Exception as e:
         print(f"Failed to notify admin: {e}")
 
+# -----------------------------
+# عرض صفحة الكتب
+# -----------------------------
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
@@ -167,7 +178,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي باستخدام PostgreSQL FTS + Trigram (simple)
+# البحث الذكي PostgreSQL + FTS + pg_trgm
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private": return
@@ -178,6 +189,12 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
+
+    # ⚡️ تثبيت الامتداد pg_trgm عند بداية البحث تلقائيًا
+    try:
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+    except:
+        pass  # لو الامتداد موجود مسبقًا
 
     normalized_query = normalize_text(remove_common_words(query))
     all_words_in_query = normalize_text(query).split()
@@ -192,19 +209,19 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     books = []
 
     try:
-        # تحديث عمود tsv_content للكتب الجديدة أو غير المحدثة
+        # تحديث عمود tsv_content إذا لزم الأمر
         await conn.execute("""
             UPDATE books SET tsv_content = to_tsvector('simple', file_name)
             WHERE tsv_content IS NULL OR uploaded_at > (NOW() - INTERVAL '1 day')
         """)
 
-        # الاستعلام المدمج: FTS + Trigram
+        # البحث المدمج
         books = await conn.fetch("""
             SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(to_tsvector('simple', file_name), websearch_to_tsquery('simple', $1)) * 0.7 
+            (ts_rank(tsv_content, websearch_to_tsquery('simple', $1)) * 0.7
             + similarity(file_name, $1) * 0.3) AS final_score
             FROM books
-            WHERE to_tsvector('simple', file_name) @@ websearch_to_tsquery('simple', $1)
+            WHERE tsv_content @@ websearch_to_tsquery('simple', $1)
             OR similarity(file_name, $1) > 0.3
             ORDER BY final_score DESC, uploaded_at DESC
             LIMIT 100
@@ -256,10 +273,10 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
 
         books = await conn.fetch("""
             SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(to_tsvector('simple', file_name), websearch_to_tsquery('simple', $1)) * 0.7
+            (ts_rank(tsv_content, websearch_to_tsquery('simple', $1)) * 0.7
             + similarity(file_name, $1) * 0.3) AS final_score
             FROM books
-            WHERE to_tsvector('simple', file_name) @@ websearch_to_tsquery('simple', $1)
+            WHERE tsv_content @@ websearch_to_tsquery('simple', $1)
             OR similarity(file_name, $1) > 0.3
             ORDER BY final_score DESC, uploaded_at DESC
             LIMIT 100
@@ -288,7 +305,7 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     await send_books_page(update, context)
 
 # -----------------------------
-# التعامل مع أزرار الكتب + أزرار الفهرس
+# التعامل مع أزرار الكتب + الفهرس
 # -----------------------------
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
