@@ -26,7 +26,6 @@ def normalize_text(text: str) -> str:
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     text = text.replace("ى", "ي").replace("ة", "ه")
     text = text.replace("ـ", "")
-    # إزالة التنوين
     text = re.sub(r"[ًٌٍَُِ]", "", text)
     return text
 
@@ -41,7 +40,6 @@ def extract_keywords(text: str) -> List[str]:
         return []
     clean_text = re.sub(r'[^\w\s]', '', text)
     words = clean_text.split()
-    # السماح بالكلمات القصيرة جدًا (1 حرف على الأقل)
     return [w for w in words if len(w) >= 1]
 
 def get_db_safe_query(normalized_query: str) -> str:
@@ -82,20 +80,16 @@ def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
 def calculate_score(book: Dict[str, Any], keywords: List[str], normalized_query: str) -> int:
     score = 0
     book_name = normalize_text(book.get('file_name', ''))
-    
-    # التطابق الكامل للنص
     if normalized_query == book_name:
         score += 100
     elif normalized_query in book_name:
         score += 50
 
     title_words = book_name.split()
-    
     for k in keywords:
         k_stem = light_stem(k)
         for t_word in title_words:
             t_stem = light_stem(t_word)
-            # تطابق البداية يعطي نقاط أعلى
             if t_stem.startswith(k_stem):
                 score += 20 if len(k) > 2 else 10
             elif k_stem in t_stem:
@@ -119,7 +113,7 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
         print(f"Failed to notify admin: {e}")
 
 # -----------------------------
-# إرسال صفحة الكتب (محدث لإضافة زر العودة للفهرس إذا كتب الفهرس)
+# إرسال صفحة الكتب (محدث لإضافة زر العودة للفهرس دائمًا إذا كتب الفهرس)
 # -----------------------------
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
     books = context.user_data.get("search_results", [])
@@ -156,8 +150,8 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    # زر العودة للفهرس إذا كتب الفهرس
-    if include_index_home:
+    # ✅ زر العودة للفهرس يظهر دائمًا إذا كانت الكتب ضمن فهرس
+    if context.user_data.get("is_index", False) or include_index_home:
         keyboard.append([InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -189,7 +183,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     search_stage_text = "تطابق دقيق"
 
     try:
-        # المرحلة 1: تطابق كامل
         books = await conn.fetch("""
             SELECT id, file_id, file_name, uploaded_at
             FROM books
@@ -197,7 +190,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             ORDER BY uploaded_at DESC;
         """, normalized_query)
 
-        # المرحلة 2: تطابق جميع الكلمات
         if not books and keywords:
             search_stage_text = "تطابق جميع الكلمات"
             and_conditions = " AND ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
@@ -208,7 +200,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 ORDER BY uploaded_at DESC;
             """)
 
-        # المرحلة 3: البحث الموسع
         if not books and keywords:
             search_stage_text = "بحث موسع بالكلمات المفتاحية"
             or_conditions = " OR ".join([f"LOWER(file_name) LIKE '%{get_db_safe_query(k)}%'" for k in keywords])
@@ -219,7 +210,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 ORDER BY uploaded_at DESC;
             """)
 
-        # المرحلة 4: البحث بالكلمات القصيرة
         if not books and keywords:
             short_keywords = [k for k in keywords if len(k) <= 3]
             if short_keywords:
@@ -307,7 +297,6 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # ملفات الكتب
     if data.startswith("file:"):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
@@ -320,7 +309,6 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
 
-    # أزرار البحث
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
@@ -330,7 +318,6 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "search_similar":
         await search_similar_books(update, context)
 
-    # أزرار الفهرس
     elif data == "home_index" or data == "show_index":
         from index_handler import show_index
         await show_index(update, context)
