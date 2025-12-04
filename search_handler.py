@@ -167,7 +167,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي باستخدام PostgreSQL FTS + Trigram
+# البحث الذكي باستخدام PostgreSQL FTS + Trigram (simple)
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private": return
@@ -194,17 +194,17 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # تحديث عمود tsv_content للكتب الجديدة أو غير المحدثة
         await conn.execute("""
-            UPDATE books SET tsv_content = to_tsvector('ar_config', file_name)
+            UPDATE books SET tsv_content = to_tsvector('simple', file_name)
             WHERE tsv_content IS NULL OR uploaded_at > (NOW() - INTERVAL '1 day')
         """)
 
         # الاستعلام المدمج: FTS + Trigram
         books = await conn.fetch("""
             SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(tsv_content, websearch_to_tsquery('ar_config', $1)) * 0.7 
+            (ts_rank(to_tsvector('simple', file_name), websearch_to_tsquery('simple', $1)) * 0.7 
             + similarity(file_name, $1) * 0.3) AS final_score
             FROM books
-            WHERE tsv_content @@ websearch_to_tsquery('ar_config', $1)
+            WHERE to_tsvector('simple', file_name) @@ websearch_to_tsquery('simple', $1)
             OR similarity(file_name, $1) > 0.3
             ORDER BY final_score DESC, uploaded_at DESC
             LIMIT 100
@@ -256,10 +256,10 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
 
         books = await conn.fetch("""
             SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(tsv_content, websearch_to_tsquery('ar_config', $1)) * 0.7
+            (ts_rank(to_tsvector('simple', file_name), websearch_to_tsquery('simple', $1)) * 0.7
             + similarity(file_name, $1) * 0.3) AS final_score
             FROM books
-            WHERE tsv_content @@ websearch_to_tsquery('ar_config', $1)
+            WHERE to_tsvector('simple', file_name) @@ websearch_to_tsquery('simple', $1)
             OR similarity(file_name, $1) > 0.3
             ORDER BY final_score DESC, uploaded_at DESC
             LIMIT 100
