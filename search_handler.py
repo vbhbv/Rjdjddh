@@ -8,7 +8,6 @@ import os
 # -----------------------------
 # الإعدادات وقائمة Stop Words
 # -----------------------------
-
 BOOKS_PER_PAGE = 10
 
 ARABIC_STOP_WORDS = {
@@ -25,10 +24,11 @@ except ValueError:
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
-# دوال التطبيع والتنظيف المُحسّنة
+# دوال التطبيع والتنظيف
 # -----------------------------
 def normalize_text(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     text = str(text).lower()
     text = text.replace("_", " ")
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
@@ -40,18 +40,11 @@ def normalize_text(text: str) -> str:
     return text
 
 def remove_common_words(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء", "طبعة", "مجاني", "كبير", "صغير"]:
         text = text.replace(word, "")
     return text.strip()
-
-def extract_keywords(text: str) -> List[str]:
-    if not text: return []
-    clean_text = normalize_text(text)
-    words = clean_text.split()
-    keywords = [w for w in words if w not in ARABIC_STOP_WORDS and len(w) >= 1]
-    stop_words_for_search = [w for w in words if w in ARABIC_STOP_WORDS]
-    return list(set(keywords + stop_words_for_search))
 
 def light_stem(word: str) -> str:
     suffixes = ["ية", "ي", "ون", "ات", "ان", "ين", "ه"]
@@ -63,13 +56,16 @@ def light_stem(word: str) -> str:
         word = word[2:]
     return word if word else ""
 
+# -----------------------------
+# المرادفات
+# -----------------------------
 SYNONYMS = {
     "مهندس": ["هندسة", "مقاول", "معماري"],
     "الهندسة": ["مهندس", "معمار", "بناء"],
     "المهدي": ["المنقذ", "القائم"],
     "عدمية": ["نيتشه", "موت", "عبث"],
     "دين": ["إسلام", "مسيحية", "يهودية", "فقه"],
-    "فلسفة": ["منطق", "مفهوم", "متافيزيقا"],
+    "فلسفة": ["منطق", "مفهوم", "متافيزيقا"]
 }
 
 def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
@@ -79,40 +75,12 @@ def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
             expanded.update(SYNONYMS[k])
     return list(expanded)
 
-def calculate_score(book: Dict[str, Any], query_keywords: List[str], normalized_query: str) -> int:
-    score = 0
-    book_name = normalize_text(book.get('file_name', ''))
-
-    if normalized_query == book_name:
-        score += 200
-    elif normalized_query in book_name:
-        score += 100
-
-    title_words = book_name.split()
-    
-    for k in query_keywords:
-        k_len = len(k)
-        is_significant_short = k_len <= 3 and k not in ARABIC_STOP_WORDS
-        base_match_score = 30 if k_len > 3 else 20 
-        base_stem_score = 15 if k_len > 3 else 10
-
-        k_stem = light_stem(k)
-        if not k_stem: continue
-
-        for t_word in title_words:
-            t_stem = light_stem(t_word)
-            if t_stem.startswith(k_stem) and len(k_stem) >= 2:
-                score += base_match_score * 2
-            elif k_stem in t_stem:
-                score += base_stem_score
-            elif k in t_word:
-                score += 5 
-            if is_significant_short and k == t_word:
-                score += 50
-    return score
-
+# -----------------------------
+# إشعار المشرف
+# -----------------------------
 async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
-    if ADMIN_USER_ID == 0: return
+    if ADMIN_USER_ID == 0:
+        return
     bot = context.bot
     status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
     username_text = f"@{username}" if username else "(بدون يوزر)"
@@ -122,6 +90,9 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
     except Exception as e:
         print(f"Failed to notify admin: {e}")
 
+# -----------------------------
+# إرسال صفحة الكتب
+# -----------------------------
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
@@ -147,7 +118,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
             continue
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(f"📘 {b['file_name']}", callback_data=f"file:{key}")])
+        keyboard.append([InlineKeyboardButton(f"{b['file_name']}", callback_data=f"file:{key}")])
 
     nav_buttons = []
     if page > 0:
@@ -167,12 +138,45 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي باستخدام PostgreSQL FTS + Trigram
+# حساب النقاط للأوزان والكلمات القصيرة
+# -----------------------------
+def calculate_score(book: Dict[str, Any], query_keywords: List[str], normalized_query: str) -> int:
+    score = 0
+    book_name = normalize_text(book.get('file_name', ''))
+    if normalized_query == book_name:
+        score += 200
+    elif normalized_query in book_name:
+        score += 100
+    title_words = book_name.split()
+    for k in query_keywords:
+        k_len = len(k)
+        is_significant_short = k_len <= 3 and k not in ARABIC_STOP_WORDS
+        base_match_score = 30 if k_len > 3 else 20
+        base_stem_score = 15 if k_len > 3 else 10
+        k_stem = light_stem(k)
+        if not k_stem:
+            continue
+        for t_word in title_words:
+            t_stem = light_stem(t_word)
+            if t_stem.startswith(k_stem) and len(k_stem) >= 2:
+                score += base_match_score * 2
+            elif k_stem in t_stem:
+                score += base_stem_score
+            elif k in t_word:
+                score += 5
+            if is_significant_short and k == t_word:
+                score += 50
+    return score
+
+# -----------------------------
+# البحث الذكي متعدد المراحل
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private": return
+    if update.effective_chat.type != "private":
+        return
     query = update.message.text.strip()
-    if not query: return
+    if not query:
+        return
 
     conn = context.bot_data.get("db_conn")
     if not conn:
@@ -188,28 +192,45 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
 
-    search_stage_text = "بحث دقيق FTS + Trigram"
     books = []
+    search_stage_text = "تطابق دقيق (العبارة كاملة)"
 
     try:
-        # تحديث عمود tsv_content للكتب الجديدة أو غير المحدثة
-        await conn.execute("""
-            UPDATE books SET tsv_content = to_tsvector('ar_config', file_name)
-            WHERE tsv_content IS NULL OR uploaded_at > (NOW() - INTERVAL '1 day')
-        """)
-
-        # الاستعلام المدمج: FTS + Trigram
         books = await conn.fetch("""
-            SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(tsv_content, websearch_to_tsquery('ar_config', $1)) * 0.7 
-            + similarity(file_name, $1) * 0.3) AS final_score
+            SELECT id, file_id, file_name, uploaded_at
             FROM books
-            WHERE tsv_content @@ websearch_to_tsquery('ar_config', $1)
-            OR similarity(file_name, $1) > 0.3
-            ORDER BY final_score DESC, uploaded_at DESC
-            LIMIT 100
+            WHERE LOWER(file_name) LIKE '%' || $1 || '%'
+            ORDER BY uploaded_at DESC;
         """, normalized_query)
 
+        if not books and keywords:
+            search_stage_text = "تطابق جميع الكلمات المفتاحية"
+            all_match_conditions = " AND ".join([
+                f"(LOWER(file_name) LIKE '%{k}%' OR LOWER(file_name) LIKE '%{light_stem(k)}%')"
+                for k in keywords if len(k) >= 2
+            ])
+            if all_match_conditions:
+                books = await conn.fetch(f"""
+                    SELECT id, file_id, file_name, uploaded_at
+                    FROM books
+                    WHERE {all_match_conditions}
+                    ORDER BY uploaded_at DESC;
+                """)
+
+        if not books and expanded_keywords:
+            search_stage_text = "بحث موسع بالجذور والمرادفات"
+            search_terms = list(set(expanded_keywords + stemmed_keywords))
+            or_conditions = " OR ".join([
+                f"LOWER(file_name) LIKE '%{k}%'"
+                for k in search_terms if len(k) >= 2
+            ])
+            if or_conditions:
+                books = await conn.fetch(f"""
+                    SELECT id, file_id, file_name, uploaded_at
+                    FROM books
+                    WHERE {or_conditions}
+                    ORDER BY uploaded_at DESC;
+                """)
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
         return
@@ -218,7 +239,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     await notify_admin_search(context, update.effective_user.username, query, found_results)
 
     if not books:
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔍 بحث عن كتب مشابهة", callback_data="search_similar")]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("بحث عن كتب مشابهة", callback_data="search_similar")]])
         await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
         context.user_data["search_results"] = []
         context.user_data["current_page"] = 0
@@ -232,6 +253,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         scored_books.append(book_dict)
 
     scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
+
     context.user_data["search_results"] = scored_books
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = search_stage_text
@@ -253,18 +275,19 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
         expanded_keywords = expand_keywords_with_synonyms(keywords)
         stemmed_keywords = [light_stem(k) for k in expanded_keywords]
         search_terms = list(set(expanded_keywords + stemmed_keywords))
-
-        books = await conn.fetch("""
-            SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(tsv_content, websearch_to_tsquery('ar_config', $1)) * 0.7
-            + similarity(file_name, $1) * 0.3) AS final_score
+        or_conditions = " OR ".join([
+            f"LOWER(file_name) LIKE '%{k}%'"
+            for k in search_terms if len(k) >= 2
+        ])
+        if not or_conditions:
+            await update.callback_query.message.reply_text("❌ لم أجد كلمات مفتاحية صالحة للبحث المشابه.")
+            return
+        books = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
             FROM books
-            WHERE tsv_content @@ websearch_to_tsquery('ar_config', $1)
-            OR similarity(file_name, $1) > 0.3
-            ORDER BY final_score DESC, uploaded_at DESC
-            LIMIT 100
-        """, last_query)
-
+            WHERE {or_conditions}
+            ORDER BY uploaded_at DESC;
+        """)
     except Exception as e:
         await update.callback_query.message.edit_text(f"❌ حدث خطأ أثناء البحث عن كتب مشابهة: {e}")
         return
@@ -278,6 +301,7 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
         scored_books.append(book_dict)
 
     scored_books.sort(key=lambda b: (b['score'], b['uploaded_at']), reverse=True)
+
     if not scored_books:
         await update.callback_query.message.edit_text("❌ لم أجد كتب مشابهة.")
         return
@@ -288,7 +312,7 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     await send_books_page(update, context)
 
 # -----------------------------
-# التعامل مع أزرار الكتب + أزرار الفهرس
+# التعامل مع أزرار الكتب + الفهرس
 # -----------------------------
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -300,13 +324,10 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
             caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share_button = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📤 شارك البوت مع أصدقائك", switch_inline_query="")]
-            ])
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
-
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
@@ -315,7 +336,6 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
     elif data == "search_similar":
         await search_similar_books(update, context)
-
     elif data == "home_index" or data == "show_index":
         from index_handler import show_index
         await show_index(update, context)
