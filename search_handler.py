@@ -2,11 +2,11 @@ import hashlib
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import re
-from typing import List
+from typing import List, Dict, Any
 import os
 
 # -----------------------------
-# الإعدادات
+# الإعدادات وقائمة Stop Words
 # -----------------------------
 BOOKS_PER_PAGE = 10
 
@@ -16,6 +16,7 @@ ARABIC_STOP_WORDS = {
     "ف", "ك", "اى"
 }
 
+# إعدادات المشرف
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
@@ -64,8 +65,7 @@ SYNONYMS = {
     "المهدي": ["المنقذ", "القائم"],
     "عدمية": ["نيتشه", "موت", "عبث"],
     "دين": ["إسلام", "مسيحية", "يهودية", "فقه"],
-    "فلسفة": ["منطق", "مفهوم", "متافيزيقا"],
-    "اكتئاب": ["حزن", "ضيق", "هم", "كآبة"]
+    "فلسفة": ["منطق", "مفهوم", "متافيزيقا"]
 }
 
 def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
@@ -138,7 +138,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي داخلي
+# البحث الذكي متعدد المراحل
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -153,58 +153,44 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     normalized_query = normalize_text(remove_common_words(query))
-    words_in_query = [w for w in normalize_text(query).split() if w not in ARABIC_STOP_WORDS and len(w) > 1]
-    expanded_keywords = expand_keywords_with_synonyms(words_in_query)
+    all_words_in_query = normalize_text(query).split()
+    keywords = [w for w in all_words_in_query if w not in ARABIC_STOP_WORDS and len(w) >= 1]
+    expanded_keywords = expand_keywords_with_synonyms(keywords)
     stemmed_keywords = [light_stem(k) for k in expanded_keywords]
 
     context.user_data["last_query"] = normalized_query
-    context.user_data["last_keywords"] = words_in_query
+    context.user_data["last_keywords"] = keywords
 
-    # -----------------------------
-    # البحث الداخلي متعدد المراحل مع ترتيب دقيق
-    # -----------------------------
+    # بناء استعلام FTS متقدم مع Trigram
+    ts_query = ' & '.join(stemmed_keywords)
+    or_synonyms = ' | '.join(expanded_keywords)
+    final_ts_query = f"{ts_query} | {or_synonyms}" if or_synonyms else ts_query
+
     try:
-        books = await conn.fetch("""
+        books = await conn.fetch(f"""
             SELECT id, file_id, file_name, uploaded_at
             FROM books
-        """)
+            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
+            LIMIT 200;
+        """, final_ts_query)
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
         return
 
-    # تقييم كل كتاب داخليًا
-    results = []
-    for b in books:
-        title = normalize_text(b["file_name"])
-        score = 0
-        for k in stemmed_keywords:
-            if k in title:
-                score += 2  # تطابق مباشر
-        for k in expanded_keywords:
-            if k in title and k not in stemmed_keywords:
-                score += 1  # تطابق ضمن المرادفات
-        # تطابق الجملة كاملة
-        if normalized_query in title:
-            score += 3
-        if score > 0:
-            results.append({**b, "score": score})
-
-    # فرز النتائج بناءً على الدقة
-    results.sort(key=lambda x: x["score"], reverse=True)
-
-    found_results = bool(results)
+    found_results = bool(books)
     await notify_admin_search(context, update.effective_user.username, query, found_results)
 
-    if not results:
+    if not books:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("بحث عن كتب مشابهة", callback_data="search_similar")]])
         await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
         context.user_data["search_results"] = []
         context.user_data["current_page"] = 0
         return
 
-    context.user_data["search_results"] = results
+    context.user_data["search_results"] = [dict(b) for b in books]
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث موسع داخلي (جذور + مرادفات + سياق الجملة)"
+    context.user_data["search_stage"] = "بحث متقدم (FTS + Trigram + مرادفات)"
     await send_books_page(update, context)
 
 # -----------------------------
@@ -220,7 +206,7 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
             caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index")]])
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
@@ -234,7 +220,15 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
 
     elif data in ("home_index", "show_index"):
-        await query.message.reply_text("🏠 العودة للفهرس")
+        from index_handler import show_index
+        await show_index(update, context)  # يعرض الفهرس مباشرة
 
     elif data == "search_similar":
-        await query.message.reply_text("🔎 ميزة البحث عن كتب مشابهة")
+        from search_handler import search_books
+        last_query = context.user_data.get("last_query", "")
+        if last_query:
+            update.message = update.callback_query.message
+            update.message.text = last_query
+            await search_books(update, context)
+        else:
+            await query.message.reply_text("❌ لا يوجد بحث سابق لإيجاد كتب مشابهة.")
