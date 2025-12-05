@@ -58,6 +58,26 @@ def light_stem(word: str) -> str:
     return word if word else ""
 
 # -----------------------------
+# المرادفات
+# -----------------------------
+SYNONYMS = {
+    "مهندس": ["هندسة", "مقاول", "معماري"],
+    "الهندسة": ["مهندس", "معمار", "بناء"],
+    "المهدي": ["المنقذ", "القائم"],
+    "عدمية": ["نيتشه", "موت", "عبث"],
+    "دين": ["إسلام", "مسيحية", "يهودية", "فقه"],
+    "فلسفة": ["منطق", "مفهوم", "متافيزيقا"],
+    "صوفية": ["تصوف", "طرق صوفية", "الأولياء", "روحانية"]
+}
+
+def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
+    expanded = set(keywords)
+    for k in keywords:
+        if k in SYNONYMS:
+            expanded.update(SYNONYMS[k])
+    return list(expanded)
+
+# -----------------------------
 # إشعار المشرف
 # -----------------------------
 async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
@@ -108,9 +128,8 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    # زر العودة للفهرس
     if context.user_data.get("is_index", False) or include_index_home:
-        keyboard.append([InlineKeyboardButton("العودة للفهرس", callback_data="home_index")])
+        keyboard.append([InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
@@ -119,7 +138,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي FTS + Trigram
+# البحث الذكي مع المرادفات
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -139,22 +158,28 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     normalized_query = normalize_text(remove_common_words(query))
+    keywords = [w for w in normalize_text(query).split() if w not in ARABIC_STOP_WORDS and len(w) >= 1]
+
+    expanded_keywords = expand_keywords_with_synonyms(keywords)
+    stemmed_keywords = [light_stem(k) for k in expanded_keywords if k]
+    fts_terms = [f"{w}:*" for w in set(expanded_keywords + stemmed_keywords)]
+    fts_query = ' | '.join(fts_terms)
 
     context.user_data["last_query"] = normalized_query
-    context.user_data["last_keywords"] = normalize_text(query).split()
+    context.user_data["last_keywords"] = keywords
 
-    search_stage_text = "بحث دقيق FTS + Trigram"
+    search_stage_text = "بحث دقيق FTS + Trigram + مرادفات"
 
     try:
-        books = await conn.fetch("""
+        books = await conn.fetch(f"""
             SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) * 0.7
+            (ts_rank(to_tsvector('arabic', file_name), plainto_tsquery('arabic', $1)) * 0.7
             + similarity(file_name, $2) * 0.3) AS final_score
             FROM books
-            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            WHERE to_tsvector('arabic', file_name) @@ plainto_tsquery('arabic', $1)
             OR similarity(file_name, $2) > 0.3
             ORDER BY final_score DESC, uploaded_at DESC
-        """, normalized_query, normalized_query)
+        """, fts_query, normalized_query)
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
         return
@@ -179,22 +204,28 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------
 async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
+    keywords = context.user_data.get("last_keywords")
     last_query = context.user_data.get("last_query", "")
 
-    if not last_query or not conn:
+    if not keywords or not conn:
         await update.callback_query.message.reply_text("❌ لا يوجد موضوع للبحث عنه.")
         return
 
+    expanded_keywords = expand_keywords_with_synonyms(keywords)
+    stemmed_keywords = [light_stem(k) for k in expanded_keywords if k]
+    fts_terms = [f"{w}:*" for w in set(expanded_keywords + stemmed_keywords)]
+    fts_query = ' | '.join(fts_terms)
+
     try:
-        books = await conn.fetch("""
+        books = await conn.fetch(f"""
             SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) * 0.7
+            (ts_rank(to_tsvector('arabic', file_name), plainto_tsquery('arabic', $1)) * 0.7
             + similarity(file_name, $2) * 0.3) AS final_score
             FROM books
-            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            WHERE to_tsvector('arabic', file_name) @@ plainto_tsquery('arabic', $1)
             OR similarity(file_name, $2) > 0.3
             ORDER BY final_score DESC, uploaded_at DESC
-        """, last_query, last_query)
+        """, fts_query, last_query)
     except Exception as e:
         await update.callback_query.message.edit_text(f"❌ حدث خطأ أثناء البحث عن كتب مشابهة: {e}")
         return
@@ -205,7 +236,7 @@ async def search_similar_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["search_results"] = [dict(book) for book in books]
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث موسع"
+    context.user_data["search_stage"] = "بحث موسع (مرادفات وجذور)"
     await send_books_page(update, context)
 
 # -----------------------------
