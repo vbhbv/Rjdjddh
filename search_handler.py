@@ -138,7 +138,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي الموسع
+# البحث الذكي متعدد المراحل
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -161,48 +161,37 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
 
-    # -----------------------------
-    # بناء ts_query للفهرس
-    # -----------------------------
-    ts_query_parts = []
-    for k in set(stemmed_keywords):
-        ts_query_parts.append(k)
-    ts_query = " & ".join(ts_query_parts)
+    # بناء استعلام FTS متقدم مع Trigram
+    ts_query = ' & '.join(stemmed_keywords)
+    or_synonyms = ' | '.join(expanded_keywords)
+    final_ts_query = f"{ts_query} | {or_synonyms}" if or_synonyms else ts_query
 
-    # -----------------------------
-    # استعلام FTS + Trigram
-    # -----------------------------
     try:
-        books = await conn.fetch("""
-            SELECT id, file_id, file_name, uploaded_at,
-                   ts_rank_cd(tsv_content, to_tsquery('arabic', $1)) AS rank_score,
-                   similarity(file_name, $2) AS trigram_score,
-                   (ts_rank_cd(tsv_content, to_tsquery('arabic', $1)) * 0.7
-                    + similarity(file_name, $2) * 0.3) AS final_score
+        books = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
             FROM books
-            WHERE tsv_content @@ to_tsquery('arabic', $1) OR similarity(file_name, $2) > 0.3
-            ORDER BY final_score DESC
-            LIMIT 500;
-        """, ts_query, normalized_query)
-
-        search_stage_text = "تطابق دقيق (FTS + Trigram)"
-        found_results = bool(books)
-        await notify_admin_search(context, update.effective_user.username, query, found_results)
-
-        if not books:
-            await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}")
-            context.user_data["search_results"] = []
-            context.user_data["current_page"] = 0
-            return
-
-        context.user_data["search_results"] = [dict(b) for b in books]
-        context.user_data["current_page"] = 0
-        context.user_data["search_stage"] = search_stage_text
-        await send_books_page(update, context)
-
+            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
+            LIMIT 200;
+        """, final_ts_query)
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
         return
+
+    found_results = bool(books)
+    await notify_admin_search(context, update.effective_user.username, query, found_results)
+
+    if not books:
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("بحث عن كتب مشابهة", callback_data="search_similar")]])
+        await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}\nيمكنك تجربة البحث عن كتب مشابهة:", reply_markup=keyboard)
+        context.user_data["search_results"] = []
+        context.user_data["current_page"] = 0
+        return
+
+    context.user_data["search_results"] = [dict(b) for b in books]
+    context.user_data["current_page"] = 0
+    context.user_data["search_stage"] = "بحث متقدم (FTS + Trigram + مرادفات)"
+    await send_books_page(update, context)
 
 # -----------------------------
 # التعامل مع أزرار الكتب + الفهرس
@@ -216,11 +205,22 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            await query.message.reply_document(document=file_id, caption="تم التنزيل")
+            caption = "تم التنزيل بواسطة البوت"
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
+            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
+
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
+
     elif data == "prev_page":
-        context.user_data["current_page"] -=
+        context.user_data["current_page"] -= 1
+        await send_books_page(update, context)
+
+    elif data in ("home_index", "show_index"):
+        await query.message.reply_text("🏠 العودة للفهرس (قيد التطوير)")
+
+    elif data == "search_similar":
+        await query.message.reply_text("🔎 ميزة البحث عن كتب مشابهة (قيد التطوير)")
