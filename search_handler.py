@@ -5,6 +5,9 @@ import re
 from typing import List, Dict, Any
 import os
 
+# -----------------------------
+# الإعدادات وقائمة Stop Words
+# -----------------------------
 BOOKS_PER_PAGE = 10
 
 ARABIC_STOP_WORDS = {
@@ -13,10 +16,12 @@ ARABIC_STOP_WORDS = {
     "ف", "ك", "اى"
 }
 
+# إعدادات المشرف
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
     ADMIN_USER_ID = 0
+    print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
 # دوال التطبيع والتنظيف
@@ -35,6 +40,8 @@ def normalize_text(text: str) -> str:
     return text
 
 def remove_common_words(text: str) -> str:
+    if not text:
+        return ""
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء", "طبعة", "مجاني", "كبير", "صغير"]:
         text = text.replace(word, "")
     return text.strip()
@@ -61,7 +68,7 @@ SYNONYMS = {
     "فلسفة": ["منطق", "مفهوم", "متافيزيقا"]
 }
 
-def expand_keywords(keywords: List[str]) -> List[str]:
+def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
     expanded = set(keywords)
     for k in keywords:
         if k in SYNONYMS:
@@ -96,11 +103,12 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
 
-    stage_note = {
-        "تطابق دقيق": "✅ نتائج مطابقة (تطابق العبارة كاملة)",
-        "تطابق جميع الكلمات": "✅ نتائج دلالية (تطابق جميع كلماتك المفتاحية)",
-        "بحث موسع": "⚠️ نتائج بحث موسع (بحثنا بالجذور والمرادفات)"
-    }.get(search_stage, "✅ نتائج البحث")
+    if "بحث موسع" in search_stage:
+        stage_note = "⚠️ نتائج بحث موسع (بحثنا بالجذور والمرادفات)"
+    elif "تطابق جميع الكلمات" in search_stage:
+        stage_note = "✅ نتائج دلالية (تطابق جميع كلماتك المفتاحية)"
+    else:
+        stage_note = "✅ نتائج مطابقة (تطابق العبارة كاملة)"
 
     text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
@@ -130,7 +138,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي المتطور (موسّع)
+# البحث الذكي الموسع
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -145,43 +153,74 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     normalized_query = normalize_text(remove_common_words(query))
-    all_words = normalize_text(query).split()
-    keywords = [w for w in all_words if w not in ARABIC_STOP_WORDS and len(w) > 0]
-    expanded_keywords = expand_keywords(keywords)
+    all_words_in_query = normalize_text(query).split()
+    keywords = [w for w in all_words_in_query if w not in ARABIC_STOP_WORDS and len(w) >= 1]
+    expanded_keywords = expand_keywords_with_synonyms(keywords)
     stemmed_keywords = [light_stem(k) for k in expanded_keywords]
 
-    # توليد شروط البحث الموسع
-    or_conditions = []
-    for k in expanded_keywords + stemmed_keywords:
-        if len(k) >= 2:
-            or_conditions.append(f"tsv_content @@ to_tsquery('arabic', '{k}:*') OR similarity(file_name, '{k}') > 0.25")
+    context.user_data["last_query"] = normalized_query
+    context.user_data["last_keywords"] = keywords
 
-    sql_where = " OR ".join(or_conditions)
+    # -----------------------------
+    # بناء ts_query للفهرس
+    # -----------------------------
+    ts_query_parts = []
+    for k in set(stemmed_keywords):
+        ts_query_parts.append(k)
+    ts_query = " & ".join(ts_query_parts)
 
+    # -----------------------------
+    # استعلام FTS + Trigram
+    # -----------------------------
     try:
-        books = await conn.fetch(f"""
-            SELECT id, file_id, file_name, uploaded_at
+        books = await conn.fetch("""
+            SELECT id, file_id, file_name, uploaded_at,
+                   ts_rank_cd(tsv_content, to_tsquery('arabic', $1)) AS rank_score,
+                   similarity(file_name, $2) AS trigram_score,
+                   (ts_rank_cd(tsv_content, to_tsquery('arabic', $1)) * 0.7
+                    + similarity(file_name, $2) * 0.3) AS final_score
             FROM books
-            WHERE {sql_where}
-            ORDER BY ts_rank(tsv_content, to_tsquery('arabic', $1)) * 0.6
-                    + similarity(file_name, $2) * 0.4 DESC
+            WHERE tsv_content @@ to_tsquery('arabic', $1) OR similarity(file_name, $2) > 0.3
+            ORDER BY final_score DESC
             LIMIT 500;
-        """, ' & '.join(stemmed_keywords), normalized_query)
+        """, ts_query, normalized_query)
+
+        search_stage_text = "تطابق دقيق (FTS + Trigram)"
+        found_results = bool(books)
+        await notify_admin_search(context, update.effective_user.username, query, found_results)
+
+        if not books:
+            await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}")
+            context.user_data["search_results"] = []
+            context.user_data["current_page"] = 0
+            return
+
+        context.user_data["search_results"] = [dict(b) for b in books]
+        context.user_data["current_page"] = 0
+        context.user_data["search_stage"] = search_stage_text
+        await send_books_page(update, context)
 
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
         return
 
-    found_results = bool(books)
-    await notify_admin_search(context, update.effective_user.username, query, found_results)
+# -----------------------------
+# التعامل مع أزرار الكتب + الفهرس
+# -----------------------------
+async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
 
-    if not books:
-        await update.message.reply_text(f"❌ لم أجد أي كتب مطابقة للبحث: {query}")
-        context.user_data["search_results"] = []
-        context.user_data["current_page"] = 0
-        return
-
-    context.user_data["search_results"] = [dict(b) for b in books]
-    context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث موسع"
-    await send_books_page(update, context)
+    if data.startswith("file:"):
+        key = data.split(":")[1]
+        file_id = context.bot_data.get(f"file_{key}")
+        if file_id:
+            await query.message.reply_document(document=file_id, caption="تم التنزيل")
+        else:
+            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
+    elif data == "next_page":
+        context.user_data["current_page"] += 1
+        await send_books_page(update, context)
+    elif data == "prev_page":
+        context.user_data["current_page"] -=
