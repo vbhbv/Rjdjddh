@@ -103,7 +103,13 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
 
-    stage_note = "🔎 نتائج البحث الذكي"
+    if "بحث موسع" in search_stage:
+        stage_note = "⚠️ نتائج بحث موسع (بحثنا بالجذور والمرادفات)"
+    elif "تطابق جميع الكلمات" in search_stage:
+        stage_note = "✅ نتائج دلالية (تطابق جميع كلماتك المفتاحية)"
+    else:
+        stage_note = "✅ نتائج مطابقة (تطابق العبارة كاملة)"
+
     text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
 
@@ -132,7 +138,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث الذكي داخلي مع ترتيب دلالي
+# البحث الذكي داخلي
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -154,40 +160,36 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = words_in_query
 
+    # -----------------------------
+    # البحث الداخلي متعدد المراحل مع ترتيب دقيق
+    # -----------------------------
     try:
-        books = await conn.fetch("SELECT id, file_id, file_name, uploaded_at FROM books")
+        books = await conn.fetch("""
+            SELECT id, file_id, file_name, uploaded_at
+            FROM books
+        """)
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
         return
 
+    # تقييم كل كتاب داخليًا
     results = []
     for b in books:
         title = normalize_text(b["file_name"])
         score = 0
-
-        # تطابق الجملة بالكامل
-        if normalized_query in title:
-            score += 5
-
-        # تطابق الكلمات الأساسية
         for k in stemmed_keywords:
             if k in title:
-                score += 2
-
-        # تطابق المرادفات
+                score += 2  # تطابق مباشر
         for k in expanded_keywords:
             if k in title and k not in stemmed_keywords:
-                score += 1
-
-        # أجزاء متتابعة من الجملة
-        query_parts = normalized_query.split()
-        match_parts = sum(1 for part in query_parts if part in title)
-        score += match_parts * 0.5
-
+                score += 1  # تطابق ضمن المرادفات
+        # تطابق الجملة كاملة
+        if normalized_query in title:
+            score += 3
         if score > 0:
             results.append({**b, "score": score})
 
-    # ترتيب النتائج حسب أقرب صلة
+    # فرز النتائج بناءً على الدقة
     results.sort(key=lambda x: x["score"], reverse=True)
 
     found_results = bool(results)
@@ -202,7 +204,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["search_results"] = results
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث موسع داخلي دلالي"
+    context.user_data["search_stage"] = "بحث موسع داخلي (جذور + مرادفات + سياق الجملة)"
     await send_books_page(update, context)
 
 # -----------------------------
