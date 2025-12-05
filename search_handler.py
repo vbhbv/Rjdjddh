@@ -4,6 +4,9 @@ from telegram.ext import ContextTypes
 import re
 from typing import List, Dict, Any
 import os
+import asyncpg
+import numpy as np
+import openai  # تحتاج لاستخدام OpenAI Embeddings API
 
 # -----------------------------
 # الإعدادات وقائمة Stop Words
@@ -23,6 +26,9 @@ except ValueError:
     ADMIN_USER_ID = 0
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+openai.api_key = OPENAI_API_KEY
+
 # -----------------------------
 # دوال التطبيع والتنظيف
 # -----------------------------
@@ -40,21 +46,9 @@ def normalize_text(text: str) -> str:
     return text
 
 def remove_common_words(text: str) -> str:
-    if not text:
-        return ""
     for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء", "طبعة", "مجاني", "كبير", "صغير"]:
         text = text.replace(word, "")
     return text.strip()
-
-def light_stem(word: str) -> str:
-    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين", "ه"]
-    for suf in suffixes:
-        if word.endswith(suf) and len(word) > len(suf) + 2:
-            word = word[:-len(suf)]
-            break
-    if word.startswith("ال") and len(word) > 3:
-        word = word[2:]
-    return word if word else ""
 
 # -----------------------------
 # المرادفات
@@ -74,6 +68,16 @@ def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
         if k in SYNONYMS:
             expanded.update(SYNONYMS[k])
     return list(expanded)
+
+# -----------------------------
+# توليد Embedding للجملة
+# -----------------------------
+async def get_embedding(text: str) -> List[float]:
+    response = await openai.Embeddings.acreate(
+        input=text,
+        model="text-embedding-3-small"
+    )
+    return response['data'][0]['embedding']
 
 # -----------------------------
 # إشعار المشرف
@@ -96,19 +100,13 @@ async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str,
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
-    search_stage = context.user_data.get("search_stage", "تطابق دقيق")
     total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
 
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
     current_books = books[start:end]
 
-    if "بحث موسع" in search_stage:
-        stage_note = "⚠️ نتائج بحث موسع (بحثنا بالجذور والمرادفات)"
-    else:
-        stage_note = "✅ نتائج مرتبة حسب الصلة"
-
-    text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
+    text = f"📚 النتائج ({len(books)} كتاب)\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
 
     for b in current_books:
@@ -136,7 +134,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# البحث المتقدم الفائق (FTS + Trigram + Synonyms)
+# البحث الذكي متعدد الطبقات (FTS + Trigram + Embedding)
 # -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -145,40 +143,36 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         return
 
-    conn = context.bot_data.get("db_conn")
+    conn: asyncpg.Connection = context.bot_data.get("db_conn")
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # تحضير الاستعلام
     normalized_query = normalize_text(remove_common_words(query))
-    all_words = [w for w in normalize_text(query).split() if w not in ARABIC_STOP_WORDS]
-    expanded_words = expand_keywords_with_synonyms(all_words)
-    stemmed_words = [light_stem(w) for w in expanded_words if len(w) >= 2]
+    keywords = [w for w in normalized_query.split() if w not in ARABIC_STOP_WORDS]
+    expanded_keywords = expand_keywords_with_synonyms(keywords)
+    ts_query = ' & '.join(expanded_keywords)  # لبناء FTS
 
-    if not stemmed_words:
-        await update.message.reply_text("❌ لا يوجد كلمات صالحة للبحث.")
-        return
-
-    # بناء استعلام FTS مع المرادفات
-    ts_query_parts = [f"{w}:*" for w in stemmed_words]  # Partial match
-    ts_query = ' & '.join(ts_query_parts)
-    similarity_query = normalized_query  # لمرحلة trigram
+    # توليد Embedding للجملة
+    user_embedding = await get_embedding(normalized_query)
 
     try:
-        books = await conn.fetch("""
-            SELECT id, file_id, file_name, uploaded_at,
-            (ts_rank(tsv_content, to_tsquery('arabic', $1)) * 0.7
-             + similarity(file_name, $2) * 0.3) AS final_score
-            FROM books
-            WHERE tsv_content @@ to_tsquery('arabic', $1)
-               OR similarity(file_name, $2) > 0.3
-            ORDER BY final_score DESC, uploaded_at DESC
-            LIMIT 500;
-        """, ts_query, similarity_query)
-
+        # الاستعلام الموحد (FTS + Trigram + Embedding)
+        sql = """
+        SELECT id, file_id, file_name, uploaded_at,
+        (ts_rank(tsv_content, to_tsquery('arabic', $1)) * 0.5 +
+         similarity(file_name, $2) * 0.2 +
+         (1 - embedding <-> $3) * 0.3) AS final_score
+        FROM books
+        WHERE tsv_content @@ to_tsquery('arabic', $1)
+           OR similarity(file_name, $2) > 0.3
+           OR embedding <-> $3 < 0.35
+        ORDER BY final_score DESC
+        LIMIT 500;
+        """
+        books = await conn.fetch(sql, ts_query, normalized_query, user_embedding)
     except Exception as e:
-        await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
+        await update.message.reply_text(f"❌ حدث خطأ أثناء البحث: {e}")
         return
 
     found_results = bool(books)
@@ -191,43 +185,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_page"] = 0
         return
 
-    # تخزين النتائج مباشرة (مرتبة من قاعدة البيانات)
     context.user_data["search_results"] = [dict(b) for b in books]
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث متقدم FTS + Trigram + مرادفات"
     await send_books_page(update, context)
-
-# -----------------------------
-# التعامل مع أزرار الكتب + الفهرس
-# -----------------------------
-async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data.startswith("file:"):
-        key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
-        if file_id:
-            caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
-            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
-        else:
-            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
-    elif data == "next_page":
-        context.user_data["current_page"] += 1
-        await send_books_page(update, context)
-    elif data == "prev_page":
-        context.user_data["current_page"] -= 1
-        await send_books_page(update, context)
-    elif data == "search_similar":
-        await search_books(update, context)  # إعادة استخدام نفس البحث المتقدم
-    elif data == "home_index" or data == "show_index":
-        from index_handler import show_index
-        await show_index(update, context)
-    elif data.startswith("index_page:"):
-        from index_handler import navigate_index_pages
-        await navigate_index_pages(update, context)
-    elif data.startswith("index:"):
-        from index_handler import search_by_index
-        await search_by_index(update, context)
