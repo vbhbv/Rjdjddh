@@ -5,6 +5,8 @@ import re
 from typing import List, Dict, Any
 import os
 import asyncio
+import pyarabic.araby as araby
+from unidecode import unidecode
 
 # -----------------------------
 # الإعدادات وقائمة Stop Words
@@ -25,16 +27,15 @@ except ValueError:
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # -----------------------------
-# دوال التطبيع والتنظيف المُحسّنة
+# دوال التطبيع والتنظيف المتقدم
 # -----------------------------
 def normalize_text(text: str) -> str:
     if not text: return ""
     text = str(text).lower()
-    text = text.replace("_", " ")
-    text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي").replace("ة", "ه")
+    text = unidecode(text)
+    text = araby.strip_tashkeel(text)
+    text = araby.normalize_hamza(text)
     text = text.replace("ـ", "")
-    text = re.sub(r"[ًٌٍَُِ]", "", text)
     text = re.sub(r'[^\w\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
@@ -190,11 +191,11 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    # ⚡️ تثبيت الامتداد pg_trgm عند بداية البحث تلقائيًا
+    # تثبيت الامتداد pg_trgm تلقائيًا
     try:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
     except:
-        pass  # لو الامتداد موجود مسبقًا
+        pass
 
     normalized_query = normalize_text(remove_common_words(query))
     all_words_in_query = normalize_text(query).split()
