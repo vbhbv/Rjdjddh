@@ -205,7 +205,7 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            caption = "تم التنزيل بواسطة البوت"
+            caption = "تم التنزيل بواسطة @boooksfree1bot"
             share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
@@ -220,7 +220,15 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await send_books_page(update, context)
 
     elif data in ("home_index", "show_index"):
-        await query.message.reply_text("🏠 العودة للفهرس (قيد التطوير)")
+        from index_handler import show_index
+        await show_index(update, context)  # يعرض الفهرس مباشرة
 
     elif data == "search_similar":
-        await query.message.reply_text("🔎 ميزة البحث عن كتب مشابهة (قيد التطوير)")
+        from search_handler import search_books
+        last_query = context.user_data.get("last_query", "")
+        if last_query:
+            update.message = update.callback_query.message
+            update.message.text = last_query
+            await search_books(update, context)
+        else:
+            await query.message.reply_text("❌ لا يوجد بحث سابق لإيجاد كتب مشابهة.")
