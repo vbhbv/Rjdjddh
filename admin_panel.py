@@ -41,6 +41,13 @@ async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await conn.execute(
                     "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", update.effective_user.id
                 )
+                # تسجيل الاشتراك بالقناة إذا تم تحديد REQUIRED_CHANNEL_ID
+                if REQUIRED_CHANNEL_ID:
+                    await conn.execute("""
+                        INSERT INTO subscriptions(user_id, channel_id)
+                        VALUES($1, $2)
+                        ON CONFLICT DO NOTHING
+                    """, update.effective_user.id, REQUIRED_CHANNEL_ID)
             except Exception as e:
                 print(f"Error tracking user {update.effective_user.id}: {e}")
 
@@ -64,7 +71,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # دالة إحصائيات المستخدمين اليومية والأسبوعية
 # ===============================================
 async def get_user_stats(conn):
-    """إرجاع عدد المستخدمين الكلي واليومي والأسبوعي"""
+    """إرجاع عدد المستخدمين الكلي واليومي والأسبوعي + مشتركوا القناة اليوم"""
     try:
         total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
         daily_users = await conn.fetchval("""
@@ -75,10 +82,18 @@ async def get_user_stats(conn):
             SELECT COUNT(*) FROM users
             WHERE joined_at >= CURRENT_DATE - INTERVAL '7 days'
         """)
-        return total_users, daily_users, weekly_users
+        # عدد المستخدمين الذين اشتركوا اليوم في القناة الإلزامية
+        subscribed_today = 0
+        if REQUIRED_CHANNEL_ID:
+            subscribed_today = await conn.fetchval("""
+                SELECT COUNT(*) FROM subscriptions
+                WHERE channel_id = $1 AND joined_at >= CURRENT_DATE
+            """, REQUIRED_CHANNEL_ID)
+
+        return total_users, daily_users, weekly_users, subscribed_today
     except Exception as e:
         print(f"Error fetching user stats: {e}")
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
 # ===============================================
 # أوامر المشرفين
@@ -88,12 +103,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض لوحة التحكم الخاصة بالمشرف."""
     conn = context.bot_data.get('db_conn')
     book_count = 0
-    total_users = daily_users = weekly_users = 0
+    total_users = daily_users = weekly_users = subscribed_today = 0
 
     if conn:
         try:
             book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
-            total_users, daily_users, weekly_users = await get_user_stats(conn)
+            total_users, daily_users, weekly_users, subscribed_today = await get_user_stats(conn)
         except Exception as e:
             print(f"Error fetching stats: {e}")
 
@@ -104,6 +119,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 عدد المستخدمين الكلي: **{total_users:,}**\n"
         f"📅 مستخدمو اليوم: **{daily_users:,}**\n"
         f"🗓️ مستخدمو الأسبوع: **{weekly_users:,}**\n"
+        f"🔔 اشتركوا بالقناة اليوم: **{subscribed_today:,}**\n"
         "--------------------------------------\n"
         "لإرسال رسالة للمستخدمين: /broadcast رسالتك هنا\n"
         "لتحديد القناة للاشتراك الإجباري: /setchannel\n"
