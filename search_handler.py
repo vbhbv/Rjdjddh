@@ -2,7 +2,7 @@ import hashlib
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import re
-from typing import List, Dict, Any
+from typing import List
 import os
 
 # -----------------------------
@@ -76,21 +76,6 @@ def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
     return list(expanded)
 
 # -----------------------------
-# إشعار المشرف
-# -----------------------------
-async def notify_admin_search(context: ContextTypes.DEFAULT_TYPE, username: str, query: str, found: bool):
-    if ADMIN_USER_ID == 0:
-        return
-    bot = context.bot
-    status_text = "✅ تم العثور على نتائج" if found else "❌ لم يتم العثور على نتائج"
-    username_text = f"@{username}" if username else "(بدون يوزر)"
-    message = f"🔔 قام المستخدم {username_text} بالبحث عن:\n`{query}`\nالحالة: {status_text}"
-    try:
-        await bot.send_message(ADMIN_USER_ID, message, parse_mode='Markdown')
-    except Exception as e:
-        print(f"Failed to notify admin: {e}")
-
-# -----------------------------
 # إرسال صفحة الكتب
 # -----------------------------
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
@@ -161,7 +146,6 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
 
-    # بناء استعلام FTS متقدم مع Trigram
     ts_query = ' & '.join(stemmed_keywords)
     or_synonyms = ' | '.join(expanded_keywords)
     final_ts_query = f"{ts_query} | {or_synonyms}" if or_synonyms else ts_query
@@ -178,8 +162,9 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
         return
 
-    found_results = bool(books)
-    await notify_admin_search(context, update.effective_user.username, query, found_results)
+    # إزالة إرسال إشعارات البحث للمشرف
+    # found_results = bool(books)
+    # await notify_admin_search(context, update.effective_user.username, query, found_results)
 
     if not books:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("بحث عن كتب مشابهة", callback_data="search_similar")]])
@@ -221,7 +206,7 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data in ("home_index", "show_index"):
         from index_handler import show_index
-        await show_index(update, context)  # يعرض الفهرس مباشرة
+        await show_index(update, context)
 
     elif data == "search_similar":
         from search_handler import search_books
