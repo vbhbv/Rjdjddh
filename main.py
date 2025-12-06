@@ -1,7 +1,6 @@
 import os
 import asyncpg
 import logging
-from datetime import datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
@@ -107,37 +106,6 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# نظام عداد المستخدمين
-# ===============================================
-async def register_user(user_id: int, conn):
-    """تسجيل المستخدم إذا لم يكن موجودًا بالفعل"""
-    try:
-        await conn.execute("""
-        INSERT INTO users(user_id, joined_at)
-        VALUES($1, NOW())
-        ON CONFLICT (user_id) DO NOTHING;
-        """, user_id)
-    except Exception as e:
-        logger.error(f"❌ Error registering user: {e}")
-
-async def get_user_counts(conn):
-    """إرجاع عدد المستخدمين الكلي واليومي والأسبوعي"""
-    try:
-        total = await conn.fetchval("SELECT COUNT(*) FROM users;")
-        today = await conn.fetchval("""
-            SELECT COUNT(*) FROM users
-            WHERE joined_at >= CURRENT_DATE;
-        """)
-        week = await conn.fetchval("""
-            SELECT COUNT(*) FROM users
-            WHERE joined_at >= CURRENT_DATE - INTERVAL '7 days';
-        """)
-        return total, today, week
-    except Exception as e:
-        logger.error(f"❌ Error fetching user counts: {e}")
-        return 0, 0, 0
-
-# ===============================================
 # التعامل مع أزرار callback
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
@@ -191,11 +159,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # رسالة البدء /start
 # ===============================================
 async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
-    conn = context.bot_data.get("db_conn")
-    if conn:
-        await register_user(update.effective_user.id, conn)
-
     channel_username = CHANNEL_USERNAME.lstrip('@')
+
     if not await check_subscription(update.effective_user.id, context.bot):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")],
@@ -214,18 +179,14 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # جلب الإحصائيات بعد تسجيل المستخدم
-    total_users, daily_users, weekly_users = await get_user_counts(conn)
-
+    # إذا كان مشتركاً بالفعل عند الضغط على /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
         [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")]
     ])
     await update.message.reply_text(
-        f"👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
-        f"👥 عدد المستخدمين الكلي: {total_users}\n"
-        f"📅 مستخدمو اليوم: {daily_users}\n"
-        f"🗓️ مستخدمو الأسبوع: {weekly_users}\n\n"
+        "👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
+        "أنا بوت ذكي احتوي على نصف مليون كتاب أستطيع مساعدتك في العثور على أي كتاب تبحث عنه، أو اقتراح كتب مشابهة للموضوع الذي تهتم به.\n\n"
         "💡 طريقة الاستخدام:\n"
         "- اكتب اسم الكتاب مباشرة، أو اكتب كلمات مفتاحية مثل: برمجة، فلسفة، اقتصاد...\n"
         "- سأعرض لك أقرب النتائج بسرعة.\n\n"
