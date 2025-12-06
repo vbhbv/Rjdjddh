@@ -106,6 +106,21 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
+# عداد المستخدمين (متوافق مع لوحة المشرف)
+# ===============================================
+async def register_user(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
+    """تسجيل المستخدم الجديد في قاعدة البيانات إذا لم يكن موجودًا."""
+    conn = context.bot_data.get("db_conn")
+    if conn and update.effective_user:
+        try:
+            await conn.execute(
+                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
+                update.effective_user.id
+            )
+        except Exception as e:
+            logger.error(f"❌ Error registering user {update.effective_user.id}: {e}")
+
+# ===============================================
 # التعامل مع أزرار callback
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,7 +131,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     # تحقق الاشتراك
     if data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
-            # الرسالة الجديدة بعد الاشتراك
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
                 [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")]
@@ -139,19 +153,12 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "اضغط على زر '✅ اشترك الآن' للانضمام إلى القناة."
             )
 
-    # عرض الفهرس أو العودة له
     elif data == "show_index" or data == "home_index":
         await show_index(update, context)
-
-    # اختيار فهرس فرعي
     elif data.startswith("index:"):
         await search_by_index(update, context)
-
-    # تنقل صفحات الفهرس
     elif data.startswith("index_page:"):
         await navigate_index_pages(update, context)
-
-    # أزرار البحث العادي
     elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
         await handle_callbacks(update, context)
 
@@ -159,6 +166,9 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # رسالة البدء /start
 # ===============================================
 async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
+    # تسجيل المستخدم الجديد
+    await register_user(update, context)
+
     channel_username = CHANNEL_USERNAME.lstrip('@')
 
     if not await check_subscription(update.effective_user.id, context.bot):
@@ -179,7 +189,6 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # إذا كان مشتركاً بالفعل عند الضغط على /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
         [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")]
@@ -215,11 +224,13 @@ def run_bot():
         .build()
     )
 
+    # إضافة المعالجات
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(CommandHandler("start", start))
 
+    # تسجيل المشرفين مع تتبع المستخدمين
     register_admin_handlers(app, start)
 
     if base_url:
