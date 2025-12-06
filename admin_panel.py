@@ -61,40 +61,24 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return False
 
 # ===============================================
-# دوال إحصائيات المستخدمين
+# دالة إحصائيات المستخدمين اليومية والأسبوعية
 # ===============================================
 async def get_user_stats(conn):
-    """إرجاع إحصائيات المستخدمين."""
+    """إرجاع عدد المستخدمين الكلي واليومي والأسبوعي"""
     try:
         total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-        daily_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
-        weekly_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE - INTERVAL '7 days'")
-        
-        # إحصائيات قناة الاشتراك الإجباري
-        subscribed_today = await conn.fetchval(f"""
-            SELECT COUNT(DISTINCT u.user_id)
-            FROM users u
-            JOIN subscriptions s ON u.user_id = s.user_id
-            WHERE s.channel_id = $1 AND u.joined_at >= CURRENT_DATE
-        """, REQUIRED_CHANNEL_ID) if REQUIRED_CHANNEL_ID else 0
-        
-        # المستخدمين الذين بحثوا فقط
-        searched_only_today = await conn.fetchval("""
-            SELECT COUNT(DISTINCT user_id)
-            FROM search_attempts
-            WHERE search_date >= CURRENT_DATE AND downloaded = FALSE
+        daily_users = await conn.fetchval("""
+            SELECT COUNT(*) FROM users
+            WHERE joined_at >= CURRENT_DATE
         """)
-        # المستخدمين الذين نزلوا كتب بعد البحث
-        downloaded_after_search_today = await conn.fetchval("""
-            SELECT COUNT(DISTINCT user_id)
-            FROM search_attempts
-            WHERE search_date >= CURRENT_DATE AND downloaded = TRUE
+        weekly_users = await conn.fetchval("""
+            SELECT COUNT(*) FROM users
+            WHERE joined_at >= CURRENT_DATE - INTERVAL '7 days'
         """)
-
-        return total_users, daily_users, weekly_users, subscribed_today, searched_only_today, downloaded_after_search_today
+        return total_users, daily_users, weekly_users
     except Exception as e:
         print(f"Error fetching user stats: {e}")
-        return 0, 0, 0, 0, 0, 0
+        return 0, 0, 0
 
 # ===============================================
 # أوامر المشرفين
@@ -105,14 +89,11 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get('db_conn')
     book_count = 0
     total_users = daily_users = weekly_users = 0
-    subscribed_today = searched_only_today = downloaded_after_search_today = 0
 
     if conn:
         try:
             book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
-            stats = await get_user_stats(conn)
-            (total_users, daily_users, weekly_users,
-             subscribed_today, searched_only_today, downloaded_after_search_today) = stats
+            total_users, daily_users, weekly_users = await get_user_stats(conn)
         except Exception as e:
             print(f"Error fetching stats: {e}")
 
@@ -123,9 +104,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 عدد المستخدمين الكلي: **{total_users:,}**\n"
         f"📅 مستخدمو اليوم: **{daily_users:,}**\n"
         f"🗓️ مستخدمو الأسبوع: **{weekly_users:,}**\n"
-        f"🔹 مشتركوا قناة اليوم: **{subscribed_today:,}**\n"
-        f"🔍 بحثوا ولم ينزلوا كتب: **{searched_only_today:,}**\n"
-        f"📥 نزلوا كتب بعد البحث: **{downloaded_after_search_today:,}**\n"
         "--------------------------------------\n"
         "لإرسال رسالة للمستخدمين: /broadcast رسالتك هنا\n"
         "لتحديد القناة للاشتراك الإجباري: /setchannel\n"
