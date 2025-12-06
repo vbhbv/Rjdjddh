@@ -61,6 +61,26 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return False
 
 # ===============================================
+# دالة إحصائيات المستخدمين اليومية والأسبوعية
+# ===============================================
+async def get_user_stats(conn):
+    """إرجاع عدد المستخدمين الكلي واليومي والأسبوعي"""
+    try:
+        total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
+        daily_users = await conn.fetchval("""
+            SELECT COUNT(*) FROM users
+            WHERE joined_at >= CURRENT_DATE
+        """)
+        weekly_users = await conn.fetchval("""
+            SELECT COUNT(*) FROM users
+            WHERE joined_at >= CURRENT_DATE - INTERVAL '7 days'
+        """)
+        return total_users, daily_users, weekly_users
+    except Exception as e:
+        print(f"Error fetching user stats: {e}")
+        return 0, 0, 0
+
+# ===============================================
 # أوامر المشرفين
 # ===============================================
 @admin_only
@@ -68,11 +88,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض لوحة التحكم الخاصة بالمشرف."""
     conn = context.bot_data.get('db_conn')
     book_count = 0
-    user_count = 0
+    total_users = daily_users = weekly_users = 0
+
     if conn:
         try:
             book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
-            user_count = await conn.fetchval("SELECT COUNT(*) FROM users")
+            total_users, daily_users, weekly_users = await get_user_stats(conn)
         except Exception as e:
             print(f"Error fetching stats: {e}")
 
@@ -80,7 +101,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 **لوحة تحكم المشرف**\n"
         "--------------------------------------\n"
         f"📚 عدد الكتب المفهرسة: **{book_count:,}**\n"
-        f"👥 عدد المستخدمين الكلي: **{user_count:,}**\n"
+        f"👥 عدد المستخدمين الكلي: **{total_users:,}**\n"
+        f"📅 مستخدمو اليوم: **{daily_users:,}**\n"
+        f"🗓️ مستخدمو الأسبوع: **{weekly_users:,}**\n"
         "--------------------------------------\n"
         "لإرسال رسالة للمستخدمين: /broadcast رسالتك هنا\n"
         "لتحديد القناة للاشتراك الإجباري: /setchannel\n"
