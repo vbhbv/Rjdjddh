@@ -49,7 +49,7 @@ return text
 def remove_common_words(text: str) -> str:
 if not text:
 return ""
-for word in ["كتاب", "رواية", "نسخة", "مجموعة", "مجلد", "جزء", "طبعة", "مجاني", "كبير", "صغير"]:
+for word in ["كتاب", "رواية", "تتكلم", "كتب", "مجلد", "جزء", "طبعة", "عن", "اريد", "صغير"]:
 text = text.replace(word, "")
 return text.strip()
 
