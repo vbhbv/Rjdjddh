@@ -1,14 +1,21 @@
 import hashlib
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
 import re
 from typing import List
 import os
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 from search_suggestions import send_search_suggestions  # الربط بالملف الجديد
+import logging
 
-# -----------------------------
-# الإعدادات وقائمة Stop Words
-# -----------------------------
+# =========================
+# Logging
+# =========================
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# =========================
+# إعدادات عامة
+# =========================
 BOOKS_PER_PAGE = 10
 
 ARABIC_STOP_WORDS = {
@@ -24,9 +31,9 @@ except ValueError:
     ADMIN_USER_ID = 0
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
-# -----------------------------
+# =========================
 # دوال التطبيع والتنظيف
-# -----------------------------
+# =========================
 def normalize_text(text: str) -> str:
     if not text:
         return ""
@@ -57,9 +64,9 @@ def light_stem(word: str) -> str:
         word = word[2:]
     return word if word else ""
 
-# -----------------------------
+# =========================
 # المرادفات
-# -----------------------------
+# =========================
 SYNONYMS = {
     "مهندس": ["هندسة", "مقاول", "معماري"],
     "الهندسة": ["مهندس", "معمار", "بناء"],
@@ -76,9 +83,9 @@ def expand_keywords_with_synonyms(keywords: List[str]) -> List[str]:
             expanded.update(SYNONYMS[k])
     return list(expanded)
 
-# -----------------------------
+# =========================
 # إرسال صفحة الكتب
-# -----------------------------
+# =========================
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
     books = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
@@ -93,8 +100,10 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         stage_note = "⚠️ نتائج بحث موسع (بحثنا بالجذور والمرادفات)"
     elif "تطابق جميع الكلمات" in search_stage:
         stage_note = "✅ نتائج دلالية (تطابق جميع كلماتك المفتاحية)"
+    elif "تطابق العبارة" in search_stage:
+        stage_note = "🔍 تطابق العبارة الكامل"
     else:
-        stage_note = "✅ نتائج مطابقة (تطابق العبارة كاملة)"
+        stage_note = "✅ نتائج مطابقة"
 
     text = f"📚 النتائج ({len(books)} كتاب)\n{stage_note}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
@@ -123,12 +132,13 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     elif update.callback_query:
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
 
-# -----------------------------
-# البحث الذكي متعدد المراحل (تصحيح جلب الكتب)
-# -----------------------------
+# =========================
+# البحث الذكي متعدد المراحل النهائي
+# =========================
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
+
     query = update.message.text.strip()
     if not query:
         return
@@ -138,47 +148,113 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
         return
 
-    normalized_query = normalize_text(remove_common_words(query))
-    all_words_in_query = normalize_text(query).split()
-    keywords = [w for w in all_words_in_query if w not in ARABIC_STOP_WORDS and len(w) >= 1]
+    # ---------- تجهيز الكلمات ----------
+    normalized_query = normalize_text(query)
+    clean_query = remove_common_words(query)
+    words_in_query = normalize_text(clean_query).split()
+    keywords = [w for w in words_in_query if w not in ARABIC_STOP_WORDS and len(w) >= 2]
     expanded_keywords = expand_keywords_with_synonyms(keywords)
     stemmed_keywords = [light_stem(k) for k in expanded_keywords]
 
     context.user_data["last_query"] = normalized_query
     context.user_data["last_keywords"] = keywords
 
-    ts_query = ' & '.join(stemmed_keywords)
-    or_synonyms = ' | '.join(expanded_keywords)
-    final_ts_query = f"{ts_query} | {or_synonyms}" if or_synonyms else ts_query
+    ts_query_stemmed = ' & '.join(stemmed_keywords) if stemmed_keywords else ''
+    ts_query_expanded = ' | '.join(expanded_keywords) if expanded_keywords else ''
+    final_ts_query = f"({ts_query_stemmed}) | ({ts_query_expanded})" if ts_query_stemmed else ts_query_expanded
 
-    try:
-        books = await conn.fetch(f"""
-            SELECT id, file_id, file_name, uploaded_at
-            FROM books
-            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
-            ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
-            LIMIT 200;
-        """, final_ts_query)
-    except Exception as e:
-        await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
-        return
+    books = []
+    search_stage = "بدون نتائج"
 
-    # إذا لم تُعثر أي كتب، نرسل الاقتراحات من الملف الجديد
+    # ==========================
+    # المرحلة 1: Exact Phrase
+    # ==========================
+    if len(normalized_query.split()) > 2:
+        try:
+            books = await conn.fetch("""
+                SELECT id, file_id, file_name, uploaded_at
+                FROM books
+                WHERE file_name ILIKE $1
+                LIMIT 50;
+            """, f"%{normalized_query}%")
+            if books:
+                search_stage = "🔍 تطابق العبارة الكامل"
+        except:
+            pass
+
+    # ==========================
+    # المرحلة 2: FTS Semantic (الجذور + المرادفات)
+    # ==========================
+    if not books and final_ts_query:
+        try:
+            books = await conn.fetch("""
+                SELECT id, file_id, file_name, uploaded_at
+                FROM books
+                WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+                ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
+                LIMIT 150;
+            """, final_ts_query)
+            if books:
+                search_stage = "⭐ بحث دلالي (FTS + الجذور المطلوبة)"
+        except:
+            pass
+
+    # ==========================
+    # المرحلة 3: FTS All Keywords (AND)
+    # ==========================
+    if not books and stemmed_keywords:
+        try:
+            all_keywords_query = ' & '.join(stemmed_keywords)
+            books = await conn.fetch("""
+                SELECT id, file_id, file_name, uploaded_at
+                FROM books
+                WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+                ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
+                LIMIT 150;
+            """, all_keywords_query)
+            if books:
+                search_stage = "✅ تطابق جميع الكلمات المفتاحية (AND FTS)"
+        except:
+            pass
+
+    # ==========================
+    # المرحلة 4: FTS Any Keyword (OR)
+    # ==========================
+    if not books and stemmed_keywords:
+        try:
+            or_query = ' | '.join(stemmed_keywords)
+            books = await conn.fetch("""
+                SELECT id, file_id, file_name, uploaded_at
+                FROM books
+                WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+                ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
+                LIMIT 150;
+            """, or_query)
+            if books:
+                search_stage = "⚠️ بحث واسع (OR Keywords FTS)"
+        except:
+            pass
+
+    # ==========================
+    # المرحلة 5: الاقتراحات
+    # ==========================
     if not books:
         await send_search_suggestions(update, context)
         context.user_data["search_results"] = []
         context.user_data["current_page"] = 0
         return
 
-    # تصحيح جلب الكتب وإرسالها بشكل صحيح عند الضغط على الكتاب
+    # ==========================
+    # إرسال النتائج
+    # ==========================
     context.user_data["search_results"] = [dict(b) for b in books]
     context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = "بحث متقدم (FTS + Trigram + مرادفات)"
+    context.user_data["search_stage"] = search_stage
     await send_books_page(update, context)
 
-# -----------------------------
-# التعامل مع أزرار الكتب + الفهرس
-# -----------------------------
+# ==========================
+# التعامل مع أزرار الكتب والفهرس
+# ==========================
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -188,8 +264,10 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            caption = "تم التنزيل بواسطة @boooksfree1bot"
-            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
+            caption = "📖 تم التنزيل بواسطة @boooksfree1bot"
+            share_button = InlineKeyboardMarkup([
+                [InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]
+            ])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
             await query.message.reply_text("❌ الملف غير متوفر حالياً.")
