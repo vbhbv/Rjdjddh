@@ -1,12 +1,12 @@
-# search_suggestions.py
 import hashlib
-import re
-from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import re
+from typing import List
+import os
 
 # -----------------------------
-# قائمة Stop Words
+# إعدادات وقائمة Stop Words
 # -----------------------------
 ARABIC_STOP_WORDS = {
     "و", "في", "من", "إلى", "عن", "على", "ب", "ل", "ا", "أو", "أن", "إذا",
@@ -30,13 +30,6 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-def remove_common_words(text: str) -> str:
-    if not text:
-        return ""
-    for word in ["كتاب", "رواية", "نسخة", "مجموعة", "جزء", "طبعة", "مجاني", "كبير", "صغير"]:
-        text = text.replace(word, "")
-    return text.strip()
-
 def light_stem(word: str) -> str:
     suffixes = ["ية", "ي", "ون", "ات", "ان", "ين", "ه"]
     for suf in suffixes:
@@ -48,85 +41,50 @@ def light_stem(word: str) -> str:
     return word if word else ""
 
 # -----------------------------
-# إرسال صفحة الاقتراحات
+# دالة اقتراحات البحث
 # -----------------------------
-async def show_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE, suggestions: List[dict]):
-    if not suggestions:
-        await update.message.reply_text("❌ لم يتم العثور على أي اقتراحات.")
+async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE, query: str, conn):
+    """
+    تعرض اقتراحات البحث عند عدم وجود نتائج مطابقة
+    """
+    normalized_query = normalize_text(query)
+    query_words = normalized_query.split()
+    stemmed_query = [light_stem(w) for w in query_words if w not in ARABIC_STOP_WORDS]
+
+    if not stemmed_query:
+        await update.message.reply_text("❌ لا توجد اقتراحات للبحث.")
         return
 
+    # إنشاء tsquery مشابه باستخدام OR للجذور
+    ts_query = ' | '.join(stemmed_query)
+
+    try:
+        results = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
+            FROM books
+            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
+            LIMIT 10;
+        """, ts_query)
+    except Exception as e:
+        await update.message.reply_text(f"❌ حدث خطأ أثناء اقتراح البحث: {e}")
+        return
+
+    if not results:
+        await update.message.reply_text("❌ للأسف، لا توجد اقتراحات مطابقة.")
+        return
+
+    # بناء لوحة الأزرار للكتب المقترحة
     keyboard = []
-    for b in suggestions[:10]:  # عرض أول 10 اقتراحات فقط لتقليل استهلاك الموارد
+    for b in results:
+        if not b.get("file_name") or not b.get("file_id"):
+            continue
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
         keyboard.append([InlineKeyboardButton(f"{b['file_name']}", callback_data=f"file:{key}")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "⚠️ لم نجد نتائج دقيقة. إليك بعض الاقتراحات الأقرب لما كتبته:",
+        f"🔍 لم نجد نتائج مطابقة تمامًا لبحثك '{query}' لكن إليك بعض الاقتراحات:",
         reply_markup=reply_markup
-    )
-
-# -----------------------------
-# البحث مع اقتراحات ذكية
-# -----------------------------
-async def search_books_with_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        return
-
-    query = update.message.text.strip()
-    if not query:
-        return
-
-    conn = context.bot_data.get("db_conn")
-    if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
-        return
-
-    normalized_query = normalize_text(remove_common_words(query))
-    all_words_in_query = normalize_text(query).split()
-    keywords = [w for w in all_words_in_query if w not in ARABIC_STOP_WORDS and len(w) >= 1]
-
-    # تجميع الكلمة للبحث في DB
-    ts_query = ' & '.join([light_stem(k) for k in keywords])
-
-    # البحث الأساسي
-    try:
-        books = await conn.fetch(f"""
-            SELECT id, file_id, file_name
-            FROM books
-            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
-            ORDER BY ts_rank(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) DESC
-            LIMIT 200;
-        """, ts_query)
-    except Exception as e:
-        await update.message.reply_text(f"❌ حدث خطأ في البحث: {e}")
-        return
-
-    if books:
-        # حفظ النتائج للمستخدم وعرضها
-        context.user_data["search_results"] = [dict(b) for b in books]
-        context.user_data["current_page"] = 0
-        context.user_data["search_stage"] = "بحث متقدم (FTS + Trigram + مرادفات)"
-        from search_handler import send_books_page
-        await send_books_page(update, context)
-        return
-
-    # -----------------------------
-    # إذا لم توجد نتائج -> اقتراحات ذكية
-    # -----------------------------
-    try:
-        # استخدام pg_trgm للبحث عن كلمات مشابهة هجائياً
-        suggestions = await conn.fetch(f"""
-            SELECT id, file_id, file_name
-            FROM books
-            WHERE file_name % $1
-            ORDER BY similarity(file_name, $1) DESC
-            LIMIT 20;
-        """, query)
-    except Exception as e:
-        await update.message.reply_text(f"❌ حدث خطأ في اقتراحات البحث: {e}")
-        return
-
-    # عرض الاقتراحات
-    await show_search_suggestions(update, context, [dict(b) for b in suggestions])
+        )
