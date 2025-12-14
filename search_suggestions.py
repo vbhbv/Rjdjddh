@@ -1,15 +1,14 @@
+# search_suggestions.py
+import difflib
+import re
 import hashlib
+from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-import re
-from typing import List
-import difflib
 
 # -----------------------------
-# إعدادات
+# إعدادات Stop Words
 # -----------------------------
-BOOKS_PER_PAGE = 10
-
 ARABIC_STOP_WORDS = {
     "و", "في", "من", "إلى", "عن", "على", "ب", "ل", "ا", "أو", "أن", "إذا",
     "ما", "هذا", "هذه", "ذلك", "تلك", "كان", "قد", "الذي", "التي", "هو", "هي",
@@ -23,75 +22,95 @@ def normalize_text(text: str) -> str:
     if not text:
         return ""
     text = text.lower()
-    text = text.replace("_", " ")
-    text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي").replace("ة", "ه")
-    text = text.replace("ـ", "")
+    text = text.replace("_", " ").replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    text = text.replace("ى", "ي").replace("ة", "ه").replace("ـ", "")
     text = re.sub(r"[ًٌٍَُِ]", "", text)
     text = re.sub(r'[^\w\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-def light_stem(word: str) -> str:
-    suffixes = ["ية", "ي", "ون", "ات", "ان", "ين", "ه"]
-    for suf in suffixes:
-        if word.endswith(suf) and len(word) > len(suf) + 2:
-            word = word[:-len(suf)]
-            break
-    if word.startswith("ال") and len(word) > 3:
-        word = word[2:]
-    return word if word else ""
-
-def expand_keywords_with_synonyms(keywords: List[str], synonyms: dict) -> List[str]:
-    expanded = set(keywords)
-    for k in keywords:
-        if k in synonyms:
-            expanded.update(synonyms[k])
-    return list(expanded)
+def remove_stopwords(words: List[str]) -> List[str]:
+    return [w for w in words if w not in ARABIC_STOP_WORDS and len(w) > 1]
 
 # -----------------------------
-# إرسال اقتراحات البحث
+# اقتراح الكلمات القريبة
 # -----------------------------
-async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE, query: str, books_list: List[dict], synonyms: dict):
-    """
-    تعرض الاقتراحات عندما لا توجد نتائج مباشرة للبحث
-    """
-    normalized_query = normalize_text(query)
-    query_words = [w for w in normalized_query.split() if w not in ARABIC_STOP_WORDS]
-    stemmed_query = [light_stem(w) for w in query_words]
-    
-    # جمع كل أسماء الكتب الموجودة مسبقاً
-    all_titles = [b["file_name"] for b in books_list]
-    
-    # اقتراحات بناء على تشابه نصي بسيط
-    suggestions = difflib.get_close_matches(normalized_query, all_titles, n=5, cutoff=0.5)
-    
-    # لو لا توجد اقتراحات دقيقة، نبحث في الكلمات المفتاحية والمرادفات
-    if not suggestions:
-        expanded = expand_keywords_with_synonyms(stemmed_query, synonyms)
-        for b in books_list:
-            title_norm = normalize_text(b["file_name"])
-            if any(word in title_norm for word in expanded):
-                suggestions.append(b["file_name"])
-    
-    # إذا لا توجد اقتراحات على الإطلاق
-    if not suggestions:
-        await update.message.reply_text(f"❌ لا توجد كتب مطابقة للبحث: {query}\nحاول تعديل الكلمات أو تجربة كلمات مفتاحية أخرى.")
+def suggest_similar_words(word: str, all_titles: List[str], n: int = 3) -> List[str]:
+    normalized_titles = [normalize_text(title) for title in all_titles]
+    suggestions = difflib.get_close_matches(word, normalized_titles, n=n, cutoff=0.6)
+    return suggestions
+
+# -----------------------------
+# إرسال اقتراحات عند عدم وجود نتائج
+# -----------------------------
+async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
+    last_query = context.user_data.get("last_query", "")
+    if not last_query:
+        await update.message.reply_text("❌ لم يتم العثور على بحث سابق.")
         return
-    
-    # تجهيز لوحة المفاتيح للأزرار
+
+    conn = context.bot_data.get("db_conn")
+    if not conn:
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
+        return
+
+    try:
+        rows = await conn.fetch("SELECT id, file_id, file_name FROM books;")
+        all_books = [dict(r) for r in rows]
+    except Exception as e:
+        await update.message.reply_text(f"❌ حدث خطأ أثناء اقتراح الكتب: {e}")
+        return
+
+    query_words = remove_stopwords(normalize_text(last_query).split())
+    suggestions_set = set()
+    suggested_books = []
+
+    for w in query_words:
+        matches = suggest_similar_words(w, [b["file_name"] for b in all_books], n=3)
+        for match in matches:
+            for b in all_books:
+                if normalize_text(b["file_name"]) == match and b not in suggested_books:
+                    suggested_books.append(b)
+                    break
+
+    if not suggested_books:
+        await update.message.reply_text(f"❌ لم نجد أي كتب مشابهة لبحثك: {last_query}")
+        return
+
+    context.user_data["suggested_books"] = suggested_books  # حفظ للاستخدام في callbacks
     keyboard = []
-    for title in suggestions:
-        # البحث عن file_id للكتاب
-        file_id = None
-        for b in books_list:
-            if b["file_name"] == title:
-                file_id = b.get("file_id")
-                break
-        if file_id:
-            key = hashlib.md5(file_id.encode()).hexdigest()[:16]
-            context.bot_data[f"file_{key}"] = file_id
-            keyboard.append([InlineKeyboardButton(title, callback_data=f"file:{key}")])
-    
+
+    for b in suggested_books[:10]:  # الحد الأعلى للاقتراحات
+        key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
+        context.bot_data[f"file_{key}"] = b["file_id"]
+        keyboard.append([InlineKeyboardButton(b["file_name"], callback_data=f"file:{key}")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(f"🔍 لم نعثر على نتائج مطابقة للبحث '{query}'، لكن هذه بعض الاقتراحات:", reply_markup=reply_markup)
+    if update.message:
+        await update.message.reply_text(
+            f"⚠️ لم يتم العثور على كتب مطابقة. إليك بعض الاقتراحات بناءً على بحثك: '{last_query}'",
+            reply_markup=reply_markup
+        )
+    elif update.callback_query:
+        await update.callback_query.message.edit_text(
+            f"⚠️ لم يتم العثور على كتب مطابقة. إليك بعض الاقتراحات بناءً على بحثك: '{last_query}'",
+            reply_markup=reply_markup
+        )
+
+# -----------------------------
+# التعامل مع أزرار الاقتراحات
+# -----------------------------
+async def handle_suggestion_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("suggest:") or data.startswith("file:"):
+        key = data.split(":", 1)[1]
+        file_id = context.bot_data.get(f"file_{key}")
+        if file_id:
+            caption = "تم التنزيل بواسطة @boooksfree1bot"
+            share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
+            await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
+        else:
+            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
