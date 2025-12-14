@@ -192,7 +192,7 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             share_button = InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]])
             await query.message.reply_document(document=file_id, caption=caption, reply_markup=share_button)
         else:
-            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
+            await query.message.reply_text("❌ لقد اجرينا تحديثًا لطفا اعد البحث مرة أخرى")
 
     elif data == "next_page":
         context.user_data["current_page"] += 1
