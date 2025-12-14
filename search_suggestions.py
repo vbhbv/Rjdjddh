@@ -1,5 +1,4 @@
 # search_suggestions.py
-import difflib
 import re
 import hashlib
 from typing import List
@@ -33,19 +32,7 @@ def remove_stopwords(words: List[str]) -> List[str]:
     return [w for w in words if w not in ARABIC_STOP_WORDS and len(w) > 1]
 
 # -----------------------------
-# اقتراح الكلمات القريبة (سريع جدًا)
-# -----------------------------
-def suggest_similar_words(word: str, all_titles: List[str], n: int = 5) -> List[str]:
-    """
-    إرجاع قائمة بأقرب الكلمات للعنوان المدخل
-    باستخدام difflib في الذاكرة (سريع جدًا)
-    """
-    normalized_titles = [normalize_text(title) for title in all_titles]
-    suggestions = difflib.get_close_matches(word, normalized_titles, n=n, cutoff=0.6)
-    return suggestions
-
-# -----------------------------
-# إرسال الاقتراحات
+# اقتراح الكتب بسرعة (بحث بالكلمات المفتاحية)
 # -----------------------------
 async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
     last_query = context.user_data.get("last_query", "")
@@ -72,12 +59,10 @@ async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
     query_words = remove_stopwords(normalize_text(last_query).split())
     suggested_books_set = set()
 
-    for w in query_words:
-        matches = suggest_similar_words(w, [b["file_name"] for b in all_books], n=5)
-        for m in matches:
-            for b in all_books:
-                if normalize_text(b["file_name"]) == m:
-                    suggested_books_set.add((b["file_id"], b["file_name"]))
+    for book in all_books:
+        book_name_norm = normalize_text(book["file_name"])
+        if any(w in book_name_norm for w in query_words):
+            suggested_books_set.add((book["file_id"], book["file_name"]))
 
     suggested_books = list(suggested_books_set)[:10]  # الحد الأعلى لاقتراحات الكتب
 
