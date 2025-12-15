@@ -1,135 +1,172 @@
 import hashlib
 import re
+from typing import List
+import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from search_suggestions import send_search_suggestions
 import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 BOOKS_PER_PAGE = 10
 MAX_RESULTS = 500
 
-logger = logging.getLogger(__name__)
+ARABIC_STOP_WORDS = {
+    "و","في","من","إلى","عن","على","ب","ل","ا","أو","أن","إذا","ما","هذا",
+    "هذه","ذلك","تلك","كان","قد","الذي","التي","هو","هي","ف","ك","اى"
+}
 
-# ======================
-# تنظيف ذكي
-# ======================
-def normalize(text: str) -> str:
+# =========================
+# Normalization
+# =========================
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
     text = text.lower()
     text = text.replace("أ","ا").replace("إ","ا").replace("آ","ا")
-    text = text.replace("ة","ه").replace("ى","ي")
+    text = text.replace("ى","ي").replace("ة","ه")
     text = re.sub(r"[^\w\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
-def extract_keywords(q: str):
-    words = normalize(q).split()
-    return [w for w in words if len(w) >= 2]
+def light_stem(word: str) -> str:
+    for suf in ["يات","ات","ون","ين","ه","ي","ة"]:
+        if word.endswith(suf) and len(word) > 3:
+            return word[:-len(suf)]
+    if word.startswith("ال") and len(word) > 3:
+        return word[2:]
+    return word
 
-# ======================
-# عرض النتائج
-# ======================
-async def send_books_page(update, context):
-    books = context.user_data["results"]
-    page = context.user_data.get("page",0)
+# =========================
+# Pagination
+# =========================
+async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home=False):
+    books = context.user_data.get("search_results", [])
+    page = context.user_data.get("current_page", 0)
 
-    total_pages = (len(books)-1)//BOOKS_PER_PAGE + 1
-    start = page*BOOKS_PER_PAGE
-    end = start+BOOKS_PER_PAGE
+    start = page * BOOKS_PER_PAGE
+    end = start + BOOKS_PER_PAGE
+    current_books = books[start:end]
 
-    text = f"📚 النتائج ({len(books)} كتاب)\nالصفحة {page+1} من {total_pages}\n\n"
     keyboard = []
-
-    for b in books[start:end]:
+    for b in current_books:
         key = hashlib.md5(b["file_id"].encode()).hexdigest()[:16]
-        context.bot_data[key] = b["file_id"]
+        context.bot_data[f"file_{key}"] = b["file_id"]
         keyboard.append([InlineKeyboardButton(b["file_name"], callback_data=f"file:{key}")])
 
     nav = []
-    if page>0:
-        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev"))
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
     if end < len(books):
-        nav.append(InlineKeyboardButton("التالي ➡️", callback_data="next"))
+        nav.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
     if nav:
         keyboard.append(nav)
 
-    await update.callback_query.message.edit_text(
-        text, reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    if include_index_home or context.user_data.get("is_index"):
+        keyboard.append([InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index")])
 
-# ======================
-# البحث العالمي الحقيقي
-# ======================
-async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.message.text.strip()
-    conn = context.bot_data["db_conn"]
+    text = f"📚 النتائج: {len(books)} كتاب\nالصفحة {page+1}"
 
-    keywords = extract_keywords(q)
-    phrase = " ".join(keywords)
-
-    results = []
-
-    # 1️⃣ PHRASE MATCH (أعلى دقة)
-    sql_phrase = """
-    SELECT *, ts_rank(search_vector, phraseto_tsquery('arabic', $1)) AS rank
-    FROM books
-    WHERE search_vector @@ phraseto_tsquery('arabic', $1)
-    ORDER BY rank DESC
-    LIMIT $2;
-    """
-    rows = await conn.fetch(sql_phrase, phrase, MAX_RESULTS)
-    if rows:
-        results = rows
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        # 2️⃣ ALL WORDS (AND)
-        ts_and = " & ".join(keywords)
-        sql_and = """
-        SELECT *, ts_rank(search_vector, to_tsquery('arabic', $1)) AS rank
-        FROM books
-        WHERE search_vector @@ to_tsquery('arabic', $1)
-        ORDER BY rank DESC
-        LIMIT $2;
-        """
-        rows = await conn.fetch(sql_and, ts_and, MAX_RESULTS)
-        if rows:
-            results = rows
-        else:
-            # 3️⃣ ANY WORD (OR – أضعف)
-            ts_or = " | ".join(keywords)
-            sql_or = """
-            SELECT *, ts_rank(search_vector, to_tsquery('arabic', $1)) AS rank
-            FROM books
-            WHERE search_vector @@ to_tsquery('arabic', $1)
-            ORDER BY rank DESC
-            LIMIT $2;
-            """
-            results = await conn.fetch(sql_or, ts_or, MAX_RESULTS)
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    if not results:
-        await update.message.reply_text("❌ لا توجد نتائج دقيقة")
+# =========================
+# SEARCH ENGINE (FIXED)
+# =========================
+async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text.strip()
+    if not query:
         return
 
-    context.user_data["results"] = [dict(r) for r in results]
-    context.user_data["page"] = 0
+    conn = context.bot_data.get("db_conn")
+    nq = normalize_text(query)
 
-    fake_update = update
-    fake_update.callback_query = update
-    await send_books_page(fake_update, context)
+    words = [light_stem(w) for w in nq.split() if w not in ARABIC_STOP_WORDS and len(w) > 1]
+    ts_and = " & ".join(words)
+    ts_or = " | ".join(words)
 
-# ======================
-# أزرار
-# ======================
-async def handle_callbacks(update, context):
+    books = []
+
+    # =======================
+    # 1️⃣ Exact Phrase BOOST
+    # =======================
+    books = await conn.fetch("""
+        SELECT id, file_id, file_name, uploaded_at,
+        1000 AS score
+        FROM books
+        WHERE LOWER(file_name) LIKE $1
+        ORDER BY uploaded_at DESC
+        LIMIT 100
+    """, f"%{nq}%")
+
+    # =======================
+    # 2️⃣ FTS AND (BOOSTED)
+    # =======================
+    if len(books) < MAX_RESULTS and ts_and:
+        rows = await conn.fetch("""
+            SELECT id, file_id, file_name, uploaded_at,
+            ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) * 100 AS score
+            FROM books
+            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            ORDER BY score DESC
+            LIMIT $2
+        """, ts_and, MAX_RESULTS)
+        books.extend(rows)
+
+    # =======================
+    # 3️⃣ FTS OR (LOWER)
+    # =======================
+    if len(books) < MAX_RESULTS and ts_or:
+        rows = await conn.fetch("""
+            SELECT id, file_id, file_name, uploaded_at,
+            ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) * 10 AS score
+            FROM books
+            WHERE to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            ORDER BY score DESC
+            LIMIT $2
+        """, ts_or, MAX_RESULTS)
+        books.extend(rows)
+
+    if not books:
+        await send_search_suggestions(update, context)
+        return
+
+    # =======================
+    # 🧠 FINAL SORT & UNIQUE
+    # =======================
+    unique = {}
+    for b in books:
+        unique[b["file_id"]] = b
+
+    final = sorted(unique.values(), key=lambda x: (-x["score"], -x["uploaded_at"].timestamp()))
+    context.user_data["search_results"] = [dict(b) for b in final[:MAX_RESULTS]]
+    context.user_data["current_page"] = 0
+
+    await send_books_page(update, context)
+
+# =========================
+# CALLBACKS
+# =========================
+async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    if q.data=="next":
-        context.user_data["page"]+=1
+    if q.data.startswith("file:"):
+        key = q.data.split(":")[1]
+        fid = context.bot_data.get(f"file_{key}")
+        await q.message.reply_document(fid)
+
+    elif q.data == "next_page":
+        context.user_data["current_page"] += 1
         await send_books_page(update, context)
 
-    elif q.data=="prev":
-        context.user_data["page"]-=1
+    elif q.data == "prev_page":
+        context.user_data["current_page"] -= 1
         await send_books_page(update, context)
 
-    elif q.data.startswith("file:"):
-        fid = context.bot_data.get(q.data.split(":")[1])
-        if fid:
-            await q.message.reply_document(fid)
+    elif q.data == "home_index":
+        from index_handler import show_index
+        await show_index(update, context)
