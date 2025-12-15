@@ -9,7 +9,7 @@ from telegram.ext import (
 
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks  # البحث العادي
-from index_handler import show_index, search_by_index, navigate_index_pages  # الفهرس مع الملاحة
+from index_handler import show_index, search_by_index, navigate_index_pages  # الفهرس العربي
 
 # ===============================================
 # إعداد اللوج
@@ -133,7 +133,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
-                [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")]
+                [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
+                [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
             ])
             await context.bot.send_message(
                 chat_id=query.from_user.id,
@@ -153,8 +154,13 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "اضغط على زر '✅ اشترك الآن' للانضمام إلى القناة."
             )
 
-    elif data == "show_index" or data == "home_index":
+    elif data in ["show_index", "home_index"]:
+        # الفهرس العربي
         await show_index(update, context)
+    elif data == "show_index_en":
+        # الفهرس الإنجليزي (تحتاج دالة show_index_en في index_handler)
+        from index_handler import show_index_en
+        await show_index_en(update, context)
     elif data.startswith("index:"):
         await search_by_index(update, context)
     elif data.startswith("index_page:"):
@@ -191,7 +197,8 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
-        [InlineKeyboardButton("📚 عرض الفهرس", callback_data="show_index")]
+        [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
+        [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
     ])
     await update.message.reply_text(
         "👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
