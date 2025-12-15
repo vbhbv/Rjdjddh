@@ -2,7 +2,7 @@
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from search_handler import send_books_page  # نفس دالة عرض الكتب
+from search_handler import send_books_page  # دالة عرض الكتب
 
 # -----------------------------
 # دوال التطبيع والنظافة
@@ -22,15 +22,11 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 # -----------------------------
-# قائمة الفهارس بعد إزالة الأقسام المطلوبة
+# الفهرس العربي
 # -----------------------------
 INDEXES = [
-    # 1: قسم الروايات فقط
     ("الروايات", "novels", ["رواية"]),
-
-    # باقي الفهارس بعد إزالة الأقسام المطلوبة
     ("قصص الأطفال", "children_stories", ["قصص", "أطفال", "حكاية", "مغامرة"]),
-
     ("قواعد اللغة العربية", "arabic_grammar", ["قواعد", "نحو", "صرف"]),
     ("الشعر", "poetry", ["شاعر", "قصيدة", "ديوان"]),
     ("النقد الأدبي", "literary_criticism", ["نقد", "تحليل", "أدب"]),
@@ -40,7 +36,6 @@ INDEXES = [
     ("الفلسفة", "philosophy", ["فلسفة", "منطق", "أخلاق"]),
     ("علم النفس", "psychology", ["علم النفس", "سلوك", "عقل"]),
     ("علم الاجتماع", "sociology", ["علم الاجتماع", "مجتمع", "ثقافة"]),
-
     ("التاريخ", "history", ["تاريخ", "حضارة", "عصور"]),
     ("الجغرافيا", "geography", ["جغرافيا", "خرائط", "مناخ"]),
     ("السياسة", "politics", ["سياسة", "حكومة", "دولة"]),
@@ -51,7 +46,6 @@ INDEXES = [
     ("التعليم", "education", ["تعليم", "مدرسة", "جامعة"]),
     ("اللغات", "languages", ["لغة", "ترجمة", "قاموس"]),
     ("الطب", "medicine", ["طب", "دواء", "علاج"]),
-
     ("صيدلة", "pharmacy", ["صيدلة", "دواء"]),
     ("طب أسنان", "dentistry", ["أسنان", "تقويم"]),
     ("أعشاب طبيعية", "herbal_medicine", ["أعشاب", "طبيعية"]),
@@ -62,7 +56,6 @@ INDEXES = [
     ("التصميم", "design", ["تصميم", "ابداع", "ابتكار"]),
     ("التصميم الداخلي", "interior_design", ["تصميم داخلي", "ديكور"]),
     ("الديكور", "decor", ["ديكور", "تزيين", "إضاءة"]),
-
     ("الدين", "religion", ["دين", "اسلام", "مسيحية"]),
     ("الرياضة", "sports", ["رياضة", "كرة", "تمارين"]),
     ("الأساطير", "mythology", ["أسطورة", "خرافة"]),
@@ -80,7 +73,25 @@ INDEXES = [
 INDEXES_PER_PAGE = 10
 
 # -----------------------------
-# عرض الفهرس بصفحات
+# الفهرس الإنجليزي
+# -----------------------------
+ENGLISH_INDEXES = [
+    ("Novels", "novels_en", ["novel", "story", "fiction"]),
+    ("Children Stories", "children_stories_en", ["children", "story", "adventure"]),
+    ("Science", "science_en", ["physics", "chemistry", "biology"]),
+    ("Mathematics", "math_en", ["math", "algebra", "geometry"]),
+    ("Programming", "programming_en", ["python", "java", "coding"]),
+    ("Technology", "technology_en", ["AI", "robotics", "technology"]),
+    ("History", "history_en", ["history", "civilization", "era"]),
+    ("Philosophy", "philosophy_en", ["philosophy", "ethics", "logic"]),
+    ("Psychology", "psychology_en", ["psychology", "mind", "behavior"]),
+    ("Languages", "languages_en", ["language", "translation", "dictionary"])
+]
+
+ENGLISH_INDEXES_PER_PAGE = 10
+
+# -----------------------------
+# عرض الفهرس العربي
 # -----------------------------
 async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     start = page * INDEXES_PER_PAGE
@@ -99,7 +110,7 @@ async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    text = f"📚 اختر الفهرس الذي تريد استعراضه (عدد الفهارس: {total_indexes}):"
+    text = f"📚 اختر الفهرس العربي (عدد الفهارس: {total_indexes}):"
     if update.callback_query:
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
         await update.callback_query.answer()
@@ -107,7 +118,34 @@ async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
         await update.message.reply_text(text, reply_markup=reply_markup)
 
 # -----------------------------
-# الملاحة بين صفحات الفهرس
+# عرض الفهرس الإنجليزي
+# -----------------------------
+async def show_english_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    start = page * ENGLISH_INDEXES_PER_PAGE
+    end = start + ENGLISH_INDEXES_PER_PAGE
+    current_indexes = ENGLISH_INDEXES[start:end]
+    total_indexes = len(ENGLISH_INDEXES)
+
+    keyboard = [[InlineKeyboardButton(name, callback_data=f"index_en:{key}")] for name, key, _ in current_indexes]
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"index_en_page:{page-1}"))
+    if end < len(ENGLISH_INDEXES):
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"index_en_page:{page+1}"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = f"📚 Choose an English index (Total: {total_indexes}):"
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
+        await update.callback_query.answer()
+    elif update.message:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+
+# -----------------------------
+# الملاحة بين صفحات الفهارس
 # -----------------------------
 async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -119,8 +157,18 @@ async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
         return
     await show_index(update, context, page)
 
+async def navigate_english_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    try:
+        page = int(query.data.split(":")[1])
+    except Exception:
+        await query.message.reply_text("❌ Error determining page.")
+        return
+    await show_english_index(update, context, page)
+
 # -----------------------------
-# البحث داخل الفهرس وعرض الكتب
+# البحث داخل الفهارس
 # -----------------------------
 async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -143,8 +191,6 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keywords = [normalize_text(remove_common_words(k)) for k in keywords]
-
-    # صارم للروايات فقط
     if index_key == "novels":
         sql_condition = " AND ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
     else:
@@ -171,5 +217,50 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["is_index"] = True
     context.user_data["index_key"] = index_key
 
-    # زر العودة للفهرس ثابت لجميع صفحات الكتب
+    await send_books_page(update, context, include_index_home=True)
+
+async def search_by_english_index(update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    index_key = query.data.replace("index_en:", "")
+
+    conn = context.bot_data.get("db_conn")
+    if not conn:
+        await query.message.reply_text("❌ Database not connected.")
+        return
+
+    keywords = []
+    for name, key, kws in ENGLISH_INDEXES:
+        if key == index_key:
+            keywords = kws
+            break
+
+    if not keywords:
+        await query.message.reply_text("❌ No keywords for this index.")
+        return
+
+    keywords = [normalize_text(remove_common_words(k)) for k in keywords]
+    sql_condition = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
+
+    try:
+        books = await conn.fetch(f"""
+            SELECT id, file_id, file_name, uploaded_at
+            FROM books
+            WHERE {sql_condition}
+            ORDER BY uploaded_at DESC;
+        """)
+    except Exception:
+        await query.message.reply_text("❌ Error fetching books.")
+        return
+
+    if not books:
+        await query.message.reply_text("❌ No books found for this index.")
+        return
+
+    context.user_data["search_results"] = [dict(b) for b in books]
+    context.user_data["current_page"] = 0
+    context.user_data["search_stage"] = f"English Index: {index_key}"
+    context.user_data["is_index"] = True
+    context.user_data["index_key"] = index_key
+
     await send_books_page(update, context, include_index_home=True)
