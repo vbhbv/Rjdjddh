@@ -21,7 +21,7 @@ def remove_common_words(text: str) -> str:
     return text.strip()
 
 # -----------------------------
-# الفهرس العربي (دون أي تغيير)
+# الفهرس العربي
 # -----------------------------
 INDEXES_AR = [
     ("الروايات", "novels", ["رواية"]),
@@ -70,7 +70,7 @@ INDEXES_AR = [
 ]
 
 # -----------------------------
-# الفهرس الإنجليزي الجديد
+# الفهرس الإنجليزي
 # -----------------------------
 INDEXES_EN = [
     ("Novels", "novels_en", ["novel"]),
@@ -92,30 +92,7 @@ INDEXES_EN = [
     ("Engineering", "engineering_en", ["engineering", "mechanics"]),
     ("Technology", "technology_en", ["technology", "AI", "robot"]),
     ("Education", "education_en", ["education", "school", "university"]),
-    ("Languages", "languages_en", ["language", "dictionary", "translation"]),
-    ("Medicine", "medicine_en", ["medicine", "treatment"]),
-    ("Pharmacy", "pharmacy_en", ["pharmacy", "medicine"]),
-    ("Dentistry", "dentistry_en", ["dentistry", "teeth"]),
-    ("Herbal Medicine", "herbal_medicine_en", ["herbal", "natural"]),
-    ("Spices", "spices_en", ["spices", "flavor"]),
-    ("Cooking", "cooking_en", ["cooking", "recipe"]),
-    ("Travel", "travel_en", ["travel", "trip"]),
-    ("Arts", "arts_en", ["art", "painting", "music"]),
-    ("Design", "design_en", ["design", "creative"]),
-    ("Interior Design", "interior_design_en", ["interior", "decoration"]),
-    ("Decor", "decor_en", ["decor", "lighting"]),
-    ("Religion", "religion_en", ["religion", "islam", "christian"]),
-    ("Sports", "sports_en", ["sports", "football"]),
-    ("Mythology", "mythology_en", ["myth", "legend"]),
-    ("Horoscopes", "horoscopes_en", ["horoscope", "zodiac"]),
-    ("Astronomy", "astronomy_en", ["astronomy", "stars"]),
-    ("Mental Health", "mental_health_en", ["mental", "health"]),
-    ("Music", "music_en", ["music", "instrument"]),
-    ("Drawing", "drawing_en", ["drawing", "art"]),
-    ("Cinema", "cinema_en", ["film", "movie"]),
-    ("Photography", "photography_en", ["photography", "camera"]),
-    ("Perfumes", "perfumes_en", ["perfumes", "fragrance"]),
-    ("Toxins", "toxins_en", ["toxins", "danger"])
+    ("Languages", "languages_en", ["language", "dictionary", "translation"])
 ]
 
 INDEXES_PER_PAGE = 10
@@ -123,7 +100,7 @@ INDEXES_PER_PAGE = 10
 # -----------------------------
 # عرض الفهرس بصفحات (عام لكل فهرس)
 # -----------------------------
-async def show_index_page(update, context: ContextTypes.DEFAULT_TYPE, indexes, page: int = 0):
+async def show_index_page(update, context: ContextTypes.DEFAULT_TYPE, indexes, page: int = 0, index_type="ar"):
     start = page * INDEXES_PER_PAGE
     end = start + INDEXES_PER_PAGE
     current_indexes = indexes[start:end]
@@ -133,9 +110,13 @@ async def show_index_page(update, context: ContextTypes.DEFAULT_TYPE, indexes, p
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"index_page:{page}"))
+        nav_buttons.append(
+            InlineKeyboardButton("⬅️ السابق", callback_data=f"index_page:{page-1}:{index_type}")
+        )
     if end < len(indexes):
-        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data=f"index_page:{page+1}"))
+        nav_buttons.append(
+            InlineKeyboardButton("التالي ➡️", callback_data=f"index_page:{page+1}:{index_type}")
+        )
     if nav_buttons:
         keyboard.append(nav_buttons)
 
@@ -151,10 +132,12 @@ async def show_index_page(update, context: ContextTypes.DEFAULT_TYPE, indexes, p
 # دوال الفهرس العربي والإنجليزي
 # -----------------------------
 async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    await show_index_page(update, context, INDEXES_AR, page)
+    context.user_data["current_index_type"] = "ar"
+    await show_index_page(update, context, INDEXES_AR, page, index_type="ar")
 
 async def show_index_en(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    await show_index_page(update, context, INDEXES_EN, page)
+    context.user_data["current_index_type"] = "en"
+    await show_index_page(update, context, INDEXES_EN, page, index_type="en")
 
 # -----------------------------
 # الملاحة بين صفحات الفهرس
@@ -163,14 +146,14 @@ async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     try:
-        page = int(query.data.split(":")[1])
+        parts = query.data.split(":")
+        page = int(parts[1])
+        index_type = parts[2] if len(parts) > 2 else "ar"
     except Exception:
         await query.message.reply_text("❌ خطأ في تحديد الصفحة.")
         return
 
-    # تحديد نوع الفهرس الحالي من user_data
-    current_index_type = context.user_data.get("current_index_type", "ar")
-    if current_index_type == "en":
+    if index_type == "en":
         await show_index_en(update, context, page)
     else:
         await show_index(update, context, page)
