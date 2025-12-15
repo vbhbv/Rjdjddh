@@ -219,4 +219,5 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["index_key"] = index_key
 
     # زر العودة للفهرس ثابت لجميع صفحات الكتب
+    # يتم تحديد نوع الفهرس الحالي لإظهار الفهرس الصحيح عند العودة
     await send_books_page(update, context, include_index_home=True)
