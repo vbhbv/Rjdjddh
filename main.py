@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات
+# إعداد قاعدة البيانات (المطورة بالفهارس)
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -32,21 +32,32 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
 
         conn = await asyncpg.connect(db_url)
 
+        # 1. تفعيل الإضافات لزيادة سرعة البحث والدقة
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-            logger.info("✅ Extension unaccent ensured.")
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;") # للبحث بالتشابه اللفظي
+            logger.info("✅ Extensions (unaccent, pg_trgm) ensured.")
         except Exception as e:
-            logger.warning(f"⚠️ Could not create unaccent extension: {e}")
+            logger.warning(f"⚠️ Could not create extensions: {e}")
 
-        # الجداول
+        # 2. إنشاء الجداول مع عمود البحث الموحد (Normalized Column)
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     file_id TEXT UNIQUE,
     file_name TEXT,
+    name_normalized TEXT, -- عمود للبحث السريع بدون تشكيل
     uploaded_at TIMESTAMP DEFAULT NOW()
 );
 """)
+        
+        # 3. إنشاء الفهارس الخارقة (GIN Indexes) - السر يكمن هنا
+        # فهرس للبحث النصي الكامل (FTS)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_fts_books ON books USING gin (to_tsvector('arabic', file_name));")
+        
+        # فهرس للبحث بالتشابه اللفظي (Trigram) يعالج الأخطاء الإملائية
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_trgm_books ON books USING gin (file_name gin_trgm_ops);")
+
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT PRIMARY KEY,
@@ -61,7 +72,7 @@ CREATE TABLE IF NOT EXISTS settings (
 """)
 
         app_context.bot_data["db_conn"] = conn
-        logger.info("✅ Database connection and setup complete.")
+        logger.info("✅ Database connection and high-performance indexing complete.")
     except Exception as e:
         logger.error("❌ Database setup error", exc_info=True)
 
@@ -83,6 +94,7 @@ async def handle_pdf(update: "telegram.Update", context: ContextTypes.DEFAULT_TY
             return
 
         try:
+            # عند الحفظ، نقوم بحفظ الاسم كما هو
             await conn.execute("""
 INSERT INTO books(file_id, file_name)
 VALUES($1, $2)
@@ -106,10 +118,9 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# عداد المستخدمين (متوافق مع لوحة المشرف)
+# عداد المستخدمين
 # ===============================================
 async def register_user(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
-    """تسجيل المستخدم الجديد في قاعدة البيانات إذا لم يكن موجودًا."""
     conn = context.bot_data.get("db_conn")
     if conn and update.effective_user:
         try:
@@ -128,7 +139,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # تحقق الاشتراك
     if data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
@@ -140,11 +150,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=query.from_user.id,
                 text=(
                     "👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
-                    "أنا بوت ذكي احتوي على نصف مليون كتاب أستطيع مساعدتك في العثور على أي كتاب تبحث عنه، أو اقتراح كتب مشابهة للموضوع الذي تهتم به.\n\n"
-                    "💡 طريقة الاستخدام:\n"
-                    "- اكتب اسم الكتاب مباشرة، أو اكتب كلمات مفتاحية مثل: برمجة، فلسفة، اقتصاد...\n"
-                    "- سأعرض لك أقرب النتائج بسرعة.\n\n"
-                    "🔹 البوت تم تطويره بجهود فردية من قبل الاستاذ مجول شعلان الحيالي ودون أي دعم خارجي، ويتم تحمل تكاليف تشغيل المشروع بشكل فردي، ونرحب بكل من يريد التعاون معنا لضمان استمرار عمل المكتبة بشكل مجاني!"
+                    "أنا بوت ذكي احتوي على نصف مليون كتاب أستطيع مساعدتك في العثور على أي كتاب تبحث عنه...\n"
                 ),
                 reply_markup=keyboard
             )
@@ -155,10 +161,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     elif data in ["show_index", "home_index"]:
-        # الفهرس العربي
         await show_index(update, context)
     elif data == "show_index_en":
-        # الفهرس الإنجليزي (تحتاج دالة show_index_en في index_handler)
         from index_handler import show_index_en
         await show_index_en(update, context)
     elif data.startswith("index:"):
@@ -172,9 +176,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # رسالة البدء /start
 # ===============================================
 async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
-    # تسجيل المستخدم الجديد
     await register_user(update, context)
-
     channel_username = CHANNEL_USERNAME.lstrip('@')
 
     if not await check_subscription(update.effective_user.id, context.bot):
@@ -184,12 +186,7 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
         ])
         await update.message.reply_text(
             "🚫 المعذرة! للوصول إلى جميع ميزات البوت، يجب الاشتراك في القناة التالية:\n"
-            f"👉 @{channel_username}\n\n"
-            "الاشتراك يتيح لك:\n"
-            "- البحث عن أي كتاب بسهولة.\n"
-            "- استكشاف كتب مشابهة ومواضيع متنوعة.\n"
-            "- الوصول إلى مكتبة ضخمة تحتوي على مئات الآلاف من الكتب.\n\n"
-            "اشترك الآن لتتمكن من الاستفادة الكاملة من مكتبة الكتب!",
+            f"👉 @{channel_username}",
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
@@ -200,15 +197,7 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
         [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
     ])
-    await update.message.reply_text(
-        "👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
-        "أنا بوت ذكي احتوي على نصف مليون كتاب أستطيع مساعدتك في العثور على أي كتاب تبحث عنه، أو اقتراح كتب مشابهة للموضوع الذي تهتم به.\n\n"
-        "💡 طريقة الاستخدام:\n"
-        "- اكتب اسم الكتاب مباشرة، أو اكتب كلمات مفتاحية مثل: برمجة، فلسفة، اقتصاد...\n"
-        "- سأعرض لك أقرب النتائج بسرعة.\n\n"
-        "🔹 البوت تم تطويره بجهود فردية من قبل الاستاذ مجول شعلان الحيالي ودون أي دعم خارجي، ويتم تحمل تكاليف تشغيل المشروع بشكل فردي، ونرحب بكل من يريد التعاون معنا لضمان استمرار عمل المكتبة بشكل مجاني!",
-        reply_markup=keyboard
-    )
+    await update.message.reply_text("👋 أهلاً بك في بوت مكتبة الكتب 📚", reply_markup=keyboard)
 
 # ===============================================
 # تشغيل البوت
@@ -231,13 +220,11 @@ def run_bot():
         .build()
     )
 
-    # إضافة المعالجات
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(CommandHandler("start", start))
 
-    # تسجيل المشرفين مع تتبع المستخدمين
     register_admin_handlers(app, start)
 
     if base_url:
