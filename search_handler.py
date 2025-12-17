@@ -1,170 +1,129 @@
 import hashlib
 import re
-import os
 import logging
+import os
+from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from search_suggestions import send_search_suggestions
-import asyncpg
 
-# =========================
-# Logging
-# =========================
+# الإعدادات الأساسية
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# =========================
-# إعدادات عامة
-# =========================
 BOOKS_PER_PAGE = 10
+ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# =========================
-# إعدادات المشرف
-# =========================
-try:
-    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
-except ValueError:
-    ADMIN_USER_ID = 0
+class BookSearchEngine:
+    """محرك بحث هجين يدمج بين التشابه اللفظي والبحث النصي الكامل"""
+    
+    @staticmethod
+    def normalize_for_db(text: str) -> str:
+        """تجهيز النص ليتوافق مع أسلوب تخزين البيانات"""
+        if not text: return ""
+        text = text.lower().strip()
+        # توحيد الحروف العربية الصعبة
+        replacements = str.maketrans("أإآةى", "اااوه")
+        text = text.translate(replacements)
+        # تنظيف الرموز
+        text = re.sub(r'[^\w\s]', ' ', text)
+        return ' '.join(text.split())
 
-# =========================
-# تطبيع داخلي (بدون أعمدة جديدة)
-# =========================
-def normalize_text(text: str) -> str:
-    """تطبيع النصوص العربية لتوحيد الحروف والأحرف الخاصة"""
-    if not text:
-        return ""
-    text = text.lower().strip()
-    text = re.sub(r"[أإآ]", "ا", text)
-    text = text.replace("ة", "ه").replace("ى", "ي")
-    text = re.sub(r"[ـًٌٍَُِ]", "", text)
-    text = re.sub(r"[^\w\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    @classmethod
+    async def perform_search(cls, conn, query: str):
+        normalized_q = cls.normalize_for_db(query)
+        keywords = [f"{w}:*" for w in normalized_q.split() if len(w) > 1]
+        fts_query = " & ".join(keywords) if keywords else normalized_q
 
-# =========================
-# إرسال صفحة الكتب
-# =========================
-async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
-    books = context.user_data.get("search_results", [])
-    page = context.user_data.get("current_page", 0)
-    search_stage = context.user_data.get("search_stage", "نتائج بحث")
-    total_pages = (len(books) - 1) // BOOKS_PER_PAGE + 1 if books else 1
+        # استعلام SQL واحد يجمع كل المراحل ويرتبها حسب الأهمية (Weighting)
+        # 1. المطابقة التامة تأخذ الوزن الأعلى
+        # 2. التشابه (Trigram) يعالج الأخطاء الإملائية
+        # 3. الترتيب النصي (Rank) يعالج دقة الكلمات
+        sql = """
+        SELECT id, file_id, file_name,
+               (CASE WHEN file_name ILIKE $1 THEN 1.0 ELSE 0 END) as exact_score,
+               similarity(file_name, $2) as sim_score,
+               ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $3)) as fts_score
+        FROM books
+        WHERE 
+            file_name % $2  -- استخدام index trgm
+            OR to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $3)
+            OR file_name ILIKE $4
+        ORDER BY 
+            exact_score DESC, 
+            (sim_score * 0.6 + fts_score * 0.4) DESC
+        LIMIT 150;
+        """
+        like_query = f"%{normalized_q}%"
+        exact_query = f"{normalized_q}"
+        
+        return await conn.fetch(sql, exact_query, normalized_q, fts_query, like_query)
 
-    start = page * BOOKS_PER_PAGE
-    end = start + BOOKS_PER_PAGE
-    current_books = books[start:end]
+# ==========================
+# معالجة واجهة التليجرام
+# ==========================
 
-    text = f"📚 النتائج ({len(books)} كتاب)\n{search_stage}\nالصفحة {page + 1} من {total_pages}\n\n"
-    keyboard = []
-
-    for b in current_books:
-        if not b.get("file_id"):
-            continue
-        key = hashlib.md5(str(b["file_id"]).encode()).hexdigest()[:16]
-        context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(b["file_name"][:80], callback_data=f"file:{key}")])
-
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
-    if end < len(books):
-        nav.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
-    if nav:
-        keyboard.append(nav)
-
-    if context.user_data.get("is_index", False) or include_index_home:
-        keyboard.append([InlineKeyboardButton("🏠 العودة للفهرس", callback_data="home_index")])
-
-    markup = InlineKeyboardMarkup(keyboard)
-
-    if update.message:
-        await update.message.reply_text(text, reply_markup=markup)
-    else:
-        await update.callback_query.message.edit_text(text, reply_markup=markup)
-
-# =========================
-# البحث الهجين بدون أعمدة جديدة
-# =========================
-async def hybrid_search(conn, user_query: str, limit: int = 200):
-    norm_q = normalize_text(user_query)
-    words = [w for w in norm_q.split() if len(w) > 1]
-    ts_query = ' & '.join(words)  # FTS AND
-    ilike_pattern = f"%{norm_q}%"
-
-    sql = """
-    SELECT id, file_id, file_name
-    FROM books
-    WHERE lower(file_name) ILIKE $1
-       OR to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $2)
-    LIMIT $3;
-    """
-    return await conn.fetch(sql, ilike_pattern, ts_query, limit)
-
-# =========================
-# البحث (واجهة التليجرام)
-# =========================
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        return
-
+    if not update.message or not update.message.text: return
+    
     query = update.message.text.strip()
-    if len(query) < 2:
-        return
-
     conn = context.bot_data.get("db_conn")
+    
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
         return
 
-    try:
-        results = await hybrid_search(conn, query)
+    # إظهار حالة "جاري البحث" لتحسين تجربة المستخدم
+    status_msg = await update.message.reply_text("🔎 جاري البحث في المكتبة...")
 
+    try:
+        results = await BookSearchEngine.perform_search(conn, query)
+        
         if not results:
+            from search_suggestions import send_search_suggestions
+            await status_msg.delete()
             await send_search_suggestions(update, context)
-            context.user_data["search_results"] = []
-            context.user_data["current_page"] = 0
             return
 
-        context.user_data["search_results"] = [dict(r) for r in results]
+        # تخزين النتائج
+        context.user_data["search_results"] = [dict(b) for b in results]
         context.user_data["current_page"] = 0
-        context.user_data["search_stage"] = "🔍 نتائج بحث ذكي"
+        context.user_data["search_stage"] = "✅ نتائج ذكية متقدمة"
 
+        await status_msg.delete()
         await send_books_page(update, context)
 
     except Exception as e:
-        logger.exception("Search error")
-        await update.message.reply_text("⚠️ حدث خطأ أثناء البحث، حاول لاحقاً.")
+        logger.error(f"Search Error: {e}")
+        await status_msg.edit_text("⚠️ حدث خطأ أثناء معالجة طلبك.")
 
-# =========================
-# التعامل مع أزرار الكتب والفهرس
-# =========================
-async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
+async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
+    # (نفس دالة send_books_page السابقة مع تحسين بسيط في عرض الأسماء)
+    data = context.user_data
+    books = data.get("search_results", [])
+    page = data.get("current_page", 0)
+    
+    start = page * BOOKS_PER_PAGE
+    end = start + BOOKS_PER_PAGE
+    current_batch = books[start:end]
+    total_pages = (len(books) + BOOKS_PER_PAGE - 1) // BOOKS_PER_PAGE
 
-    if data.startswith("file:"):
-        key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
-        if file_id:
-            await query.message.reply_document(
-                document=file_id,
-                caption="📖 تم التنزيل بواسطة @boooksfree1bot",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شارك البوت مع أصدقائك", switch_inline_query="")]
-                ])
-            )
-        else:
-            await query.message.reply_text("❌ الملف غير متوفر.")
+    text = f"📚 النتائج ({len(books)} كتاب)\n{data.get('search_stage')}\nالصفحة {page + 1} من {total_pages}"
+    
+    keyboard = []
+    for b in current_batch:
+        key = hashlib.md5(str(b["file_id"]).encode()).hexdigest()[:12]
+        context.bot_data[f"f_{key}"] = b["file_id"]
+        keyboard.append([InlineKeyboardButton(f"📖 {b['file_name'][:60]}", callback_data=f"file:{key}")])
 
-    elif data == "next_page":
-        context.user_data["current_page"] += 1
-        await send_books_page(update, context)
-
-    elif data == "prev_page":
-        context.user_data["current_page"] -= 1
-        await send_books_page(update, context)
-
-    elif data in ("home_index", "show_index"):
-        from index_handler import show_index
-        await show_index(update, context)
+    # أزرار التنقل
+    nav = []
+    if page > 0: nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
+    if end < len(books): nav.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
+    if nav: keyboard.append(nav)
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup)
