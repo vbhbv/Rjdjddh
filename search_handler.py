@@ -5,6 +5,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from search_suggestions import send_search_suggestions
+import asyncpg
 
 # =========================
 # Logging
@@ -17,24 +18,28 @@ logger = logging.getLogger(__name__)
 # =========================
 BOOKS_PER_PAGE = 10
 
+# =========================
 # إعدادات المشرف
+# =========================
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
     ADMIN_USER_ID = 0
 
 # =========================
-# تطبيع سريع (متوافق مع قاعدة البيانات)
+# تطبيع داخلي (بدون أعمدة جديدة)
 # =========================
-def fast_normalize(text: str) -> str:
+def normalize_text(text: str) -> str:
+    """تطبيع النصوص العربية لتوحيد الحروف والأحرف الخاصة"""
     if not text:
         return ""
     text = text.lower().strip()
-    # تطبيع الحروف المختلفة
-    trans = str.maketrans("أإآةى", "اااهي")
-    text = text.translate(trans)
+    text = re.sub(r"[أإآ]", "ا", text)
+    text = text.replace("ة", "ه").replace("ى", "ي")
+    text = re.sub(r"[ـًٌٍَُِ]", "", text)
     text = re.sub(r"[^\w\s]", " ", text)
-    return re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 # =========================
 # إرسال صفحة الكتب
@@ -57,9 +62,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
             continue
         key = hashlib.md5(str(b["file_id"]).encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([
-            InlineKeyboardButton(b["file_name"][:80], callback_data=f"file:{key}")
-        ])
+        keyboard.append([InlineKeyboardButton(b["file_name"][:80], callback_data=f"file:{key}")])
 
     nav = []
     if page > 0:
@@ -76,38 +79,26 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
 
     if update.message:
         await update.message.reply_text(text, reply_markup=markup)
-    elif update.callback_query:
+    else:
         await update.callback_query.message.edit_text(text, reply_markup=markup)
 
 # =========================
-# البحث الهجين مع التطبيع والـ FTS
+# البحث الهجين بدون أعمدة جديدة
 # =========================
 async def hybrid_search(conn, user_query: str, limit: int = 200):
-    norm_q = fast_normalize(user_query)
+    norm_q = normalize_text(user_query)
     words = [w for w in norm_q.split() if len(w) > 1]
-    fts_q = " & ".join(f"{w}:*" for w in words) if words else "''"
+    ts_query = ' & '.join(words)  # FTS AND
+    ilike_pattern = f"%{norm_q}%"
 
     sql = """
-    WITH ranked AS (
-        SELECT
-            id,
-            file_id,
-            file_name,
-            similarity(name_normalized, $1) AS sim_score,
-            ts_rank(search_vector, to_tsquery('arabic', $2)) AS fts_score
-        FROM books
-        WHERE
-            name_normalized % $1
-            OR search_vector @@ to_tsquery('arabic', $2)
-    )
-    SELECT *
-    FROM ranked
-    ORDER BY
-        (name_normalized = $1) DESC,
-        sim_score * 0.7 + fts_score * 0.3 DESC
+    SELECT id, file_id, file_name
+    FROM books
+    WHERE lower(file_name) ILIKE $1
+       OR to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $2)
     LIMIT $3;
     """
-    return await conn.fetch(sql, norm_q, fts_q, limit)
+    return await conn.fetch(sql, ilike_pattern, ts_query, limit)
 
 # =========================
 # البحث (واجهة التليجرام)
@@ -145,7 +136,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ حدث خطأ أثناء البحث، حاول لاحقاً.")
 
 # =========================
-# التعامل مع أزرار Telegram
+# التعامل مع أزرار الكتب والفهرس
 # =========================
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
