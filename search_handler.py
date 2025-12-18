@@ -30,12 +30,11 @@ except ValueError:
     ADMIN_USER_ID = 0
 
 # =========================
-# دوال التطبيع والتنظيف (محسنة)
+# دوال التطبيع والتنظيف
 # =========================
 def normalize_text(text: str) -> str:
     if not text: return ""
     text = str(text).lower().replace("_", " ")
-    # توحيد الحروف العربية
     repls = str.maketrans("أإآةى", "اااوه")
     text = text.translate(repls)
     text = re.sub(r"[ًٌٍَُِّْـ]", "", text)
@@ -71,10 +70,9 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     keyboard = []
 
     for b in current_books:
-        # استخدام hashlib لتوليد مفتاح فريد للملف
         key = hashlib.md5(str(b["file_id"]).encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(f"{b['file_name'][:60]}", callback_data=f"file:{key}")])
+        keyboard.append([InlineKeyboardButton(f"📖 {b['file_name'][:60]}", callback_data=f"file:{key}")])
 
     nav = []
     if page > 0: nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
@@ -91,7 +89,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=markup)
 
 # =========================
-# البحث المطور (استعلام هجين واحد)
+# البحث الذكي المطور (السرعة + الذكاء)
 # =========================
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private": return
@@ -106,28 +104,35 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     norm_q = normalize_text(query)
     clean_q = remove_common_words(norm_q)
     keywords = [light_stem(w) for w in clean_q.split() if w not in ARABIC_STOP_WORDS and len(w) >= 2]
-    
-    # تحويل الكلمات إلى صيغة FTS
     ts_query = ' & '.join([f"{w}:*" for w in keywords]) if keywords else norm_q
 
     try:
-        # استعلام واحد عبقري يرتب النتائج: (تطابق تام > دلالي > جزئي)
+        # 1. رفع مستوى الحساسية لمنع النتائج الغبية (0.4 هو توازن مثالي)
+        await conn.execute("SET pg_trgm.similarity_threshold = 0.4;")
+
+        # 2. استعلام ذكي يعتمد على الأوزان (Scoring System)
         sql = """
         SELECT id, file_id, file_name,
-               ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
-               similarity(file_name, $2) AS sim
+               (CASE 
+                    WHEN file_name ILIKE $3 THEN 1.0  -- تطابق تام (قمة الذكاء)
+                    WHEN file_name ILIKE $4 THEN 0.7  -- يبدأ بنفس الكلمة
+                    ELSE 0 
+                END) AS exact_score,
+               ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS fts_rank,
+               similarity(file_name, $2) AS sim_score
         FROM books
         WHERE 
             to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
-            OR file_name ILIKE $3
             OR file_name % $2
+            OR file_name ILIKE $4
         ORDER BY 
-            (file_name ILIKE $3) DESC,
-            rank DESC,
-            sim DESC
-        LIMIT 300;
+            exact_score DESC, 
+            fts_rank DESC, 
+            sim_score DESC
+        LIMIT 200;
         """
-        rows = await conn.fetch(sql, ts_query, norm_q, f"%{norm_q}%")
+        # المعاملات: ts_query, normalized_query, exact_match, starts_with
+        rows = await conn.fetch(sql, ts_query, norm_q, norm_q, f"{norm_q}%")
         
         if not rows:
             await send_search_suggestions(update, context)
@@ -135,15 +140,15 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["search_results"] = [dict(r) for r in rows]
         context.user_data["current_page"] = 0
-        context.user_data["search_stage"] = "⚡ نتائج بحث ذكي (ترتيب حسب الصلة)"
+        context.user_data["search_stage"] = "🎯 نتائج دقيقة (تم ترتيبها حسب الأهمية)"
         await send_books_page(update, context)
 
     except Exception as e:
         logger.error(f"Search error: {e}")
-        await update.message.reply_text("⚠️ حدث خطأ أثناء البحث، حاول لاحقاً.")
+        await update.message.reply_text("⚠️ حدث خطأ أثناء البحث.")
 
 # ==========================
-# التعامل مع أزرار الكتاب (handle_callbacks)
+# التعامل مع أزرار الكتاب
 # ==========================
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -156,17 +161,17 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         if file_id:
             await query.message.reply_document(
                 document=file_id, 
-                caption="📖 تم التنزيل بواسطة بوت المكتبة الذكي",
+                caption="تم تنزيل هذا الكتاب بواسطة @boooksfree1bot",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت", switch_inline_query="")]])
             )
         else:
-            await query.message.reply_text("❌ الملف غير متوفر حالياً.")
+            await query.message.reply_text("❌ الرابط قديم، ابحث مجدداً.")
     
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
     elif data == "prev_page":
-        context.user_data["current_page"] -= 1
+        context.user_data["current_page"] = max(0, context.user_data.get("current_page", 0) - 1)
         await send_books_page(update, context)
     elif data in ("home_index", "show_index"):
         from index_handler import show_index
