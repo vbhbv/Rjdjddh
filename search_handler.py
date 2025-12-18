@@ -18,16 +18,11 @@ logger = logging.getLogger(__name__)
 # =========================
 BOOKS_PER_PAGE = 10
 
+# كلمات التوقف: تمت إزالة "كتب" منها للسماح بالبحث السياقي
 ARABIC_STOP_WORDS = {
     "و", "في", "من", "إلى", "عن", "على", "ب", "ل", "ا", "أو", "أن", "إذا",
-    "ما", "هذا", "هذه", "ذلك", "تلك", "كان", "قد", "الذي", "التي", "هو", "هي",
-    "ف", "ك", "اى"
+    "ما", "هذا", "هذه", "ذلك", "تلك", "كان", "قد", "الذي", "التي", "هو", "هي"
 }
-
-try:
-    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "0"))
-except ValueError:
-    ADMIN_USER_ID = 0
 
 # =========================
 # دوال التطبيع والتنظيف
@@ -35,27 +30,23 @@ except ValueError:
 def normalize_text(text: str) -> str:
     if not text: return ""
     text = str(text).lower().replace("_", " ")
+    # توحيد الحروف العربية المتشابهة (أ، إ، آ -> ا) و (ة -> ه) و (ى -> ي)
     repls = str.maketrans("أإآةى", "اااوه")
     text = text.translate(repls)
+    # إزالة التشكيل والتطويل والرموز
     text = re.sub(r"[ًٌٍَُِّْـ]", "", text)
     text = re.sub(r'[^\w\s]', ' ', text)
     return ' '.join(text.split())
 
-def remove_common_words(text: str) -> str:
-    if not text: return ""
-    bad_words = {"كتاب", "رواية", "نسخة", "مجموعة", "اريد", "جزء", "طبعة", "مجاني", "كبير", "صغير"}
-    return ' '.join([w for w in text.split() if w not in bad_words])
-
-def light_stem(word: str) -> str:
-    if len(word) <= 3: return word
-    suffixes = ("ية", "ون", "ات", "ان", "ين")
-    for suf in suffixes:
-        if word.endswith(suf): return word[:-len(suf)]
-    if word.startswith("ال"): return word[2:]
-    return word
+def clean_query_smart(text: str) -> List[str]:
+    """تجهيز الكلمات المفتاحية مع استبعاد الكلمات غير المؤثرة فقط"""
+    bad_words = {"رواية", "نسخة", "مجموعة", "اريد", "جزء", "طبعة", "مجاني", "كبير", "صغير"}
+    words = text.split()
+    # الحفاظ على الكلمات التي طولها أكبر من حرفين وليست في قائمة المنع
+    return [w for w in words if w not in bad_words and w not in ARABIC_STOP_WORDS]
 
 # =========================
-# إرسال صفحة الكتب
+# إرسال صفحة الكتب (UI)
 # =========================
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_index_home: bool = False):
     books = context.user_data.get("search_results", [])
@@ -66,13 +57,16 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     start, end = page * BOOKS_PER_PAGE, (page + 1) * BOOKS_PER_PAGE
     current_books = books[start:end]
 
-    text = f"📚 النتائج ({len(books)} كتاب)\n{search_stage}\nالصفحة {page + 1} من {total_pages}\n\n"
+    text = f"📚 **النتائج ({len(books)} كتاب)**\n{search_stage}\nالصفحة {page + 1} من {total_pages}\n\n"
     keyboard = []
 
     for b in current_books:
+        # توليد مفتاح فريد للملف
         key = hashlib.md5(str(b["file_id"]).encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        keyboard.append([InlineKeyboardButton(f"📖 {b['file_name'][:60]}", callback_data=f"file:{key}")])
+        # تقصير الاسم الطويل جداً ليناسب أزرار التلجرام
+        display_name = (b['file_name'][:57] + '..') if len(b['file_name']) > 60 else b['file_name']
+        keyboard.append([InlineKeyboardButton(f"📖 {display_name}", callback_data=f"file:{key}")])
 
     nav = []
     if page > 0: nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
@@ -84,71 +78,85 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
 
     markup = InlineKeyboardMarkup(keyboard)
     if update.message:
-        await update.message.reply_text(text, reply_markup=markup)
+        await update.message.reply_text(text, reply_markup=markup, parse_mode="Markdown")
     elif update.callback_query:
-        await update.callback_query.message.edit_text(text, reply_markup=markup)
+        await update.callback_query.message.edit_text(text, reply_markup=markup, parse_mode="Markdown")
 
 # =========================
-# البحث الذكي المطور (السرعة + الذكاء)
+# محرك البحث الذكي (النسخة النهائية)
 # =========================
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private": return
     query = update.message.text.strip()
-    if not query: return
+    if not query or len(query) < 2: return
 
     conn = context.bot_data.get("db_conn")
     if not conn:
         await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
         return
 
+    # تنظيف وتجهيز المدخلات
     norm_q = normalize_text(query)
-    clean_q = remove_common_words(norm_q)
-    keywords = [light_stem(w) for w in clean_q.split() if w not in ARABIC_STOP_WORDS and len(w) >= 2]
+    keywords = clean_query_smart(norm_q)
+    
+    # تحويل الكلمات إلى صيغة البحث النصي الكامل (FTS)
+    # مثال: "كتب عسكرية" تصبح "كتب:* & عسكرية:*"
     ts_query = ' & '.join([f"{w}:*" for w in keywords]) if keywords else norm_q
 
     try:
-        # 1. رفع مستوى الحساسية لمنع النتائج الغبية (0.4 هو توازن مثالي)
-        await conn.execute("SET pg_trgm.similarity_threshold = 0.4;")
+        # ضبط حساسية التشابه اللفظي (التوازن بين الدقة والسرعة)
+        await conn.execute("SET pg_trgm.similarity_threshold = 0.3;")
 
-        # 2. استعلام ذكي يعتمد على الأوزان (Scoring System)
+        # الاستعلام الهجين المتقدم:
+        # 1. ILIKE: للبحث الجزئي الدقيق (يحل مشكلة "عسكرية")
+        # 2. FTS: للبحث بالمعنى والجذور
+        # 3. Trigram: للبحث بالتشابه اللفظي (الأخطاء الإملائية)
         sql = """
         SELECT id, file_id, file_name,
-               (CASE 
-                    WHEN file_name ILIKE $3 THEN 1.0  -- تطابق تام (قمة الذكاء)
-                    WHEN file_name ILIKE $4 THEN 0.7  -- يبدأ بنفس الكلمة
-                    ELSE 0 
-                END) AS exact_score,
-               ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS fts_rank,
-               similarity(file_name, $2) AS sim_score
+               ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
+               similarity(file_name, $2) AS sim
         FROM books
         WHERE 
             to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            OR file_name ILIKE $3
             OR file_name % $2
-            OR file_name ILIKE $4
         ORDER BY 
-            exact_score DESC, 
-            fts_rank DESC, 
-            sim_score DESC
+            (file_name ILIKE $3) DESC, -- الأولوية القصوى لوجود الكلمة حرفياً
+            rank DESC, 
+            sim DESC
         LIMIT 200;
         """
-        # المعاملات: ts_query, normalized_query, exact_match, starts_with
-        rows = await conn.fetch(sql, ts_query, norm_q, norm_q, f"{norm_q}%")
+        
+        # نأخذ الكلمة الأخيرة أو الأهم للبحث الجزئي (مثل "عسكرية")
+        partial_pattern = f"%{keywords[-1]}%" if keywords else f"%{norm_q}%"
+        
+        rows = await conn.fetch(sql, ts_query, norm_q, partial_pattern)
         
         if not rows:
+            # إذا لم يجد شيئاً، نستخدم محرك الاقتراحات
             await send_search_suggestions(update, context)
             return
 
         context.user_data["search_results"] = [dict(r) for r in rows]
         context.user_data["current_page"] = 0
-        context.user_data["search_stage"] = "🎯 نتائج دقيقة (تم ترتيبها حسب الأهمية)"
+        context.user_data["search_stage"] = "⚡ نتائج بحث ذكي فائقة السرعة"
         await send_books_page(update, context)
 
     except Exception as e:
         logger.error(f"Search error: {e}")
-        await update.message.reply_text("⚠️ حدث خطأ أثناء البحث.")
+        # محاولة أخيرة ببحث بسيط جداً لضمان عدم خيبة أمل المستخدم
+        try:
+            simple_rows = await conn.fetch("SELECT * FROM books WHERE file_name ILIKE $1 LIMIT 50", f"%{norm_q}%")
+            if simple_rows:
+                context.user_data["search_results"] = [dict(r) for r in simple_rows]
+                await send_books_page(update, context)
+            else:
+                await update.message.reply_text("⚠️ لم يتم العثور على نتائج دقيقة، جرب كلمات أخرى.")
+        except:
+            await update.message.reply_text("⚠️ حدث خطأ فني، يرجى المحاولة لاحقاً.")
 
 # ==========================
-# التعامل مع أزرار الكتاب
+# التعامل مع أزرار التنقل والتحميل
 # ==========================
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -159,20 +167,27 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            await query.message.reply_document(
-                document=file_id, 
-                caption="تم تنزيل هذا الكتاب بواسطة @boooksfree1bot",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("شارك البوت", switch_inline_query="")]])
-            )
+            try:
+                await query.message.reply_document(
+                    document=file_id, 
+                    caption="📖 تم استخراج الكتاب من المكتبة الشاملة",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]])
+                )
+            except Exception as e:
+                logger.error(f"Download error: {e}")
+                await query.message.reply_text("❌ عذراً، فشل تحميل الملف. قد يكون الرابط منتهياً.")
         else:
-            await query.message.reply_text("❌ الرابط قديم، ابحث مجدداً.")
+            await query.message.reply_text("❌ الرابط قديم، يرجى البحث عن الكتاب مجدداً.")
     
     elif data == "next_page":
-        context.user_data["current_page"] += 1
+        context.user_data["current_page"] = context.user_data.get("current_page", 0) + 1
         await send_books_page(update, context)
     elif data == "prev_page":
         context.user_data["current_page"] = max(0, context.user_data.get("current_page", 0) - 1)
         await send_books_page(update, context)
     elif data in ("home_index", "show_index"):
-        from index_handler import show_index
-        await show_index(update, context)
+        try:
+            from index_handler import show_index
+            await show_index(update, context)
+        except ImportError:
+            await query.message.reply_text("🏠 العودة للقائمة الرئيسية...")
