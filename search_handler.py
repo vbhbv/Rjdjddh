@@ -2,6 +2,7 @@ import hashlib
 import re
 import logging
 import os
+import asyncpg
 from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 # =========================
 BOOKS_PER_PAGE = 10
 
-# كلمات التوقف: تمت إزالة "كتب" منها للسماح بالبحث السياقي
 ARABIC_STOP_WORDS = {
     "و", "في", "من", "إلى", "عن", "على", "ب", "ل", "ا", "أو", "أن", "إذا",
     "ما", "هذا", "هذه", "ذلك", "تلك", "كان", "قد", "الذي", "التي", "هو", "هي"
@@ -30,19 +30,15 @@ ARABIC_STOP_WORDS = {
 def normalize_text(text: str) -> str:
     if not text: return ""
     text = str(text).lower().replace("_", " ")
-    # توحيد الحروف العربية المتشابهة (أ، إ، آ -> ا) و (ة -> ه) و (ى -> ي)
     repls = str.maketrans("أإآةى", "اااوه")
     text = text.translate(repls)
-    # إزالة التشكيل والتطويل والرموز
     text = re.sub(r"[ًٌٍَُِّْـ]", "", text)
     text = re.sub(r'[^\w\s]', ' ', text)
     return ' '.join(text.split())
 
 def clean_query_smart(text: str) -> List[str]:
-    """تجهيز الكلمات المفتاحية مع استبعاد الكلمات غير المؤثرة فقط"""
     bad_words = {"رواية", "نسخة", "مجموعة", "اريد", "جزء", "طبعة", "مجاني", "كبير", "صغير"}
     words = text.split()
-    # الحفاظ على الكلمات التي طولها أكبر من حرفين وليست في قائمة المنع
     return [w for w in words if w not in bad_words and w not in ARABIC_STOP_WORDS]
 
 # =========================
@@ -61,10 +57,8 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
     keyboard = []
 
     for b in current_books:
-        # توليد مفتاح فريد للملف
         key = hashlib.md5(str(b["file_id"]).encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b["file_id"]
-        # تقصير الاسم الطويل جداً ليناسب أزرار التلجرام
         display_name = (b['file_name'][:57] + '..') if len(b['file_name']) > 60 else b['file_name']
         keyboard.append([InlineKeyboardButton(f"📖 {display_name}", callback_data=f"file:{key}")])
 
@@ -83,7 +77,7 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=markup, parse_mode="Markdown")
 
 # =========================
-# محرك البحث الذكي (النسخة النهائية)
+# محرك البحث الذكي (إصلاح مشكلة الاتصال)
 # =========================
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private": return
@@ -91,26 +85,27 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if not query or len(query) < 2: return
 
     conn = context.bot_data.get("db_conn")
-    if not conn:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
-        return
+    
+    # --- إصلاح انقطاع الاتصال ---
+    if not conn or conn.is_closed():
+        logger.info("🔄 الاتصال مقطوع، محاولة إعادة الاتصال بقاعدة البيانات...")
+        try:
+            db_url = os.getenv("DATABASE_URL")
+            context.bot_data["db_conn"] = await asyncpg.connect(db_url)
+            conn = context.bot_data["db_conn"]
+        except Exception as e:
+            logger.error(f"❌ فشل إعادة الاتصال: {e}")
+            await update.message.reply_text("⚠️ حدث خطأ في الاتصال بقاعدة البيانات، يرجى المحاولة لاحقاً.")
+            return
+    # --------------------------
 
-    # تنظيف وتجهيز المدخلات
     norm_q = normalize_text(query)
     keywords = clean_query_smart(norm_q)
-    
-    # تحويل الكلمات إلى صيغة البحث النصي الكامل (FTS)
-    # مثال: "كتب عسكرية" تصبح "كتب:* & عسكرية:*"
     ts_query = ' & '.join([f"{w}:*" for w in keywords]) if keywords else norm_q
 
     try:
-        # ضبط حساسية التشابه اللفظي (التوازن بين الدقة والسرعة)
         await conn.execute("SET pg_trgm.similarity_threshold = 0.3;")
 
-        # الاستعلام الهجين المتقدم:
-        # 1. ILIKE: للبحث الجزئي الدقيق (يحل مشكلة "عسكرية")
-        # 2. FTS: للبحث بالمعنى والجذور
-        # 3. Trigram: للبحث بالتشابه اللفظي (الأخطاء الإملائية)
         sql = """
         SELECT id, file_id, file_name,
                ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
@@ -121,19 +116,16 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             OR file_name ILIKE $3
             OR file_name % $2
         ORDER BY 
-            (file_name ILIKE $3) DESC, -- الأولوية القصوى لوجود الكلمة حرفياً
+            (file_name ILIKE $3) DESC,
             rank DESC, 
             sim DESC
         LIMIT 200;
         """
         
-        # نأخذ الكلمة الأخيرة أو الأهم للبحث الجزئي (مثل "عسكرية")
         partial_pattern = f"%{keywords[-1]}%" if keywords else f"%{norm_q}%"
-        
         rows = await conn.fetch(sql, ts_query, norm_q, partial_pattern)
         
         if not rows:
-            # إذا لم يجد شيئاً، نستخدم محرك الاقتراحات
             await send_search_suggestions(update, context)
             return
 
@@ -144,14 +136,14 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Search error: {e}")
-        # محاولة أخيرة ببحث بسيط جداً لضمان عدم خيبة أمل المستخدم
         try:
+            # محاولة أخيرة ببحث ILIKE بسيط إذا فشل البحث المعقد
             simple_rows = await conn.fetch("SELECT * FROM books WHERE file_name ILIKE $1 LIMIT 50", f"%{norm_q}%")
             if simple_rows:
                 context.user_data["search_results"] = [dict(r) for r in simple_rows]
                 await send_books_page(update, context)
             else:
-                await update.message.reply_text("⚠️ لم يتم العثور على نتائج دقيقة، جرب كلمات أخرى.")
+                await update.message.reply_text("⚠️ لم يتم العثور على نتائج، جرب كلمات أخرى.")
         except:
             await update.message.reply_text("⚠️ حدث خطأ فني، يرجى المحاولة لاحقاً.")
 
@@ -175,9 +167,9 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 logger.error(f"Download error: {e}")
-                await query.message.reply_text("❌ عذراً، فشل تحميل الملف. قد يكون الرابط منتهياً.")
+                await query.message.reply_text("❌ عذراً، فشل تحميل الملف.")
         else:
-            await query.message.reply_text("❌ الرابط قديم، يرجى البحث عن الكتاب مجدداً.")
+            await query.message.reply_text("❌ انتهت الجلسة، يرجى إعادة البحث.")
     
     elif data == "next_page":
         context.user_data["current_page"] = context.user_data.get("current_page", 0) + 1
