@@ -8,8 +8,8 @@ from telegram.ext import (
 )
 
 from admin_panel import register_admin_handlers
-from search_handler import search_books, handle_callbacks  # البحث العادي
-from index_handler import show_index, search_by_index, navigate_index_pages  # الفهرس العربي
+from search_handler import search_books, handle_callbacks
+from index_handler import show_index, search_by_index, navigate_index_pages
 
 # ===============================================
 # إعداد اللوج
@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات (المطورة بالفهارس)
+# إعداد قاعدة البيانات
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -35,9 +35,8 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-            logger.info("✅ Extensions (unaccent, pg_trgm) ensured.")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not create extensions: {e}")
+        except Exception:
+            pass
 
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
@@ -49,24 +48,14 @@ CREATE TABLE IF NOT EXISTS books (
 );
 """)
 
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_fts_books ON books USING gin (to_tsvector('arabic', file_name));")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_trgm_books ON books USING gin (file_name gin_trgm_ops);")
-
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT PRIMARY KEY,
     joined_at TIMESTAMP DEFAULT NOW()
 );
 """)
-        await conn.execute("""
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-""")
 
         app_context.bot_data["db_conn"] = conn
-        logger.info("✅ Database connection and high-performance indexing complete.")
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
 
@@ -74,28 +63,6 @@ async def close_db(app: Application):
     conn = app.bot_data.get("db_conn")
     if conn:
         await conn.close()
-        logger.info("✅ Database connection closed.")
-
-# ===============================================
-# استقبال ملفات PDF من القنوات
-# ===============================================
-async def handle_pdf(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
-    if update.channel_post and update.channel_post.document and update.channel_post.document.mime_type == "application/pdf":
-        document = update.channel_post.document
-        conn = context.bot_data.get('db_conn')
-        if not conn:
-            return
-
-        try:
-            await conn.execute("""
-INSERT INTO books(file_id, file_name)
-VALUES($1, $2)
-ON CONFLICT (file_id) DO UPDATE
-SET file_name = EXCLUDED.file_name;
-""", document.file_id, document.file_name)
-            logger.info(f"📚 Indexed book: {document.file_name}")
-        except Exception as e:
-            logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
 # الاشتراك الإجباري
@@ -110,9 +77,9 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# عداد المستخدمين
+# تسجيل المستخدم
 # ===============================================
-async def register_user(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
+async def register_user(update, context):
     conn = context.bot_data.get("db_conn")
     if conn and update.effective_user:
         await conn.execute(
@@ -121,50 +88,53 @@ async def register_user(update: "telegram.Update", context: ContextTypes.DEFAULT
         )
 
 # ===============================================
-# التعامل مع أزرار callback
+# أزرار البداية
 # ===============================================
-async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_start_callbacks(update, context):
     query = update.callback_query
     await query.answer()
-    data = query.data
 
-    if data == "check_subscription":
+    if query.data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
-                [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
-                [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
+                [InlineKeyboardButton("📚 الفهرس العربي", callback_data="show_index")],
+                [InlineKeyboardButton("📚 الفهرس الإنجليزي", callback_data="show_index_en")]
             ])
             await context.bot.send_message(
                 chat_id=query.from_user.id,
                 text=(
-                    "👋 مرحبًا بك في مكتبة الكتب الرقمية 📚\n\n"
-                    "ابدأ بالبحث مباشرة بعد التأكد من الاشتراك."
+                    "📚 **تعليمات استخدام مكتبة الكتب الرقمية**\n\n"
+                    "🔍 طريقة البحث الصحيحة:\n"
+                    "• اكتب اسم الكتاب مباشرة\n"
+                    "• أو اسم المؤلف\n"
+                    "• أو كلمة مفتاحية واضحة\n\n"
+                    "✅ أمثلة صحيحة:\n"
+                    "فن اللامبالاة\n"
+                    "جريمة الولادة\n"
+                    "نيتشه\n\n"
+                    "❌ أمثلة غير صحيحة:\n"
+                    "أريد كتاب عن...\n"
+                    "ممكن كتاب اسمه...\n"
+                    "إرسال صورة 📷\n\n"
+                    "ℹ️ ملاحظة: البوت يتعامل مع **النصوص فقط** ولا يدعم البحث بالصور.\n\n"
+                    "✍️ **تنويه لدور النشر والمؤلفين:**\n"
+                    "إدارة المكتبة تحترم حقوق الملكية الفكرية، "
+                    "ونحن على استعداد كامل للتعاون مع دور النشر أو المؤلفين "
+                    "بخصوص أي محتوى، يرجى التواصل معنا مباشرة."
                 ),
-                reply_markup=keyboard
+                reply_markup=keyboard,
+                parse_mode="Markdown"
             )
         else:
             await query.message.edit_text(
-                "😊 لم نتمكن من التحقق من اشتراكك بعد.\n\n"
                 "بعد الانضمام إلى القناة، اضغط على «تحقق من الاشتراك» للمتابعة."
             )
 
-    elif data in ["show_index", "home_index"]:
-        await show_index(update, context)
-    elif data == "show_index_en":
-        from index_handler import show_index_en
-        await show_index_en(update, context)
-    elif data.startswith("index:"):
-        await search_by_index(update, context)
-    elif data.startswith("index_page:"):
-        await navigate_index_pages(update, context)
-    elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
-        await handle_callbacks(update, context)
-
 # ===============================================
-# رسالة البدء /start
+# رسالة /start
 # ===============================================
-async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     await register_user(update, context)
     channel_username = CHANNEL_USERNAME.lstrip('@')
 
@@ -174,48 +144,34 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            "🌿 أهلًا بك!\n\n"
-            "للوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
-            reply_markup=keyboard
+            "📚 **مرحبًا بك في مكتبة الكتب الرقمية**\n\n"
+            "للوصول إلى البحث والفهارس، يرجى الاشتراك في القناة أولًا.",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
         )
         return
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
-        [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
-        [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
+        [InlineKeyboardButton("📚 الفهرس العربي", callback_data="show_index")],
+        [InlineKeyboardButton("📚 الفهرس الإنجليزي", callback_data="show_index_en")]
     ])
-    await update.message.reply_text(
-        "👋 مرحبًا بك في مكتبة الكتب الرقمية 📚\n\n"
-        "ابدأ بالبحث مباشرة بكتابة اسم الكتاب أو كلمة مفتاحية.",
-        reply_markup=keyboard
-    )
 
-# ===============================================
-# تعديل: التحقق من الاشتراك قبل البحث
-# ===============================================
-async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
-    # تحقق من الاشتراك أولاً
-    if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text(
-            "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
-            f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
-        )
-        return
-    # بعد التأكد، استدعي البحث الأصلي
-    await search_books(update, context)
+    await update.message.reply_text(
+        "📚 **تعليمات الاستخدام**\n\n"
+        "اكتب اسم الكتاب أو المؤلف أو كلمة مفتاحية واضحة لبدء البحث.\n\n"
+        "✍️ دور النشر والمؤلفون مرحب بتواصلهم معنا "
+        "لأي استفسار أو طلب بخصوص المحتوى.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
 
 # ===============================================
 # تشغيل البوت
 # ===============================================
 def run_bot():
     token = os.getenv("BOT_TOKEN")
-    base_url = os.getenv("WEB_HOST")
     port = int(os.getenv("PORT", 8080))
-
-    if not token:
-        logger.error("🚨 BOT_TOKEN not found in environment.")
-        return
 
     app = (
         Application.builder()
@@ -226,23 +182,12 @@ def run_bot():
         .build()
     )
 
-    # استخدام النسخة المعدلة للتحقق قبل البحث
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
-    app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(CommandHandler("start", start))
 
     register_admin_handlers(app, start)
-
-    if base_url:
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=token,
-            webhook_url=f"https://{base_url}/{token}"
-        )
-    else:
-        app.run_polling(poll_interval=1.0)
+    app.run_polling()
 
 if __name__ == "__main__":
     run_bot()
