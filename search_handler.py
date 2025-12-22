@@ -24,10 +24,10 @@ def normalize_query(text: str) -> str:
 
 # تنظيف الكلمات الجانبية
 def get_clean_keywords(text: str) -> List[str]:
-    # كلمات لا نريدها أن تفسد البحث إذا كان العنوان طويلاً
     stop_words = {"رواية", "تحميل", "كتاب", "مجاني", "pdf", "نسخة"}
     words = text.split()
-    if len(words) <= 2: return words # لا تحذف شيئاً في العناوين القصيرة
+    if len(words) <= 2: 
+        return words
     return [w for w in words if w not in stop_words]
 
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,43 +40,34 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     norm_q = normalize_query(query)
     keywords = get_clean_keywords(norm_q)
-    
-    # تحويل الكلمات لصيغة البحث النصي (AND search)
-    # البحث عن "لست اسفة" سيتحول إلى "لست & اسفة:*"
     ts_query = ' & '.join([f"{w}:*" for w in keywords])
 
     try:
-        # استعلام SQL هجين يجمع بين 3 تقنيات للبحث في آن واحد
         sql = """
         SELECT file_id, file_name,
-               -- 1. وزن البحث النصي (FTS)
                ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
-               -- 2. نسبة التشابه الإملائي (Trigram)
                similarity(file_name, $2) AS sim
         FROM books
         WHERE 
-            to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1) -- البحث بالجذور
-            OR file_name ILIKE $3 -- البحث عن الجملة كما هي (حل مشكلة لست اسفة)
-            OR file_name % $2   -- البحث بالتشابه (حتى لو أخطأ المستخدم في حرف)
+            to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+            OR file_name ILIKE $3
+            OR file_name % $2
         ORDER BY 
-            (file_name ILIKE $3) DESC, -- الأولوية المطلقة للتطابق التام
+            (file_name ILIKE $3) DESC,
             rank DESC, 
             sim DESC
         LIMIT $4;
         """
         
-        # النمط $3 هو البحث عن الجملة في أي مكان داخل اسم الملف
         full_pattern = f"%{query.strip()}%"
         rows = await conn.fetch(sql, ts_query, norm_q, full_pattern, MAX_RESULTS)
 
         if not rows:
-            # إذا لم نجد شيئاً، نستدعي نظام الاقتراحات الذكي
             from search_suggestions import send_search_suggestions
             context.user_data["last_query"] = query
             await send_search_suggestions(update, context)
             return
 
-        # حفظ النتائج وعرض الصفحة الأولى
         context.user_data["search_results"] = [dict(r) for r in rows]
         context.user_data["current_page"] = 0
         context.user_data["search_stage"] = "✅ نتائج ذكية"
@@ -86,7 +77,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Search Error: {e}")
         await update.message.reply_text("⚠️ حدث خطأ أثناء البحث، يرجى المحاولة لاحقاً.")
 
-# دالة عرض النتائج (صفحات)
+# عرض النتائج
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     results = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
@@ -101,13 +92,11 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     for b in current_batch:
-        # تقصير الاسم الطويل جداً ليناسب أزرار تليجرام
         clean_name = b['file_name'] if len(b['file_name']) < 50 else b['file_name'][:47] + "..."
         key = hashlib.md5(b['file_id'].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = b['file_id']
         keyboard.append([InlineKeyboardButton(f"📖 {clean_name}", callback_data=f"file:{key}")])
 
-    # أزرار التنقل
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
@@ -124,7 +113,9 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# دالة معالجة الأزرار (التنقل والتحميل)
+# =========================
+# التعديل المطلوب هنا فقط
+# =========================
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -134,7 +125,13 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            await query.message.reply_document(document=file_id)
+            await query.message.reply_document(
+                document=file_id,
+                caption="تم تنزيل الكتاب بواسطة @boooksfree1bot",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📤 مشاركة الكتاب", switch_inline_query="")]
+                ])
+            )
         else:
             await query.message.reply_text("❌ عذراً، انتهت صلاحية هذا الرابط. ابحث مجدداً.")
             
