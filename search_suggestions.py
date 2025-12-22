@@ -37,7 +37,13 @@ def remove_stopwords(words: List[str]) -> List[str]:
 async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
     last_query = context.user_data.get("last_query", "")
     if not last_query:
-        await update.message.reply_text("❌ لا يوجد بحث سابق لتقديم اقتراحات.")
+        await update.message.reply_text(
+            "ℹ️ لا يوجد بحث سابق.\n\n"
+            "📌 طريقة الاستخدام الصحيحة:\n"
+            "- اكتب اسم الكتاب مباشرة.\n"
+            "- أو اكتب كلمتين أساسيتين من العنوان.\n"
+            "- تجنب كلمات مثل: كتاب، رواية، تحميل، أريد."
+        )
         return
 
     # جلب قائمة الكتب من الذاكرة لتسريع البحث
@@ -48,7 +54,9 @@ async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
             return
         try:
             rows = await conn.fetch("SELECT file_id, file_name FROM books;")
-            context.bot_data["all_books"] = [{"file_id": r["file_id"], "file_name": r["file_name"]} for r in rows]
+            context.bot_data["all_books"] = [
+                {"file_id": r["file_id"], "file_name": r["file_name"]} for r in rows
+            ]
         except Exception as e:
             await update.message.reply_text(f"❌ حدث خطأ أثناء جلب الكتب: {e}")
             return
@@ -64,10 +72,26 @@ async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
         if any(w in book_name_norm for w in query_words):
             suggested_books_set.add((book["file_id"], book["file_name"]))
 
-    suggested_books = list(suggested_books_set)[:10]  # الحد الأعلى لاقتراحات الكتب
+    suggested_books = list(suggested_books_set)[:10]
 
+    # -------- النص الجديد عند الفشل --------
     if not suggested_books:
-        await update.message.reply_text(f"❌ لم نجد أي كتب مشابهة لبحثك: '{last_query}'")
+        help_text = (
+            "📚 لم يتم العثور على كتاب مطابق لبحثك.\n\n"
+            "✅ للحصول على نتائج دقيقة:\n"
+            "1️⃣ اكتب اسم الكتاب مباشرة دون إضافات.\n"
+            "2️⃣ استخدم كلمتين أو ثلاث من العنوان فقط.\n"
+            "3️⃣ تجنب الكلمات الجانبية مثل:\n"
+            "   (كتاب، رواية، تحميل، أريد، نسخة، مجاني).\n\n"
+            "✍️ مثال صحيح:\n"
+            "فن اللامبالاة\n"
+            "جريمة الولادة\n"
+            "مدخل إلى الفلسفة"
+        )
+        if update.message:
+            await update.message.reply_text(help_text)
+        elif update.callback_query:
+            await update.callback_query.message.edit_text(help_text)
         return
 
     # إنشاء أزرار لإرسال الكتب مباشرة عند الضغط
@@ -79,16 +103,14 @@ async def send_search_suggestions(update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    suggestion_text = (
+        "ℹ️ لم نجد تطابقًا مباشرًا، لكن يمكنك تجربة أحد العناوين التالية:"
+    )
+
     if update.message:
-        await update.message.reply_text(
-            f"⚠️ لم يتم العثور على كتب مطابقة. ربما كنت تقصد أحد هذه الكتب:",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text(suggestion_text, reply_markup=reply_markup)
     elif update.callback_query:
-        await update.callback_query.message.edit_text(
-            f"⚠️ لم يتم العثور على كتب مطابقة. ربما كنت تقصد أحد هذه الكتب:",
-            reply_markup=reply_markup
-        )
+        await update.callback_query.message.edit_text(suggestion_text, reply_markup=reply_markup)
 
 # -----------------------------
 # التعامل مع أزرار الاقتراحات
@@ -100,9 +122,7 @@ async def handle_suggestion_callbacks(update, context: ContextTypes.DEFAULT_TYPE
 
     if data.startswith("suggest:"):
         suggested_title = data.split(":", 1)[1]
-        # تحويل اقتراح إلى رسالة بحث جديدة
         update.message = update.callback_query.message
         update.message.text = suggested_title
-        # استدعاء البحث الرئيسي في search_handler
         from search_handler import search_books
         await search_books(update, context)
