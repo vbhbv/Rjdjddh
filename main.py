@@ -32,30 +32,24 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
 
         conn = await asyncpg.connect(db_url)
 
-        # 1. تفعيل الإضافات لزيادة سرعة البحث والدقة
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;") # للبحث بالتشابه اللفظي
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
             logger.info("✅ Extensions (unaccent, pg_trgm) ensured.")
         except Exception as e:
             logger.warning(f"⚠️ Could not create extensions: {e}")
 
-        # 2. إنشاء الجداول مع عمود البحث الموحد (Normalized Column)
         await conn.execute("""
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     file_id TEXT UNIQUE,
     file_name TEXT,
-    name_normalized TEXT, -- عمود للبحث السريع بدون تشكيل
+    name_normalized TEXT,
     uploaded_at TIMESTAMP DEFAULT NOW()
 );
 """)
-        
-        # 3. إنشاء الفهارس الخارقة (GIN Indexes) - السر يكمن هنا
-        # فهرس للبحث النصي الكامل (FTS)
+
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_fts_books ON books USING gin (to_tsvector('arabic', file_name));")
-        
-        # فهرس للبحث بالتشابه اللفظي (Trigram) يعالج الأخطاء الإملائية
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_trgm_books ON books USING gin (file_name gin_trgm_ops);")
 
         await conn.execute("""
@@ -73,7 +67,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
         app_context.bot_data["db_conn"] = conn
         logger.info("✅ Database connection and high-performance indexing complete.")
-    except Exception as e:
+    except Exception:
         logger.error("❌ Database setup error", exc_info=True)
 
 async def close_db(app: Application):
@@ -90,11 +84,9 @@ async def handle_pdf(update: "telegram.Update", context: ContextTypes.DEFAULT_TY
         document = update.channel_post.document
         conn = context.bot_data.get('db_conn')
         if not conn:
-            logger.error("❌ Database not connected.")
             return
 
         try:
-            # عند الحفظ، نقوم بحفظ الاسم كما هو
             await conn.execute("""
 INSERT INTO books(file_id, file_name)
 VALUES($1, $2)
@@ -123,13 +115,10 @@ async def check_subscription(user_id: int, bot) -> bool:
 async def register_user(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
     if conn and update.effective_user:
-        try:
-            await conn.execute(
-                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
-                update.effective_user.id
-            )
-        except Exception as e:
-            logger.error(f"❌ Error registering user {update.effective_user.id}: {e}")
+        await conn.execute(
+            "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
+            update.effective_user.id
+        )
 
 # ===============================================
 # التعامل مع أزرار callback
@@ -149,15 +138,27 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=query.from_user.id,
                 text=(
-                    "👋 أهلاً بك في بوت مكتبة الكتب 📚\n\n"
-                    "أنا بوت ذكي احتوي على نصف مليون كتاب أستطيع مساعدتك في العثور على أي كتاب تبحث عنه...\n"
+                    "👋 مرحبًا بك في مكتبة الكتب الرقمية 📚\n\n"
+                    "هذا البوت صُمّم لمساعدتك في العثور على الكتب بسرعة ودقة من مكتبة ضخمة تضم مئات الآلاف من العناوين.\n\n"
+                    "🔍 طريقة الاستخدام الصحيحة:\n"
+                    "• اكتب اسم الكتاب أو جزءًا واضحًا منه\n"
+                    "• أو اكتب كلمات مفتاحية مباشرة (مثل: فلسفة، علم النفس، جريمة)\n\n"
+                    "✅ أمثلة صحيحة:\n"
+                    "فن اللامبالاة\n"
+                    "جريمة الولادة\n"
+                    "نيتشه\n\n"
+                    "❌ أمثلة خاطئة:\n"
+                    "اريد كتاب عن\n"
+                    "ممكن كتاب اسمه\n"
+                    "إرسال صورة 📷\n\n"
+                    "ℹ️ ملاحظة: البوت يفهم النصوص فقط ولا يتعرف على الصور."
                 ),
                 reply_markup=keyboard
             )
         else:
             await query.message.edit_text(
-                "❌ لم يتم الاشتراك بعد. يرجى الاشتراك أولاً.\n"
-                "اضغط على زر '✅ اشترك الآن' للانضمام إلى القناة."
+                "😊 لم نتمكن من التحقق من اشتراكك بعد.\n\n"
+                "بعد الانضمام إلى القناة، اضغط على «تحقق من الاشتراك» للمتابعة."
             )
 
     elif data in ["show_index", "home_index"]:
@@ -185,10 +186,14 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            "🚫 المعذرة! للوصول إلى جميع ميزات البوت، يجب الاشتراك في القناة التالية:\n"
-            f"👉 @{channel_username}",
-            reply_markup=keyboard,
-            parse_mode='Markdown'
+            "🌿 أهلًا بك!\n\n"
+            "للوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.\n\n"
+            "📚 ماذا ستحصل عليه؟\n"
+            "• وصول مجاني لمكتبة تضم 60000 الف كتاب\n"
+            "• بحث سريع ودقيق\n"
+            "• فهارس مرتبة وتحديثات مستمرة\n\n"
+            "✨ الاشتراك لا يستغرق سوى ثانية واحدة.",
+            reply_markup=keyboard
         )
         return
 
@@ -197,7 +202,11 @@ async def start(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
         [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
     ])
-    await update.message.reply_text("👋 أهلاً بك في بوت مكتبة الكتب 📚", reply_markup=keyboard)
+    await update.message.reply_text(
+        "👋 مرحبًا بك في مكتبة الكتب الرقمية 📚\n\n"
+        "ابدأ بالبحث مباشرة بكتابة اسم الكتاب أو كلمة مفتاحية.",
+        reply_markup=keyboard
+    )
 
 # ===============================================
 # تشغيل البوت
@@ -228,12 +237,11 @@ def run_bot():
     register_admin_handlers(app, start)
 
     if base_url:
-        webhook_url = f"https://{base_url}"
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=token,
-            webhook_url=f"{webhook_url}/{token}"
+            webhook_url=f"https://{base_url}/{token}"
         )
     else:
         app.run_polling(poll_interval=1.0)
