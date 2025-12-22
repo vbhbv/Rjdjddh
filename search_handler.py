@@ -1,35 +1,37 @@
-import hashlib
 import re
 import logging
 from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-# إعداد اللوج لتتبع أي أخطاء
 logger = logging.getLogger(__name__)
 
-# الإعدادات
 BOOKS_PER_PAGE = 10
-MAX_RESULTS = 500  # عدد كافٍ جداً وشامل ودقيق
+MAX_RESULTS = 500
 
-# دالة التطبيع (يجب أن تتطابق مع منطق قاعدة البيانات)
+# -----------------------------
+# التطبيع
+# -----------------------------
 def normalize_query(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     text = text.lower().strip()
     repls = str.maketrans("أإآةى", "اااوه")
     text = text.translate(repls)
     text = re.sub(r"[ًٌٍَُِّْـ]", "", text)
-    text = re.sub(r'[^\w\s]', ' ', text)
-    return ' '.join(text.split())
+    text = re.sub(r"[^\w\s]", " ", text)
+    return " ".join(text.split())
 
-# تنظيف الكلمات الجانبية
 def get_clean_keywords(text: str) -> List[str]:
-    stop_words = {"رواية", "تحميل", "كتاب", "مجاني", "pdf", "نسخة"}
+    stop_words = {"رواية", "تحميل", "كتاب", "مجاني", "pdf", "نسخة", "اريد"}
     words = text.split()
-    if len(words) <= 2: 
+    if len(words) <= 2:
         return words
     return [w for w in words if w not in stop_words]
 
+# -----------------------------
+# البحث
+# -----------------------------
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     conn = context.bot_data.get("db_conn")
@@ -40,27 +42,37 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     norm_q = normalize_query(query)
     keywords = get_clean_keywords(norm_q)
-    ts_query = ' & '.join([f"{w}:*" for w in keywords])
+
+    ts_and = " & ".join([f"{w}:*" for w in keywords])
+    ts_or = " | ".join([f"{w}:*" for w in keywords])
+    full_pattern = f"%{norm_q}%"
 
     try:
         sql = """
-        SELECT file_id, file_name,
+        WITH candidates AS (
+            SELECT id, file_id, file_name
+            FROM books
+            WHERE
+                to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+                OR file_name ILIKE $2
+                OR file_name % $3
+            LIMIT 1000
+        )
+        SELECT id, file_id, file_name,
                ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
-               similarity(file_name, $2) AS sim
-        FROM books
-        WHERE 
-            to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
-            OR file_name ILIKE $3
-            OR file_name % $2
-        ORDER BY 
-            (file_name ILIKE $3) DESC,
-            rank DESC, 
+               similarity(file_name, $3) AS sim
+        FROM candidates
+        ORDER BY
+            (file_name ILIKE $2) DESC,
+            rank DESC,
             sim DESC
         LIMIT $4;
         """
-        
-        full_pattern = f"%{query.strip()}%"
-        rows = await conn.fetch(sql, ts_query, norm_q, full_pattern, MAX_RESULTS)
+
+        rows = await conn.fetch(sql, ts_and, full_pattern, norm_q, MAX_RESULTS)
+
+        if not rows:
+            rows = await conn.fetch(sql, ts_or, full_pattern, norm_q, MAX_RESULTS)
 
         if not rows:
             from search_suggestions import send_search_suggestions
@@ -70,74 +82,89 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["search_results"] = [dict(r) for r in rows]
         context.user_data["current_page"] = 0
-        context.user_data["search_stage"] = "✅ نتائج ذكية"
         await send_books_page(update, context)
 
     except Exception as e:
-        logger.error(f"Search Error: {e}")
-        await update.message.reply_text("⚠️ حدث خطأ أثناء البحث، يرجى المحاولة لاحقاً.")
+        logger.error(f"Search error: {e}")
+        await update.message.reply_text("⚠️ حدث خطأ أثناء البحث.")
 
+# -----------------------------
 # عرض النتائج
+# -----------------------------
 async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE):
     results = context.user_data.get("search_results", [])
     page = context.user_data.get("current_page", 0)
-    
+
     start = page * BOOKS_PER_PAGE
     end = start + BOOKS_PER_PAGE
-    current_batch = results[start:end]
+    batch = results[start:end]
     total_pages = (len(results) - 1) // BOOKS_PER_PAGE + 1
 
-    text = f"📚 **نتائج البحث ({len(results)} نتيجة):**\n"
-    text += f"صفحة {page + 1} من {total_pages}\n\n"
-    
+    text = f"📚 **نتائج البحث ({len(results)} نتيجة)**\n"
+    text += f"الصفحة {page + 1} من {total_pages}\n\n"
+
     keyboard = []
-    for b in current_batch:
-        clean_name = b['file_name'] if len(b['file_name']) < 50 else b['file_name'][:47] + "..."
-        key = hashlib.md5(b['file_id'].encode()).hexdigest()[:16]
-        context.bot_data[f"file_{key}"] = b['file_id']
-        keyboard.append([InlineKeyboardButton(f"📖 {clean_name}", callback_data=f"file:{key}")])
+    for b in batch:
+        name = b["file_name"]
+        name = name if len(name) < 48 else name[:45] + ".."
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📖 {name}",
+                callback_data=f"file:{b['id']}"
+            )
+        ])
 
-    nav_buttons = []
+    nav = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
+        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data="prev_page"))
     if end < len(results):
-        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
-    
-    if nav_buttons:
-        keyboard.append(nav_buttons)
+        nav.append(InlineKeyboardButton("التالي ➡️", callback_data="next_page"))
+    if nav:
+        keyboard.append(nav)
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
+    markup = InlineKeyboardMarkup(keyboard)
+
     if update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await update.message.reply_text(text, reply_markup=markup, parse_mode="Markdown")
     else:
-        await update.callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await update.callback_query.message.edit_text(text, reply_markup=markup, parse_mode="Markdown")
 
-# =========================
-# التعديل المطلوب هنا فقط
-# =========================
+# -----------------------------
+# callbacks (الإرسال مقتبس من الكود القديم)
+# -----------------------------
 async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    await query.answer()
+    conn = context.bot_data.get("db_conn")
+
+    await query.answer()  # ✅ نفس القديم حرفيًا
 
     if data.startswith("file:"):
-        key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
-        if file_id:
-            await query.message.reply_document(
-                document=file_id,
-                caption="تم تنزيل الكتاب بواسطة @boooksfree1bot",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📤 مشاركة الكتاب", switch_inline_query="")]
-                ])
-            )
+        book_id = int(data.split(":")[1])
+        row = await conn.fetchrow(
+            "SELECT file_id, file_name FROM books WHERE id = $1",
+            book_id
+        )
+
+        if row:
+            try:
+                await query.message.reply_document(
+                    document=row["file_id"],
+                    caption="تم تنزيل الكتاب بواسطة @boooksfree1bot",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
+                    ])
+                )
+            except Exception as e:
+                logger.error(f"Download error: {e}")
+                await query.message.reply_text("❌ فشل إرسال الملف.")
         else:
-            await query.message.reply_text("❌ عذراً، انتهت صلاحية هذا الرابط. ابحث مجدداً.")
-            
+            await query.message.reply_text("❌ الملف غير موجود.")
+
     elif data == "next_page":
         context.user_data["current_page"] += 1
         await send_books_page(update, context)
+
     elif data == "prev_page":
         context.user_data["current_page"] -= 1
         await send_books_page(update, context)
