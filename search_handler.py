@@ -77,21 +77,12 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=markup, parse_mode="Markdown")
 
 # =========================
-# محرك البحث الذكي
+# محرك البحث الذكي (إصلاح مشكلة الاتصال)
 # =========================
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private": 
-        return
-
-    # 🔒 تحقق الاشتراك (المكان الوحيد المضاف)
-    from admin_panel import check_subscription
-    if not await check_subscription(update, context):
-        return
-    # 🔒 نهاية التحقق
-
+    if update.effective_chat.type != "private": return
     query = update.message.text.strip()
-    if not query or len(query) < 2: 
-        return
+    if not query or len(query) < 2: return
 
     conn = context.bot_data.get("db_conn")
     
