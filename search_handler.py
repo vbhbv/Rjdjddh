@@ -77,12 +77,21 @@ async def send_books_page(update, context: ContextTypes.DEFAULT_TYPE, include_in
         await update.callback_query.message.edit_text(text, reply_markup=markup, parse_mode="Markdown")
 
 # =========================
-# محرك البحث الذكي (إصلاح مشكلة الاتصال)
+# محرك البحث الذكي
 # =========================
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private": return
+    if update.effective_chat.type != "private": 
+        return
+
+    # 🔒 تحقق الاشتراك (المكان الوحيد المضاف)
+    from admin_panel import check_subscription
+    if not await check_subscription(update, context):
+        return
+    # 🔒 نهاية التحقق
+
     query = update.message.text.strip()
-    if not query or len(query) < 2: return
+    if not query or len(query) < 2: 
+        return
 
     conn = context.bot_data.get("db_conn")
     
@@ -137,8 +146,10 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Search error: {e}")
         try:
-            # محاولة أخيرة ببحث ILIKE بسيط إذا فشل البحث المعقد
-            simple_rows = await conn.fetch("SELECT * FROM books WHERE file_name ILIKE $1 LIMIT 50", f"%{norm_q}%")
+            simple_rows = await conn.fetch(
+                "SELECT * FROM books WHERE file_name ILIKE $1 LIMIT 50", 
+                f"%{norm_q}%"
+            )
             if simple_rows:
                 context.user_data["search_results"] = [dict(r) for r in simple_rows]
                 await send_books_page(update, context)
@@ -163,7 +174,9 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_document(
                     document=file_id, 
                     caption="تم تنزيل الكتاب بواسطة @boooksfree1bot",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]])
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
+                    ])
                 )
             except Exception as e:
                 logger.error(f"Download error: {e}")
