@@ -134,7 +134,17 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         key = data.split(":")[1]
         file_id = context.bot_data.get(f"file_{key}")
         if file_id:
-            await query.message.reply_document(document=file_id)
+            # إضافة زر المشاركة في كيبورد خاص تحت الملف المرسل
+            share_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
+            ])
+            # إرسال الملف مع الكابشن والزر المطلوب بنظام الماركداون
+            await query.message.reply_document(
+                document=file_id,
+                caption="تم التنزيل بواسطة @boooksfree1bot",
+                reply_markup=share_keyboard,
+                parse_mode="Markdown"
+            )
         else:
             await query.message.reply_text("❌ عذراً، انتهت صلاحية هذا الرابط. ابحث مجدداً.")
             
