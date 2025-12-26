@@ -1,6 +1,7 @@
 import os
 import asyncpg
 import logging
+from datetime import datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
@@ -38,6 +39,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"⚠️ Could not create extensions: {e}")
 
+        # جدول الكتب
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
             id SERIAL PRIMARY KEY,
@@ -51,12 +53,24 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_fts_books ON books USING gin (to_tsvector('arabic', file_name));")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_trgm_books ON books USING gin (file_name gin_trgm_ops);")
 
+        # جدول المستخدمين
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
             joined_at TIMESTAMP DEFAULT NOW()
         );
         """)
+
+        # جدول عداد التنزيلات
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS downloads (
+            book_id INT REFERENCES books(id),
+            user_id BIGINT,
+            downloaded_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
+        # جدول الإعدادات
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -132,9 +146,9 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
                 [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
-                [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
+                [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")],
+                [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
             ])
-            # رسالة التعليمات وحقوق الملكية عند نجاح التحقق
             instructions = (
                 "👋 **أهلاً بك في المكتبة الرقمية**\n\n"
                 "📖 **تعليمات الاستخدام:**\n"
@@ -162,6 +176,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "show_index_en":
         from index_handler import show_index_en
         await show_index_en(update, context)
+    elif data == "top_downloads_week":
+        await show_top_downloads_week(update, context)
     elif data.startswith("index:"):
         await search_by_index(update, context)
     elif data.startswith("index_page:"):
@@ -191,10 +207,10 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
         [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
-        [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")]
+        [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")],
+        [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
     ])
     
-    # رسالة التعليمات وحقوق الملكية في البداية
     instructions = (
         "👋 **أهلاً بك في المكتبة الرقمية**\n\n"
         "📖 **تعليمات الاستخدام:**\n"
@@ -209,6 +225,44 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         instructions,
         reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+# ===============================================
+# أكثر الكتب تحميلاً خلال الأسبوع
+# ===============================================
+async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
+    conn = context.bot_data.get("db_conn")
+    if not conn:
+        await update.callback_query.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
+        return
+
+    one_week_ago = datetime.now() - timedelta(days=7)
+    sql = """
+    SELECT b.file_id, b.file_name, COUNT(d.book_id) AS downloads_count
+    FROM downloads d
+    JOIN books b ON b.id = d.book_id
+    WHERE d.downloaded_at >= $1
+    GROUP BY b.id
+    ORDER BY downloads_count DESC
+    LIMIT 10;
+    """
+    rows = await conn.fetch(sql, one_week_ago)
+
+    if not rows:
+        await update.callback_query.message.reply_text("⚠️ لا توجد بيانات تحميل للأسبوع الحالي.")
+        return
+
+    text = "🔥 **أكثر الكتب تحميلاً هذا الأسبوع:**\n\n"
+    keyboard = []
+    for r in rows:
+        key = r["file_id"]
+        display_name = (r["file_name"][:50] + "..") if len(r["file_name"]) > 50 else r["file_name"]
+        keyboard.append([InlineKeyboardButton(f"📖 {display_name} ({r['downloads_count']})", callback_data=f"file:{key}")])
+
+    await update.callback_query.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
