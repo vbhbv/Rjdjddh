@@ -7,8 +7,6 @@ from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     PicklePersistence, ContextTypes, filters
 )
-import hashlib
-
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks  # البحث العادي
 from index_handler import show_index, search_by_index, navigate_index_pages  # الفهرس العربي
@@ -39,6 +37,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"⚠️ Could not create extensions: {e}")
 
+        # جدول الكتب
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
             id SERIAL PRIMARY KEY,
@@ -51,6 +50,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_fts_books ON books USING gin (to_tsvector('arabic', file_name));")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_trgm_books ON books USING gin (file_name gin_trgm_ops);")
 
+        # جدول المستخدمين
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -58,6 +58,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         );
         """)
 
+        # جدول عداد التنزيلات
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS downloads (
             book_id INT REFERENCES books(id),
@@ -66,6 +67,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         );
         """)
 
+        # جدول الإعدادات
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -93,7 +95,6 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
         conn = context.bot_data.get('db_conn')
         if not conn:
             return
-
         try:
             await conn.execute("""
             INSERT INTO books(file_id, file_name)
@@ -139,7 +140,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     if data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
+                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")],
                 [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
                 [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")],
                 [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
@@ -154,12 +155,10 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "إدارة المكتبة تحترم حقوق الملكية الفكرية للمؤلفين ودور النشر. "
                 "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
             )
-            await context.bot.send_message(
-                chat_id=query.from_user.id,
-                text=instructions,
-                reply_markup=keyboard,
-                parse_mode="Markdown"
-            )
+            if query.message:
+                await query.message.edit_text(text=instructions, reply_markup=keyboard, parse_mode="Markdown")
+            else:
+                await query.message.reply_text(text=instructions, reply_markup=keyboard, parse_mode="Markdown")
         else:
             await query.message.edit_text(
                 "😊 لم نتمكن من التحقق من اشتراكك بعد.\n\n"
@@ -187,25 +186,18 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     await register_user(update, context)
     channel_username = CHANNEL_USERNAME.lstrip('@')
 
-    if not await check_subscription(update.effective_user.id, context.bot):
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")],
-            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
-        ])
-        await update.message.reply_text(
-            "🌿 أهلًا بك!\n\n"
-            "للوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
-            reply_markup=keyboard
-        )
-        return
+    keyboard_subscription = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")],
+        [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+    ])
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📩 تواصل معنا", url="@Boooksfreee1bot")],
+    keyboard_main = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")],
         [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
         [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")],
         [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
     ])
-    
+
     instructions = (
         "👋 **أهلاً بك في المكتبة الرقمية**\n\n"
         "📖 **تعليمات الاستخدام:**\n"
@@ -216,12 +208,24 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         "إدارة المكتبة تحترم حقوق الملكية الفكرية للمؤلفين ودور النشر. "
         "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
     )
-    
-    await update.message.reply_text(
-        instructions,
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
+
+    if not await check_subscription(update.effective_user.id, context.bot):
+        if update.message:
+            await update.message.reply_text(
+                "🌿 أهلًا بك!\n\nللوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
+                reply_markup=keyboard_subscription
+            )
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(
+                "🌿 أهلًا بك!\n\nللوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
+                reply_markup=keyboard_subscription
+            )
+        return
+
+    if update.message:
+        await update.message.reply_text(instructions, reply_markup=keyboard_main, parse_mode="Markdown")
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(instructions, reply_markup=keyboard_main, parse_mode="Markdown")
 
 # ===============================================
 # أكثر الكتب تحميلاً خلال الأسبوع
@@ -251,25 +255,26 @@ async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     text = "🔥 **أكثر الكتب تحميلاً هذا الأسبوع:**\n\n"
     keyboard = []
     for r in rows:
-        key = r["file_id"]
-        display_name = (r["file_name"][:50] + "..") if len(r["file_name"]) > 50 else r["file_name"]
-        keyboard.append([InlineKeyboardButton(f"📖 {display_name} ({r['downloads_count']})", callback_data=f"file:{key}")])
+        display_name = r["file_name"] if len(r["file_name"]) <= 50 else r["file_name"][:47]+"..."
+        keyboard.append([InlineKeyboardButton(f"📖 {display_name} ({r['downloads_count']})", callback_data=f"file:{r['file_id']}")])
 
-    await update.callback_query.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 # ===============================================
-# التحقق من الاشتراك قبل البحث
+# تعديل: التحقق من الاشتراك قبل البحث
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text(
-            "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
-            f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
-        )
+        if update.message:
+            await update.message.reply_text(
+                "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
+                f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
+            )
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(
+                "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
+                f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
+            )
         return
     await search_books(update, context)
 
