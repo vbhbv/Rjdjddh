@@ -1,4 +1,4 @@
-# main_handler.py
+# main.py
 import os
 import asyncpg
 import logging
@@ -12,9 +12,60 @@ from search_handler import search_books, handle_callbacks, send_books_page
 from index_handler import show_index, show_index_en, search_by_index, navigate_index_pages
 from admin_panel import register_admin_handlers
 
+# ==============================
+# إعداد اللوج
+# ==============================
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
+# ==============================
+# إعداد قاعدة البيانات
+# ==============================
+async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.error("🚨 DATABASE_URL environment variable is missing.")
+            return
+
+        conn = await asyncpg.connect(db_url)
+        # إنشاء الجداول الضرورية إذا لم تكن موجودة
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS books (
+            id SERIAL PRIMARY KEY,
+            file_id TEXT UNIQUE,
+            file_name TEXT,
+            name_normalized TEXT,
+            uploaded_at TIMESTAMP DEFAULT NOW()
+        );""")
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            joined_at TIMESTAMP DEFAULT NOW()
+        );""")
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS downloads (
+            book_id INT REFERENCES books(id),
+            user_id BIGINT,
+            downloaded_at TIMESTAMP DEFAULT NOW()
+        );""")
+        app_context.bot_data["db_conn"] = conn
+        logger.info("✅ Database connection and tables ready.")
+    except Exception:
+        logger.error("❌ Database setup error", exc_info=True)
+
+async def close_db(app: Application):
+    conn = app.bot_data.get("db_conn")
+    if conn:
+        await conn.close()
+        logger.info("✅ Database connection closed.")
+
+# ==============================
+# قناة الاشتراك الإجباري
+# ==============================
 CHANNEL_USERNAME = "@iiollr"
 
 async def check_subscription(user_id: int, bot) -> bool:
@@ -24,6 +75,9 @@ async def check_subscription(user_id: int, bot) -> bool:
     except:
         return False
 
+# ==============================
+# تسجيل المستخدم
+# ==============================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
     if conn and update.effective_user:
@@ -32,9 +86,9 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
             update.effective_user.id
         )
 
-# -----------------------------
-# معالجة أزرار callback
-# -----------------------------
+# ==============================
+# التعامل مع أزرار callback
+# ==============================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -75,9 +129,9 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "top_downloads_week":
         await show_top_downloads_week(update, context)
 
-# -----------------------------
+# ==============================
 # /start
-# -----------------------------
+# ==============================
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
     await register_user(update, context)
 
@@ -118,9 +172,9 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await update.callback_query.message.reply_text(instructions, reply_markup=keyboard_main, parse_mode="Markdown")
 
-# -----------------------------
+# ==============================
 # أكثر الكتب تحميلاً
-# -----------------------------
+# ==============================
 async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
     if not conn:
@@ -150,9 +204,9 @@ async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# -----------------------------
+# ==============================
 # تشغيل البوت
-# -----------------------------
+# ==============================
 def run_bot():
     token = os.getenv("BOT_TOKEN")
     base_url = os.getenv("WEB_HOST")
@@ -176,3 +230,6 @@ def run_bot():
         app.run_webhook(listen="0.0.0.0", port=port, url_path=token, webhook_url=f"https://{base_url}/{token}")
     else:
         app.run_polling(poll_interval=1.0)
+
+if __name__ == "__main__":
+    run_bot()
