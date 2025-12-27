@@ -7,8 +7,10 @@ from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     PicklePersistence, ContextTypes, filters
 )
+
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks, send_books_page
+from index_handler import show_index, show_index_en, search_by_index, navigate_index_pages
 
 # ===============================================
 # إعداد اللوج
@@ -127,152 +129,186 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ===============================================
-# الفهارس المدمجة داخل الملف الرئيسي
+# التعامل مع أزرار callback
 # ===============================================
-INDEXES_AR = [
-    ("روايات", "novels", ["رواية"]),
-    ("قصص الأطفال", "children_stories", ["قصص", "أطفال"]),
-    ("الشعر", "poetry", ["شعر", "قصيدة"]),
-    ("التاريخ", "history", ["تاريخ", "حضارة"]),
-    ("الفلسفة", "philosophy", ["فلسفة", "منطق"]),
-    ("العلوم", "science", ["علوم", "تجارب"]),
-    ("الرياضيات", "math", ["رياضيات", "جبر"]),
-    ("البرمجة", "programming", ["برمجة", "python"]),
-    ("الهندسة", "engineering", ["هندسة", "ميكانيكا"]),
-    ("الطب", "medicine", ["طب", "دواء"])
-]
-
-INDEXES_EN = [
-    ("Novels", "novels_en", ["novel"]),
-    ("Children Stories", "children_stories_en", ["children", "story"]),
-    ("Poetry", "poetry_en", ["poem", "poetry"]),
-    ("History", "history_en", ["history", "civilization"]),
-    ("Philosophy", "philosophy_en", ["philosophy", "logic"]),
-    ("Science", "science_en", ["science", "experiment"]),
-    ("Mathematics", "math_en", ["math", "algebra"]),
-    ("Programming", "programming_en", ["programming", "python"]),
-    ("Engineering", "engineering_en", ["engineering", "mechanics"]),
-    ("Medicine", "medicine_en", ["medicine", "health"])
-]
-
-INDEXES_PER_PAGE = 5
-
-# ===========================
-# دوال الفهرس
-# ===========================
-def normalize_text(text: str) -> str:
-    if not text: return ""
-    text = text.lower()
-    text = text.replace("_", " ")
-    text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    text = text.replace("ى", "ي").replace("ه", "ة")
-    return text
-
-def remove_common_words(text: str) -> str:
-    if not text: return ""
-    for word in ["كتاب", "نسخة", "مجموعة", "مجلد", "جزء"]:
-        text = text.replace(word, "")
-    return text.strip()
-
-async def show_index_page(update, context: ContextTypes.DEFAULT_TYPE, indexes, page: int = 0, index_type="ar"):
-    start = page * INDEXES_PER_PAGE
-    end = start + INDEXES_PER_PAGE
-    current_indexes = indexes[start:end]
-
-    keyboard = [[InlineKeyboardButton(name, callback_data=f"index:{key}")] for name, key, _ in current_indexes]
-
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"index_page:{page-1}:{index_type}"))
-    if end < len(indexes):
-        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data=f"index_page:{page+1}:{index_type}"))
-    if nav_buttons:
-        keyboard.append(nav_buttons)
-
-    keyboard.append([InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")])
-
-    text = f"📚 اختر الفهرس الذي تريد استعراضه (عدد الفهارس: {len(indexes)}):"
-    if update.callback_query:
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-        await update.callback_query.answer()
-    elif update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def show_index(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    context.user_data["current_index_type"] = "ar"
-    await show_index_page(update, context, INDEXES_AR, page, index_type="ar")
-
-async def show_index_en(update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    context.user_data["current_index_type"] = "en"
-    await show_index_page(update, context, INDEXES_EN, page, index_type="en")
-
-async def navigate_index_pages(update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    try:
-        parts = query.data.split(":")
-        page = int(parts[1])
-        index_type = parts[2] if len(parts) > 2 else "ar"
-    except Exception:
-        await query.message.reply_text("❌ خطأ في تحديد الصفحة.")
+    data = query.data
+
+    if data == "check_subscription":
+        if await check_subscription(query.from_user.id, context.bot):
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")],
+                [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
+                [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")],
+                [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
+            ])
+            instructions = (
+                "👋 **أهلاً بك في المكتبة الرقمية**\n\n"
+                "📖 **تعليمات الاستخدام:**\n"
+                "1️⃣ أرسل اسم الكتاب أو اسم المؤلف مباشرة للبحث.\n"
+                "2️⃣ يفضل كتابة كلمات محددة (مثال: فن اللامبالاة بدلاً من كتاب فن).\n"
+                "3️⃣ يمكنك استخدام الفهارس لتصفح الكتب حسب التصنيف.\n\n"
+                "⚖️ **حقوق الملكية الفكرية:**\n"
+                "إدارة المكتبة تحترم حقوق الملكية الفكرية للمؤلفين ودور النشر. "
+                "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
+            )
+            await context.bot.send_message(
+                chat_id=query.from_user.id,
+                text=instructions,
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        else:
+            await query.message.edit_text(
+                "😊 لم نتمكن من التحقق من اشتراكك بعد.\n\n"
+                "بعد الانضمام إلى القناة، اضغط على «تحقق من الاشتراك» للمتابعة."
+            )
+
+    elif data in ["show_index", "home_index"]:
+        await show_index(update, context)
+    elif data == "show_index_en":
+        await show_index_en(update, context)
+    elif data == "top_downloads_week":
+        await show_top_downloads_week(update, context)
+    elif data.startswith("index:"):
+        await search_by_index(update, context)
+    elif data.startswith("index_page:"):
+        await navigate_index_pages(update, context)
+    elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
+        await handle_callbacks(update, context)
+
+# ===============================================
+# رسالة البدء /start
+# ===============================================
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
+    await register_user(update, context)
+    channel_username = CHANNEL_USERNAME.lstrip('@')
+
+    if not await check_subscription(update.effective_user.id, context.bot):
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{channel_username}")],
+            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+        ])
+        await update.message.reply_text(
+            "🌿 أهلًا بك!\n\n"
+            "للوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
+            reply_markup=keyboard
+        )
         return
 
-    if index_type == "en":
-        await show_index_en(update, context, page)
-    else:
-        await show_index(update, context, page)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")],
+        [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
+        [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")],
+        [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
+    ])
+    
+    instructions = (
+        "👋 **أهلاً بك في المكتبة الرقمية**\n\n"
+        "📖 **تعليمات الاستخدام:**\n"
+        "1️⃣ أرسل اسم الكتاب أو اسم المؤلف مباشرة للبحث.\n"
+        "2️⃣ يفضل كتابة كلمات محددة (مثال: فن اللامبالاة بدلاً من كتاب فن).\n"
+        "3️⃣ يمكنك استخدام الفهارس لتصفح الكتب حسب التصنيف.\n\n"
+        "⚖️ **حقوق الملكية الفكرية:**\n"
+        "إدارة المكتبة تحترم حقوق الملكية الفكرية للمؤلفين ودور النشر. "
+        "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
+    )
+    
+    await update.message.reply_text(
+        instructions,
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
 
-async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    index_key = query.data.replace("index:", "")
+# ===============================================
+# أكثر الكتب تحميلاً خلال الأسبوع
+# ===============================================
+async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
     if not conn:
-        await query.message.reply_text("❌ قاعدة البيانات غير متصلة حالياً.")
+        await update.callback_query.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
         return
 
-    keywords_list = INDEXES_EN if any(k==index_key for _, k, _ in INDEXES_EN) else INDEXES_AR
-    keywords = []
-    for name, key, kws in keywords_list:
-        if key == index_key:
-            keywords = kws
-            break
+    one_week_ago = datetime.now() - timedelta(days=7)
+    sql = """
+    SELECT b.file_id, b.file_name, COUNT(d.book_id) AS downloads_count
+    FROM downloads d
+    JOIN books b ON b.id = d.book_id
+    WHERE d.downloaded_at >= $1
+    GROUP BY b.id
+    ORDER BY downloads_count DESC
+    LIMIT 10;
+    """
+    rows = await conn.fetch(sql, one_week_ago)
 
-    if not keywords:
-        await query.message.reply_text("❌ لا توجد كلمات مفتاحية لهذا الفهرس.")
+    if not rows:
+        await update.callback_query.message.reply_text("⚠️ لا توجد بيانات تحميل للأسبوع الحالي.")
         return
 
-    keywords = [normalize_text(remove_common_words(k)) for k in keywords]
+    text = "🔥 **أكثر الكتب تحميلاً هذا الأسبوع:**\n\n"
+    keyboard = []
+    for r in rows:
+        key = r["file_id"]
+        display_name = (r["file_name"][:50] + "..") if len(r["file_name"]) > 50 else r["file_name"]
+        keyboard.append([InlineKeyboardButton(f"📖 {display_name} ({r['downloads_count']})", callback_data=f"file:{key}")])
 
-    if index_key in ["novels", "novels_en"]:
-        sql_condition = " AND ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
+    await update.callback_query.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+# ===============================================
+# التحقق من الاشتراك قبل البحث
+# ===============================================
+async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_subscription(update.effective_user.id, context.bot):
+        await update.message.reply_text(
+            "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
+            f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
+        )
+        return
+    await search_books(update, context)
+
+# ===============================================
+# تشغيل البوت
+# ===============================================
+def run_bot():
+    token = os.getenv("BOT_TOKEN")
+    base_url = os.getenv("WEB_HOST")
+    port = int(os.getenv("PORT", 8080))
+
+    if not token:
+        logger.error("🚨 BOT_TOKEN not found in environment.")
+        return
+
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(init_db)
+        .post_shutdown(close_db)
+        .persistence(PicklePersistence(filepath="bot_data.pickle"))
+        .build()
+    )
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+    app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
+    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
+    app.add_handler(CommandHandler("start", start))
+
+    register_admin_handlers(app, start)
+
+    if base_url:
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"https://{base_url}/{token}"
+        )
     else:
-        sql_condition = " OR ".join([f"LOWER(file_name) LIKE '%{k}%'" for k in keywords])
+        app.run_polling(poll_interval=1.0)
 
-    try:
-        books = await conn.fetch(f"""
-            SELECT id, file_id, file_name, uploaded_at
-            FROM books
-            WHERE {sql_condition}
-            ORDER BY uploaded_at DESC;
-        """)
-    except Exception:
-        await query.message.reply_text("❌ حدث خطأ أثناء البحث عن الكتب.")
-        return
-
-    if not books:
-        await query.message.reply_text("❌ لم يتم العثور على أي كتب ضمن هذا الفهرس.")
-        return
-
-    context.user_data["search_results"] = [dict(b) for b in books]
-    context.user_data["current_page"] = 0
-    context.user_data["search_stage"] = f"فهرس: {index_key}"
-    context.user_data["is_index"] = True
-    context.user_data["index_key"] = index_key
-
-    await send_books_page(update, context, include_index_home=True)
-
-# ===============================================
-# باقي كود البوت (start, handle_start_callbacks, show_top_downloads_week, search_books_with_subscription, run_bot)
-# هذا يبقى كما هو
-# ===============================================
+if __name__ == "__main__":
+    run_bot()
