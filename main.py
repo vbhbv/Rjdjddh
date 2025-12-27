@@ -52,13 +52,14 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             joined_at TIMESTAMP DEFAULT NOW()
         );
         CREATE TABLE IF NOT EXISTS downloads (
+            id SERIAL PRIMARY KEY,
             book_id INT REFERENCES books(id),
             user_id BIGINT,
             downloaded_at TIMESTAMP DEFAULT NOW()
         );
         """)
         app_context.bot_data["db_conn"] = conn
-        logger.info("✅ Database connected.")
+        logger.info("✅ Database connected and tables checked.")
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
 
@@ -110,43 +111,52 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         if await check_subscription(query.from_user.id, context.bot):
             await start(update, context)
         else:
-            await query.message.edit_text("😊 لم نتمكن من التحقق من اشتراكك بعد. انضم للقناة أولاً.")
+            await query.message.edit_text("😊 لم نتمكن من التحقق من اشتراكك بعد. انضم للقناة أولاً ثم اضغط تحقق.")
 
-    # 2. معالجة الفهارس (استدعاء مباشر للدوال المستوردة)
+    # 2. معالجة الفهارس (إصلاح التوجيه)
     elif data in ["show_index", "home_index"]:
         await query.answer()
         await show_index(update, context)
     
     elif data == "show_index_en":
         await query.answer()
-        from index_handler import show_index_en
-        await show_index_en(update, context)
+        try:
+            from index_handler import show_index_en
+            await show_index_en(update, context)
+        except ImportError:
+            await query.message.reply_text("⚠️ الفهرس الإنجليزي غير متوفر حالياً.")
     
     elif data.startswith("index:"):
         await query.answer()
+        # استدعاء دالة عرض الكتب داخل التصنيف
         await search_by_index(update, context)
     
     elif data.startswith("index_page:"):
         await query.answer()
+        # استدعاء دالة التنقل بين صفحات الفهرس
         await navigate_index_pages(update, context)
 
-    # 3. معالجة التحميلات (يجب أن تتوافق مع hashlib المستخدم في search_handler)
+    # 3. معالجة التحميلات وعداد التنزيلات
     elif data.startswith("file:"):
         await query.answer()
         key = data.split(":")[1]
-        file_id = context.bot_data.get(f"file_{key}")
+        real_file_id = context.bot_data.get(f"file_{key}")
         
-        if file_id and conn:
-            # تسجيل التحميل في قاعدة البيانات
-            await conn.execute("""
-                INSERT INTO downloads (book_id, user_id)
-                SELECT id, $1 FROM books WHERE file_id = $2 LIMIT 1
-            """, query.from_user.id, file_id)
+        if real_file_id and conn:
+            try:
+                # تسجيل العملية في جدول downloads فوراً
+                await conn.execute("""
+                    INSERT INTO downloads (book_id, user_id)
+                    SELECT id, $1 FROM books WHERE file_id = $2 LIMIT 1
+                """, query.from_user.id, real_file_id)
+                logger.info(f"💾 Download registered for: {real_file_id}")
+            except Exception as e:
+                logger.error(f"❌ Stats error: {e}")
         
-        # تمرير الطلب لـ search_handler لإرسال الملف الفعلي
+        # تمرير الطلب لـ search_handler لإرسال الملف
         await handle_callbacks(update, context)
 
-    # 4. الأكثر تحميلاً والتنقل
+    # 4. الأكثر تحميلاً والتنقل العام
     elif data == "top_downloads_week":
         await query.answer()
         await show_top_downloads_week(update, context)
@@ -161,6 +171,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     conn = context.bot_data.get("db_conn")
+    
     if conn:
         await conn.execute("INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", user_id)
 
@@ -182,54 +193,79 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         text = "🌿 أهلًا بك! يرجى الانضمام إلى قناتنا أولاً للمتابعة."
-        if update.message: await update.message.reply_text(text, reply_markup=keyboard_sub)
-        else: await update.callback_query.message.edit_text(text, reply_markup=keyboard_sub)
+        if update.message: 
+            await update.message.reply_text(text, reply_markup=keyboard_sub)
+        else: 
+            await update.callback_query.message.edit_text(text, reply_markup=keyboard_sub)
         return
 
     if update.message:
         await update.message.reply_text(instructions, reply_markup=keyboard_main, parse_mode="Markdown")
     else:
+        # في حال تم استدعاؤها من CallbackQuery
         await update.callback_query.message.edit_text(instructions, reply_markup=keyboard_main, parse_mode="Markdown")
 
 # ===============================================
-# أكثر الكتب تحميلاً (إصلاح نظام المفاتيح)
+# عرض أكثر الكتب تحميلاً (إصلاح نظام المفاتيح)
 # ===============================================
 async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
     if not conn: return
 
     one_week_ago = datetime.now() - timedelta(days=7)
+    # جلب الكتب الأكثر تحميلاً مع أسمائها ومعرفاتها
     rows = await conn.fetch("""
         SELECT b.file_id, b.file_name, COUNT(d.book_id) AS d_count
-        FROM downloads d JOIN books b ON b.id = d.book_id
-        WHERE d.downloaded_at >= $1 GROUP BY b.file_id, b.file_name
-        ORDER BY d_count DESC LIMIT 10;
+        FROM downloads d 
+        JOIN books b ON b.id = d.book_id
+        WHERE d.downloaded_at >= $1 
+        GROUP BY b.file_id, b.file_name
+        ORDER BY d_count DESC 
+        LIMIT 10;
     """, one_week_ago)
 
     if not rows:
-        await update.callback_query.message.edit_text("⚠️ لا توجد تنزيلات هذا الأسبوع.")
+        await update.callback_query.message.edit_text(
+            "⚠️ لا توجد بيانات تحميل كافية لهذا الأسبوع حتى الآن.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عودة", callback_data="home_index")]])
+        )
         return
 
     keyboard = []
     for r in rows:
-        # توليد المفتاح المتوافق مع search_handler
+        # توليد المفتاح المتوافق مع search_handler (MD5)
         key = hashlib.md5(r['file_id'].encode()).hexdigest()[:16]
         context.bot_data[f"file_{key}"] = r['file_id']
         
         display_name = r["file_name"][:45] + "..." if len(r["file_name"]) > 45 else r["file_name"]
         keyboard.append([InlineKeyboardButton(f"📖 {display_name} ({r['d_count']})", callback_data=f"file:{key}")])
     
-    keyboard.append([InlineKeyboardButton("🔙 عودة", callback_data="home_index")])
-    await update.callback_query.message.edit_text("🔥 **أكثر الكتب تحميلاً:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    keyboard.append([InlineKeyboardButton("🔙 عودة للقائمة الرئيسية", callback_data="home_index")])
+    await update.callback_query.message.edit_text("🔥 **أكثر الكتب تحميلاً خلال الـ 7 أيام الماضية:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text(f"🚫 اشترك في {CHANNEL_USERNAME} أولاً.")
+        await update.message.reply_text(f"🚫 يرجى الاشتراك في القناة أولاً {CHANNEL_USERNAME}")
         return
     await search_books(update, context)
 
+# ===============================================
+# تشغيل البوت
+# ===============================================
 def run_bot():
-    app = Application.builder().token(os.getenv("BOT_TOKEN")).post_init(init_db).post_shutdown(close_db).persistence(PicklePersistence(filepath="bot_data.pickle")).build()
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        logger.error("🚨 BOT_TOKEN is missing!")
+        return
+
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(init_db)
+        .post_shutdown(close_db)
+        .persistence(PicklePersistence(filepath="bot_data.pickle"))
+        .build()
+    )
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
@@ -237,6 +273,8 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     
     register_admin_handlers(app, start)
+    
+    logger.info("🚀 Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
