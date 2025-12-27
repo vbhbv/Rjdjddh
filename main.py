@@ -136,6 +136,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    conn = context.bot_data.get("db_conn")
 
     if data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
@@ -155,10 +156,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "إدارة المكتبة تحترم حقوق الملكية الفكرية للمؤلفين ودور النشر. "
                 "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
             )
-            if query.message:
-                await query.message.edit_text(text=instructions, reply_markup=keyboard, parse_mode="Markdown")
-            else:
-                await query.message.reply_text(text=instructions, reply_markup=keyboard, parse_mode="Markdown")
+            await query.message.edit_text(text=instructions, reply_markup=keyboard, parse_mode="Markdown")
         else:
             await query.message.edit_text(
                 "😊 لم نتمكن من التحقق من اشتراكك بعد.\n\n"
@@ -167,16 +165,32 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data in ["show_index", "home_index"]:
         await show_index(update, context)
+    
     elif data == "show_index_en":
         from index_handler import show_index_en
         await show_index_en(update, context)
+    
     elif data == "top_downloads_week":
         await show_top_downloads_week(update, context)
+    
     elif data.startswith("index:"):
         await search_by_index(update, context)
+    
     elif data.startswith("index_page:"):
         await navigate_index_pages(update, context)
-    elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
+
+    elif data.startswith("file:"):
+        # تسجيل عملية التحميل قبل عرض الملف
+        if conn:
+            file_id = data.split(":")[1]
+            await conn.execute("""
+                INSERT INTO downloads (book_id, user_id)
+                SELECT id, $1 FROM books WHERE file_id = $2
+                LIMIT 1
+            """, query.from_user.id, file_id)
+        await handle_callbacks(update, context)
+
+    elif data in ["next_page", "prev_page", "search_similar"]:
         await handle_callbacks(update, context)
 
 # ===============================================
@@ -209,14 +223,10 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
     )
 
-    if not await check_subscription(update.effective_user.id, context.bot):
+    user_id = update.effective_user.id
+    if not await check_subscription(user_id, context.bot):
         if update.message:
             await update.message.reply_text(
-                "🌿 أهلًا بك!\n\nللوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
-                reply_markup=keyboard_subscription
-            )
-        elif update.callback_query:
-            await update.callback_query.message.reply_text(
                 "🌿 أهلًا بك!\n\nللوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
                 reply_markup=keyboard_subscription
             )
@@ -232,8 +242,9 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 # ===============================================
 async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     conn = context.bot_data.get("db_conn")
+    query = update.callback_query
     if not conn:
-        await update.callback_query.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
+        await query.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
         return
 
     one_week_ago = datetime.now() - timedelta(days=7)
@@ -242,14 +253,15 @@ async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     FROM downloads d
     JOIN books b ON b.id = d.book_id
     WHERE d.downloaded_at >= $1
-    GROUP BY b.id
+    GROUP BY b.id, b.file_id, b.file_name
     ORDER BY downloads_count DESC
     LIMIT 10;
     """
     rows = await conn.fetch(sql, one_week_ago)
 
     if not rows:
-        await update.callback_query.message.reply_text("⚠️ لا توجد بيانات تحميل للأسبوع الحالي.")
+        await query.message.edit_text("⚠️ لا توجد بيانات تحميل للأسبوع الحالي حتى الآن.", 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عودة", callback_data="check_subscription")]]))
         return
 
     text = "🔥 **أكثر الكتب تحميلاً هذا الأسبوع:**\n\n"
@@ -257,24 +269,20 @@ async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     for r in rows:
         display_name = r["file_name"] if len(r["file_name"]) <= 50 else r["file_name"][:47]+"..."
         keyboard.append([InlineKeyboardButton(f"📖 {display_name} ({r['downloads_count']})", callback_data=f"file:{r['file_id']}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 عودة للقائمة الرئيسية", callback_data="check_subscription")])
 
-    await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 # ===============================================
 # تعديل: التحقق من الاشتراك قبل البحث
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_subscription(update.effective_user.id, context.bot):
-        if update.message:
-            await update.message.reply_text(
-                "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
-                f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
-            )
-        elif update.callback_query:
-            await update.callback_query.message.reply_text(
-                "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
-                f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
-            )
+        await update.message.reply_text(
+            "🚫 لا يمكنك البحث قبل الاشتراك في القناة.\n"
+            f"يرجى الانضمام إلى {CHANNEL_USERNAME} أولاً."
+        )
         return
     await search_books(update, context)
 
@@ -299,10 +307,10 @@ def run_bot():
         .build()
     )
 
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
-    app.add_handler(CommandHandler("start", start))
 
     register_admin_handlers(app, start)
 
