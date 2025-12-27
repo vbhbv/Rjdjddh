@@ -7,6 +7,7 @@ from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     PicklePersistence, ContextTypes, filters
 )
+import hashlib
 
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks  # البحث العادي
@@ -22,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات (المطورة بالفهارس)
+# إعداد قاعدة البيانات
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -35,11 +36,9 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-            logger.info("✅ Extensions (unaccent, pg_trgm) ensured.")
         except Exception as e:
             logger.warning(f"⚠️ Could not create extensions: {e}")
 
-        # جدول الكتب
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
             id SERIAL PRIMARY KEY,
@@ -49,11 +48,9 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             uploaded_at TIMESTAMP DEFAULT NOW()
         );
         """)
-
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_fts_books ON books USING gin (to_tsvector('arabic', file_name));")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_trgm_books ON books USING gin (file_name gin_trgm_ops);")
 
-        # جدول المستخدمين
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -61,7 +58,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         );
         """)
 
-        # جدول عداد التنزيلات
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS downloads (
             book_id INT REFERENCES books(id),
@@ -70,7 +66,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         );
         """)
 
-        # جدول الإعدادات
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -205,7 +200,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")],
+        [InlineKeyboardButton("📩 تواصل معنا", url="@Boooksfreee1bot")],
         [InlineKeyboardButton("📚 عرض الفهرس العربي", callback_data="show_index")],
         [InlineKeyboardButton("📚 عرض الفهرس الإنجليزي", callback_data="show_index_en")],
         [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
@@ -267,7 +262,7 @@ async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ===============================================
-# تعديل: التحقق من الاشتراك قبل البحث
+# التحقق من الاشتراك قبل البحث
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_subscription(update.effective_user.id, context.bot):
