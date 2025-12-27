@@ -1,7 +1,7 @@
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from search_handler import send_books_page  # نفس دالة عرض الكتب
+from search_handler import send_books_page  # دالة عرض الكتب كما هي
 
 # -----------------------------
 # دوال التطبيع والنظافة
@@ -95,7 +95,7 @@ INDEXES_EN = [
     ("Languages", "languages_en", ["language", "dictionary", "translation"])
 ]
 
-INDEXES_PER_PAGE = 10
+INDEXES_PER_PAGE = 5  # عرض 5 فهارس لكل صفحة بدل 10
 
 # -----------------------------
 # عرض الفهرس بصفحات (عام لكل فهرس)
@@ -119,6 +119,9 @@ async def show_index_page(update, context: ContextTypes.DEFAULT_TYPE, indexes, p
         )
     if nav_buttons:
         keyboard.append(nav_buttons)
+
+    # زر التواصل ثابت
+    keyboard.append([InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = f"📚 اختر الفهرس الذي تريد استعراضه (عدد الفهارس: {total_indexes}):"
@@ -219,5 +222,4 @@ async def search_by_index(update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["index_key"] = index_key
 
     # زر العودة للفهرس ثابت لجميع صفحات الكتب
-    # يتم تحديد نوع الفهرس الحالي لإظهار الفهرس الصحيح عند العودة
     await send_books_page(update, context, include_index_home=True)
