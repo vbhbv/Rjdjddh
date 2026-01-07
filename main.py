@@ -35,6 +35,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
         logger.info("✅ Extensions (unaccent, pg_trgm) ensured.")
 
+        # جدول الكتب
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
             id SERIAL PRIMARY KEY,
@@ -47,6 +48,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_fts_books ON books USING gin (to_tsvector('arabic', file_name));")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_trgm_books ON books USING gin (file_name gin_trgm_ops);")
 
+        # جدول المستخدمين
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -54,6 +56,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         );
         """)
 
+        # جدول التنزيلات
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS downloads (
             book_id INT REFERENCES books(id),
@@ -62,6 +65,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         );
         """)
 
+        # جدول الإعدادات
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -141,10 +145,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "👋 **أهلاً بك في المكتبة الرقمية**\n\n"
                 "📖 **تعليمات الاستخدام:**\n"
                 "1️⃣ أرسل اسم الكتاب أو اسم المؤلف مباشرة للبحث.\n"
-                "2️⃣ يفضل كتابة كلمات محددة (مثال: فن اللامبالاة بدلاً من كتاب فن).\n\n"
-                "⚖️ **حقوق الملكية الفكرية:**\n"
-                "إدارة المكتبة تحترم حقوق الملكية الفكرية للمؤلفين ودور النشر. "
-                "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
+                "2️⃣ يمكنك استخدام الفهارس لتصفح الكتب حسب التصنيف.\n\n"
+                "⚖️ إدارة المكتبة تحترم حقوق الملكية الفكرية."
             )
             await context.bot.send_message(
                 chat_id=query.from_user.id,
@@ -158,9 +160,20 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 "بعد الانضمام إلى القناة، اضغط على «تحقق من الاشتراك» للمتابعة."
             )
 
-    elif data == "top_downloads_week":
-        await show_top_downloads_week(update, context)
-    elif data.startswith("file:") or data in ["next_page", "prev_page", "search_similar"]:
+    elif data.startswith("file:"):
+        # تسجيل التنزيل تلقائيًا
+        file_id = data.replace("file:", "")
+        conn = context.bot_data.get("db_conn")
+        if conn:
+            book = await conn.fetchrow("SELECT id FROM books WHERE file_id=$1", file_id)
+            if book:
+                await conn.execute(
+                    "INSERT INTO downloads (book_id, user_id) VALUES ($1, $2)",
+                    book["id"], query.from_user.id
+                )
+        await handle_callbacks(update, context)
+
+    elif data in ["next_page", "prev_page", "search_similar"]:
         await handle_callbacks(update, context)
 
 # ===============================================
@@ -177,7 +190,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         ])
         await update.message.reply_text(
             "🌿 أهلًا بك!\n\n"
-            "للوصول إلى مكتبة الكتب الكاملة والاستفادة من البحث الذكي، يرجى الانضمام إلى قناتنا الرسمية.",
+            "للوصول إلى مكتبة الكتب الكاملة، يرجى الانضمام إلى قناتنا الرسمية.",
             reply_markup=keyboard
         )
         return
@@ -190,11 +203,8 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     instructions = (
         "👋 **أهلاً بك في المكتبة الرقمية**\n\n"
         "📖 **تعليمات الاستخدام:**\n"
-        "1️⃣ أرسل اسم الكتاب أو اسم المؤلف مباشرة للبحث.\n"
-        "2️⃣ يفضل كتابة كلمات محددة (مثال: فن اللامبالاة بدلاً من كتاب فن).\n\n"
-        "⚖️ **حقوق الملكية الفكرية:**\n"
-        "إدارة المكتبة تحترم حقوق الملكية الفكرية للمؤلفين ودور النشر. "
-        "إذا كنت صاحب حق وترغب في إزالة محتوى معين، يرجى التواصل معنا عبر الزر أدناه."
+        "1️⃣ أرسل اسم الكتاب مباشرة للبحث.\n"
+        "2️⃣ يمكنك استخدام الأزرار لتصفح الكتب وتحميلها."
     )
     
     await update.message.reply_text(
