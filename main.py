@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات (FIXED)
+# إعداد قاعدة البيانات
 # ===============================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -83,9 +83,8 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON books USING gin (file_name gin_trgm_ops);
             """)
 
-        # ⚠️ نحتفظ بالاسم db_conn لتوافق search_handler
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready and stable.")
+        logger.info("✅ Database pool ready.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
@@ -94,7 +93,6 @@ async def close_db(app: Application):
     pool = app.bot_data.get("db_conn")
     if pool:
         await pool.close()
-        logger.info("✅ Database pool closed.")
 
 # ===============================================
 # استقبال ملفات PDF من القنوات
@@ -138,27 +136,40 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 # ===============================================
-# التعامل مع أزرار callback
+# start (✔️ المفقودة – تم إصلاح الخطأ)
+# ===============================================
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
+    await register_user(update, context)
+
+    if not await check_subscription(update.effective_user.id, context.bot):
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
+            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+        ])
+        await update.message.reply_text(
+            "🌿 أهلاً بك\n\nيرجى الاشتراك في القناة أولاً",
+            reply_markup=keyboard
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
+    ])
+
+    await update.message.reply_text(
+        "📚 مرحباً بك في مكتبة الكتب\n\nأرسل اسم الكتاب للبحث",
+        reply_markup=keyboard
+    )
+
+# ===============================================
+# callbacks
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
-    if data == "check_subscription":
-        if await check_subscription(query.from_user.id, context.bot):
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")],
-                [InlineKeyboardButton("🔥 أكثر الكتب تحميلاً", callback_data="top_downloads_week")]
-            ])
-            await context.bot.send_message(
-                chat_id=query.from_user.id,
-                text="👋 **أهلاً بك في المكتبة الرقمية**",
-                reply_markup=keyboard,
-                parse_mode="Markdown"
-            )
-
-    elif data.startswith("file:"):
+    if data.startswith("file:"):
         file_id = data.replace("file:", "")
         pool = context.bot_data.get("db_conn")
         if pool:
@@ -171,43 +182,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                     )
         await handle_callbacks(update, context)
 
-    elif data in ["next_page", "prev_page", "search_similar"]:
+    elif data in ["next_page", "prev_page", "search_similar", "top_downloads_week"]:
         await handle_callbacks(update, context)
-
-# ===============================================
-# أكثر الكتب تحميلاً
-# ===============================================
-async def show_top_downloads_week(update, context: ContextTypes.DEFAULT_TYPE):
-    pool = context.bot_data.get("db_conn")
-    if not pool:
-        return
-
-    one_week_ago = datetime.now() - timedelta(days=7)
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-        SELECT b.file_id, b.file_name, COUNT(d.book_id) AS downloads_count
-        FROM downloads d
-        JOIN books b ON b.id = d.book_id
-        WHERE d.downloaded_at >= $1
-        GROUP BY b.id
-        ORDER BY downloads_count DESC
-        LIMIT 10;
-        """, one_week_ago)
-
-    if not rows:
-        await update.callback_query.message.reply_text("⚠️ لا توجد بيانات تحميل للأسبوع الحالي.")
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(f"📖 {r['file_name']}", callback_data=f"file:{r['file_id']}")]
-        for r in rows
-    ]
-
-    await update.callback_query.message.edit_text(
-        "🔥 **أكثر الكتب تحميلاً هذا الأسبوع:**",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
 
 # ===============================================
 # البحث
@@ -233,10 +209,10 @@ def run_bot():
         .build()
     )
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
-    app.add_handler(CommandHandler("start", start))
 
     register_admin_handlers(app, start)
     app.run_polling()
