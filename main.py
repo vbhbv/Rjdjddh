@@ -144,7 +144,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     if data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/Boooksfreee1bot")]
+                [InlineKeyboardButton("📩 تواصل معنا", url="https://t.me/HMDALataar")]
             ])
             await context.bot.send_message(
                 chat_id=query.from_user.id,
