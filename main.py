@@ -126,11 +126,30 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 # ===============================================
-# callbacks
+# callbacks (تم التصحيح هنا فقط)
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if query.data == "check_subscription":
+        if await check_subscription(query.from_user.id, context.bot):
+            await query.message.edit_text(
+                (
+                    "🌟 *تم التحقق من الاشتراك بنجاح*\n\n"
+                    "📚 يمكنك الآن استخدام بوت مكتبة الكتب\n"
+                    "🔎 فقط اكتب اسم الكتاب أو جزءًا منه للبحث\n\n"
+                    "📖 قراءة ممتعة!"
+                ),
+                parse_mode="Markdown"
+            )
+        else:
+            await query.message.reply_text(
+                f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
+                "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
+            )
+        return
+
     await handle_callbacks(update, context)
 
 # ===============================================
