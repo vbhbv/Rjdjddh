@@ -60,7 +60,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON books USING gin (file_name gin_trgm_ops);
             """)
 
-            # تعديل: إضافة أعمدة التميز والاشتراك لجدول المستخدمين
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -70,7 +69,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             );
             """)
             
-            # التأكد من وجود الأعمدة في حال كان الجدول قديمًا
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;")
 
@@ -139,10 +137,23 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "check_subscription":
+    # معالجة طلب الفهرس
+    if query.data == "show_index":
+        from indexes import show_index_menu
+        await show_index_menu(update, context)
+        return
+    
+    # معالجة اختيار قسم من الفهرس
+    elif query.data.startswith("idx:"):
+        from indexes import handle_index_selection
+        await handle_index_selection(update, context)
+        return
+
+    elif query.data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
-            # إضافة زر الاشتراك المميز عند التحقق
+            # الكيبورد الجديد يحتوي على الفهرس والاشتراك المميز
             keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
                 [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
             ])
             await query.message.edit_text(
@@ -173,7 +184,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # معالجة ضغط زر الشراء
     elif query.data == "buy_premium":
         text = (
             "⭐ **العضوية المميزة (Premium)**\n\n"
@@ -211,8 +221,9 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # إضافة زر الاشتراك المميز في رسالة البداية
+    # زر الفهرس كزر Armageddon في المقدمة
     keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
         [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
     ])
     await update.message.reply_text(
