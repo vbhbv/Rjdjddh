@@ -60,15 +60,22 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON books USING gin (file_name gin_trgm_ops);
             """)
 
+            # تعديل: إضافة أعمدة التميز والاشتراك لجدول المستخدمين
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
-                joined_at TIMESTAMP DEFAULT NOW()
+                joined_at TIMESTAMP DEFAULT NOW(),
+                is_premium BOOLEAN DEFAULT FALSE,
+                premium_expiry TIMESTAMP
             );
             """)
+            
+            # التأكد من وجود الأعمدة في حال كان الجدول قديمًا
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;")
 
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready.")
+        logger.info("✅ Database pool ready with premium columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
@@ -134,6 +141,10 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
+            # إضافة زر الاشتراك المميز عند التحقق
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+            ])
             await query.message.edit_text(
                 (
                     "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
@@ -152,13 +163,26 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                     "📩 باستخدامك للبوت فأنت تقرّ بذلك.\n\n"
                     "📖 نتمنى لك قراءة ممتعة!"
                 ),
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=keyboard
             )
         else:
             await query.message.reply_text(
                 f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
                 "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
             )
+        return
+
+    # معالجة ضغط زر الشراء
+    elif query.data == "buy_premium":
+        text = (
+            "⭐ **العضوية المميزة (Premium)**\n\n"
+            "استمتع ببحث غير محدود طوال اليوم دون قيود!\n\n"
+            "💳 **السعر:** 5 دولارات شهرياً.\n"
+            "للتفعيل، يرجى إرسال لقطة شاشة للمبلغ عبر المعرف أدناه:\n"
+            "📩 @HMDALataar"
+        )
+        await query.message.reply_text(text, parse_mode="Markdown")
         return
 
     await handle_callbacks(update, context)
@@ -187,7 +211,10 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ✅ نفس رسالة زر (تحقق من الاشتراك) تمامًا
+    # إضافة زر الاشتراك المميز في رسالة البداية
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+    ])
     await update.message.reply_text(
         (
             "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
@@ -206,7 +233,8 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             "📩 باستخدامك للبوت فأنت تقرّ بذلك.\n\n"
             "📖 نتمنى لك قراءة ممتعة!"
         ),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=keyboard
     )
 
 # ===============================================
