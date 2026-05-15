@@ -57,7 +57,7 @@ async def handle_index_selection(update, context: ContextTypes.DEFAULT_TYPE):
         SELECT file_id, file_name 
         FROM books 
         WHERE file_name ~* $1 
-        LIMIT 50;
+        LIMIT 700;
         """
         rows = await conn.fetch(sql, f"({keywords_pattern})")
 
