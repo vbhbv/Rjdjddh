@@ -189,7 +189,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             "⭐ **العضوية المميزة (Premium)**\n\n"
             "استمتع ببحث غير محدود طوال اليوم دون قيود!\n\n"
             "💳 **السعر:** 5 دولارات شهرياً.\n"
-            "للتفعيل، يرجى إرسال لقطة شاشة للمبلغ عبر المعرف أدناه:\n"
+            "للتفعيل، يرجى التواصل معنا عبر المعرف أدناه:\n"
             "📩 @HMDALataar"
         )
         await query.message.reply_text(text, parse_mode="Markdown")
