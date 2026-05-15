@@ -5,6 +5,9 @@ from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
+# استيراد دالة الفحص من الملف المنفرد
+from limit_handler import check_search_limit
+
 # إعداد اللوج لتتبع أي أخطاء
 logger = logging.getLogger(__name__)
 
@@ -32,42 +35,54 @@ def get_clean_keywords(text: str) -> List[str]:
 
 async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
-    conn = context.bot_data.get("db_conn")
+    user_id = update.effective_user.id
+    pool = context.bot_data.get("db_conn")
 
-    if not conn:
+    if not pool:
         await update.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
         return
+
+    # --- بداية عملية الربط وفحص القيود ---
+    async with pool.acquire() as conn:
+        can_search = await check_search_limit(user_id, conn)
+        if not can_search:
+            await update.message.reply_text(
+                "⚠️ عذراً! لقد استنفدت حد البحث اليومي (10 عمليات بحث).\n"
+                "يرجى العودة غداً أو الاشتراك في العضوية المميزة للبحث بلا حدود. ⭐"
+            )
+            return
+    # --- نهاية عملية الربط ---
 
     norm_q = normalize_query(query)
     keywords = get_clean_keywords(norm_q)
     
     # تحويل الكلمات لصيغة البحث النصي (AND search)
-    # البحث عن "لست اسفة" سيتحول إلى "لست & اسفة:*"
     ts_query = ' & '.join([f"{w}:*" for w in keywords])
 
     try:
-        # استعلام SQL هجين يجمع بين 3 تقنيات للبحث في آن واحد
-        sql = """
-        SELECT file_id, file_name,
-               -- 1. وزن البحث النصي (FTS)
-               ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
-               -- 2. نسبة التشابه الإملائي (Trigram)
-               similarity(file_name, $2) AS sim
-        FROM books
-        WHERE 
-            to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1) -- البحث بالجذور
-            OR file_name ILIKE $3 -- البحث عن الجملة كما هي (حل مشكلة لست اسفة)
-            OR file_name % $2   -- البحث بالتشابه (حتى لو أخطأ المستخدم في حرف)
-        ORDER BY 
-            (file_name ILIKE $3) DESC, -- الأولوية المطلقة للتطابق التام
-            rank DESC, 
-            sim DESC
-        LIMIT $4;
-        """
-        
-        # النمط $3 هو البحث عن الجملة في أي مكان داخل اسم الملف
-        full_pattern = f"%{query.strip()}%"
-        rows = await conn.fetch(sql, ts_query, norm_q, full_pattern, MAX_RESULTS)
+        # استخدام الـ pool لتنفيذ الاستعلام
+        async with pool.acquire() as conn:
+            # استعلام SQL هجين يجمع بين 3 تقنيات للبحث في آن واحد
+            sql = """
+            SELECT file_id, file_name,
+                   -- 1. وزن البحث النصي (FTS)
+                   ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
+                   -- 2. نسبة التشابه الإملائي (Trigram)
+                   similarity(file_name, $2) AS sim
+            FROM books
+            WHERE 
+                to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1) -- البحث بالجذور
+                OR file_name ILIKE $3 -- البحث عن الجملة كما هي (حل مشكلة لست اسفة)
+                OR file_name % $2   -- البحث بالتشابه (حتى لو أخطأ المستخدم في حرف)
+            ORDER BY 
+                (file_name ILIKE $3) DESC, -- الأولوية المطلقة للتطابق التام
+                rank DESC, 
+                sim DESC
+            LIMIT $4;
+            """
+            
+            full_pattern = f"%{query.strip()}%"
+            rows = await conn.fetch(sql, ts_query, norm_q, full_pattern, MAX_RESULTS)
 
         if not rows:
             # إذا لم نجد شيئاً، نستدعي نظام الاقتراحات الذكي
