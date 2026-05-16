@@ -2,6 +2,7 @@ import hashlib
 import re
 import logging
 from typing import List
+from datetime import datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -42,23 +43,51 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
         return
 
-    # --- بداية عملية الربط وفحص القيود ---
+    # --- بداية عملية الربط وفحص القيود الصارمة لمدة 24 ساعة ---
     async with pool.acquire() as conn:
-        can_search = await check_search_limit(user_id, conn)
-        if not can_search:
-            msg = (
-                "⚠️ **تنبيه: لقد استنفدت حد البحث اليومي المجاني (10 عمليات).**\n\n"
-                "تم وضع هذا الحد لضمان استمرارية عمل البوت وحمايته من العبث والاستهلاك المفرط للموارد، "
-                "مما يضمن سرعة الخدمة لجميع المستخدمين.\n\n"
-                "🌟 **يمكنك الحصول على اشتراك مميز لفتح البحث بلا حدود!**\n"
-                "• مبلغ الاشتراك زهيد جداً: **5 دولارات فقط شهرياً**.\n"
-                "• ندعم جميع طرق الدفع الإلكترونية.\n\n"
-                "📩 للاشتراك أو الاستفسار تواصل معنا عبر: @HMDALataar\n"
-                "أو يرجى العودة غداً للمحاولة مجدداً."
-            )
-            await update.message.reply_text(msg, parse_mode="Markdown")
-            return
-    # --- نهاية عملية الربط ---
+        # التحقق أولاً هل المستخدم مشترك مميز (Premium) لمنحه بحثاً مفتوحاً؟
+        user_status = await conn.fetchrow("SELECT is_premium FROM users WHERE user_id = $1", user_id)
+        
+        if not user_status or not user_status['is_premium']:
+            now = datetime.now()
+            block_until = context.user_data.get("block_until")
+            
+            # 1. التحقق هل المستخدم يمر بفترة حظر مفروضة حالياً؟
+            if block_until and now < block_until:
+                remaining = block_until - now
+                hours = remaining.seconds // 3600
+                minutes = (remaining.seconds % 3600) // 60
+                
+                msg = (
+                    f"⚠️ **تنبيه: لقد استنفدت حد البحث اليومي المجاني (10 عمليات).**\n\n"
+                    f"الرجاء الانتظار **{hours} ساعة و {minutes} دقيقة** حتى ينتهي الحظر تلقائياً، أو اشترك في العضوية المميزة للبحث اللامحدود.\n\n"
+                    "🌟 **يمكنك الحصول على اشتراك مميز لفتح البحث بلا حدود!**\n"
+                    "• مبلغ الاشتراك زهيد جداً: **5 دولارات فقط شهرياً**.\n"
+                    "• ندعم جميع طرق الدفع الإلكترونية.\n\n"
+                    "📩 للاشتراك أو الاستفسار تواصل معنا عبر: @HMDALataar"
+                )
+                await update.message.reply_text(msg, parse_mode="Markdown")
+                return
+
+            # 2. إذا لم يكن محظوراً، نقوم بفحص الحد عبر الدالة الأساسية للبوت
+            can_search = await check_search_limit(user_id, conn)
+            if not can_search:
+                # إذا استنفد حدوده الآن، نفرض عليه حظراً زمنياً دقيقاً لمدة 24 ساعة كاملة
+                context.user_data["block_until"] = now + timedelta(days=1)
+                
+                msg = (
+                    "⚠️ **تنبيه: لقد استنفدت حد البحث اليومي المجاني (10 عمليات).**\n\n"
+                    "تم وضع هذا الحد لضمان استمرارية عمل البوت وحمايته من العبث والاستهلاك المفرط للموارد، "
+                    "مما يضمن سرعة الخدمة لجميع المستخدمين.\n\n"
+                    "🌟 **يمكنك الحصول على اشتراك مميز لفتح البحث بلا حدود!**\n"
+                    "• مبلغ الاشتراك زهيد جداً: **5 دولارات فقط شهرياً**.\n"
+                    "• ندعم جميع طرق الدفع الإلكترونية.\n\n"
+                    "📩 للاشتراك أو الاستفسار تواصل معنا عبر: @HMDALataar\n"
+                    "أو يرجى العودة بعد 24 ساعة للمحاولة مجدداً."
+                )
+                await update.message.reply_text(msg, parse_mode="Markdown")
+                return
+    # --- نهاية عملية الربط وفحص القيود ---
 
     norm_q = normalize_query(query)
     keywords = get_clean_keywords(norm_q)
