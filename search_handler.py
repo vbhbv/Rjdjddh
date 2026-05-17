@@ -48,6 +48,10 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
         # التحقق أولاً هل المستخدم مشترك مميز (Premium) لمنحه بحثاً مفتوحاً؟
         user_status = await conn.fetchrow("SELECT is_premium FROM users WHERE user_id = $1", user_id)
         
+        # تجهيز رابط الدعوة الخاص بالمستخدم بشكل مسبق لاستخدامه في الأزرار والرسائل
+        bot_username = context.bot.username
+        referral_link = f"https://t.me/{bot_username}?start=inv_{user_id}"
+        
         if not user_status or not user_status['is_premium']:
             now = datetime.now()
             block_until = context.user_data.get("block_until")
@@ -60,13 +64,17 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 
                 msg = (
                     f"⚠️ **تنبيه: لقد استنفدت حد البحث اليومي المجاني (10 عمليات).**\n\n"
-                    f"الرجاء الانتظار **{hours} ساعة و {minutes} دقيقة** حتى ينتهي الحظر تلقائياً، أو اشترك في العضوية المميزة للبحث اللامحدود.\n\n"
-                    "🌟 **يمكنك الحصول على اشتراك مميز لفتح البحث بلا حدود!**\n"
-                    "• مبلغ الاشتراك زهيد جداً: **5 دولارات فقط شهرياً**.\n"
-                    "• ندعم جميع طرق الدفع الإلكترونية.\n\n"
-                    "📩 للاشتراك أو الاستفسار تواصل معنا عبر: @HMDALataar"
+                    f"الرجاء الانتظار **{hours} ساعة و {minutes} دقيقة** حتى ينتهي الحظر تلقائياً.\n\n"
+                    f"💡 **هل تريد استخدام البوت بلا حدود مجاناً الآن؟**\n"
+                    f"👥 شارك البوت مع أصدقائك أو في المجموعات عبر الزر أدناه:\n\n"
+                    f"🎁 بمجرد انضمام **5 أشخاص جدد** من خلال رابطك، سيقوم البوت تلقائياً بتفعيل **اشتراك البريميوم (Premium) لحسابك مجاناً لمدة أسبوعين كاملين!**"
                 )
-                await update.message.reply_text(msg, parse_mode="Markdown")
+                
+                share_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📢 انشر البوت مع أصدقائك الآن", switch_inline_query=f"\nأفضل بوت تليجرام لتحميل الكتب والروايات مجاناً! 📚\nادخل وجربه من هنا: {referral_link}")]
+                ])
+                
+                await update.message.reply_text(msg, reply_markup=share_keyboard, parse_mode="Markdown")
                 return
 
             # 2. إذا لم يكن محظوراً، نقوم بفحص الحد عبر الدالة الأساسية للبوت
@@ -77,15 +85,17 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 
                 msg = (
                     "⚠️ **تنبيه: لقد استنفدت حد البحث اليومي المجاني (10 عمليات).**\n\n"
-                    "تم وضع هذا الحد لضمان استمرارية عمل البوت وحمايته من العبث والاستهلاك المفرط للموارد، "
-                    "مما يضمن سرعة الخدمة لجميع المستخدمين.\n\n"
-                    "🌟 **يمكنك الحصول على اشتراك مميز لفتح البحث بلا حدود!**\n"
-                    "• مبلغ الاشتراك زهيد جداً: **5 دولارات فقط شهرياً**.\n"
-                    "• ندعم جميع طرق الدفع الإلكترونية.\n\n"
-                    "📩 للاشتراك أو الاستفسار تواصل معنا عبر: @HMDALataar\n"
-                    "أو يرجى العودة بعد 24 ساعة للمحاولة مجدداً."
+                    "💡 **هل تريد تفعيل الميزات المدفوعة واستخدام البوت بلا حدود مجاناً؟**\n"
+                    "يمكنك الحصول على العضوية المميزة الآن بطريقة بسيطة جداً:\n\n"
+                    "👥 **شارك البوت مع 5 من أصدقائك أو في المجموعات عبر الزر أدناه**\n\n"
+                    "🎁 بمجرد انضمام **5 أشخاص جدد** من خلال رابطك، سيقوم البوت تلقائياً بتفعيل **اشتراك البريميوم (Premium) لحسابك مجاناً لمدة أسبوعين كاملين!**"
                 )
-                await update.message.reply_text(msg, parse_mode="Markdown")
+                
+                share_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📢 انشر البوت مع أصدقائك الآن", switch_inline_query=f"\nأفضل بوت تليجرام لتحميل الكتب والروايات مجاناً! 📚\nادخل وجربه من هنا: {referral_link}")]
+                ])
+                
+                await update.message.reply_text(msg, reply_markup=share_keyboard, parse_mode="Markdown")
                 return
     # --- نهاية عملية الربط وفحص القيود ---
 
@@ -103,7 +113,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             SELECT file_id, file_name,
                    -- 1. وزن البحث النصي (FTS)
                    ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
-                   -- 2. نسبة التشابه الإملائي (Trigram)
+                   -- 2. نسبة التشافه الإملائي (Trigram)
                    similarity(file_name, $2) AS sim
             FROM books
             WHERE 
