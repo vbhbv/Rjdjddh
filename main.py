@@ -119,16 +119,53 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# تسجيل المستخدم
+# تسجيل المستخدم ومعالجة الإحالة عند الضغط على الرابط
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get("db_conn")
-    if pool and update.effective_user:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
-                update.effective_user.id
-            )
+    if not pool or not update.effective_user:
+        return
+
+    user_id = update.effective_user.id
+    async with pool.acquire() as conn:
+        # تسجيل المستخدم إذا لم يكن موجوداً
+        await conn.execute(
+            "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
+            user_id
+        )
+        
+        # --- التحقق الذكي من مشاركة الرابط ---
+        if context.args and context.args[0].startswith("inv_"):
+            try:
+                inviter_id = int(context.args[0].split("_")[1])
+                
+                # التأكد أن الشخص لا يضغط على رابط الإحالة الخاص به
+                if inviter_id != user_id:
+                    # تفعيل البريميوم للشخص الذي شارك الرابط لمدة أسبوعين (14 يوماً) تلقائياً فوراً
+                    await conn.execute("""
+                        UPDATE users 
+                        SET is_premium = TRUE, 
+                            premium_expiry = NOW() + INTERVAL '14 days' 
+                        WHERE user_id = $1
+                    """, inviter_id)
+                    
+                    # تصفير حظر الـ 24 ساعة في ذاكرة السيرفر ليعود للبحث مباشرة
+                    if context.application.user_data and inviter_id in context.application.user_data:
+                        if "block_until" in context.application.user_data[inviter_id]:
+                            context.application.user_data[inviter_id]["block_until"] = None
+                    
+                    # إرسال رسالة شكر وتبشير فوري للشخص الذي قام بنشر الرابط
+                    try:
+                        await context.bot.send_message(
+                            chat_id=inviter_id,
+                            text="🎉 **شكرًا لك! لقد قام أحد أصدقائك بالتفاعل مع الرابط الذي شاركته.**\n\n"
+                                 "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة أسبوعين كاملين!**\n"
+                                 "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
+                        )
+                    except:
+                        pass
+            except Exception as e:
+                logger.error(f"Error processing referral shortcut: {e}")
 
 # ===============================================
 # callbacks
