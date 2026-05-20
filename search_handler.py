@@ -64,14 +64,21 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 hours = remaining.seconds // 3600
                 minutes = (remaining.seconds % 3600) // 60
 
+                # 🌟 الكليشة الجديدة المعدلة بدقة في حالة الحظر المؤقت المستمر
                 msg = (
                     f"⚠️ **تنبيه: لقد استنفدت حد البحث اليومي المجاني (10 عمليات).**\n\n"
-                    f"الرجاء الانتظار **{hours} ساعة و {minutes} دقيقة**\n"
-                    f"أو فعّل البريميوم."
+                    f"⏱️ المتبقي لانتهاء الحظر التلقائي: **{hours} ساعة و {minutes} دقيقة**\n\n"
+                    f"يمكنك تفعيل البحث اللامحدود فوراً وتخطي الحظر عبر أحد الخيارات التالية:\n\n"
+                    f"💳 **الخيار السريع (الاشتراك المدفوع):**\n"
+                    f"• اشترك في العضوية المميزة بمبلغ 5$ دولارات فقط شهرياً للبحث بلا حدود.\n"
+                    f"📩 للتفعيل الفوري تواصل معنا: @HMDALataar\n\n"
+                    f"🎁 **الخيار المجاني (دعم البوت):**\n"
+                    f"• شارك البوت مع أصدقائك أو في المجموعات عبر الزر أدناه.\n"
+                    f"• بمجرد ضغط أحد أصدقائك على رابطك، سيقوم البوت تلقائياً بتفعيل البريميوم لحسابك مجاناً لمدة أسبوع!"
                 )
 
                 keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📢 مشاركة", switch_inline_query=f"انضم للبوت {referral_link}")]
+                    [InlineKeyboardButton("📢 مشاركة رابط الإحالة", switch_inline_query=f"{referral_link}")]
                 ])
 
                 await update.message.reply_text(msg, reply_markup=keyboard, parse_mode="Markdown")
@@ -82,13 +89,20 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
             if not can_search:
                 context.user_data["block_until"] = now + timedelta(days=1)
 
+                # 🌟 الكليشة الجديدة المعدلة بدقة لحظة وصول المستخدم للحد الأقصى مباشرة
                 msg = (
-                    "⚠️ **لقد استنفدت حد البحث اليومي (10 عمليات).**\n\n"
-                    "🎁 شارك البوت لتفعيل البريميوم مجاناً"
+                    f"⚠️ **تنبيه: لقد استنفدت حد البحث اليومي المجاني (10 عمليات).**\n\n"
+                    f"يمكنك تفعيل البحث اللامحدود فوراً وتخطي الحظر عبر أحد الخيارات التالية:\n\n"
+                    f"💳 **الخيار السريع (الاشتراك المدفوع):**\n"
+                    f"• اشترك في العضوية المميزة بمبلغ 5$ دولارات فقط شهرياً للبحث بلا حدود.\n"
+                    f"📩 للتفعيل الفوري تواصل معنا: @HMDALataar\n\n"
+                    f"🎁 **الخيار المجاني (دعم البوت):**\n"
+                    f"• شارك البوت مع أصدقائك أو في المجموعات عبر الزر أدناه.\n"
+                    f"• بمجرد ضغط أحد أصدقائك على رابطك، سيقوم البوت تلقائياً بتفعيل البريميوم لحسابك مجاناً لمدة أسبوع!"
                 )
 
                 keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📢 انشر البوت", switch_inline_query=f"{referral_link}")]
+                    [InlineKeyboardButton("📢 انشر البوت الآن", switch_inline_query=f"{referral_link}")]
                 ])
 
                 await update.message.reply_text(msg, reply_markup=keyboard, parse_mode="Markdown")
