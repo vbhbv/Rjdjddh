@@ -68,9 +68,16 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
                 premium_expiry TIMESTAMP
             );
             """)
-            
-            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;")
-            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;")
+
+            await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
+            """)
+
+            await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
+            """)
 
         app_context.bot_data["db_conn"] = pool
         logger.info("✅ Database pool ready with premium columns.")
@@ -78,8 +85,12 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
 
+# ===============================================
+# إغلاق قاعدة البيانات
+# ===============================================
 async def close_db(app: Application):
     pool = app.bot_data.get("db_conn")
+
     if pool:
         await pool.close()
         logger.info("✅ Database pool closed.")
@@ -88,12 +99,15 @@ async def close_db(app: Application):
 # استقبال ملفات PDF
 # ===============================================
 async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
+
     if (
         update.channel_post
         and update.channel_post.document
         and update.channel_post.document.mime_type == "application/pdf"
     ):
+
         pool = context.bot_data.get("db_conn")
+
         if not pool:
             return
 
@@ -123,6 +137,7 @@ async def check_subscription(user_id: int, bot) -> bool:
 # تسجيل المستخدم ومعالجة الإحالة
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
+
     pool = context.bot_data.get("db_conn")
 
     if not pool or not update.effective_user:
@@ -131,22 +146,26 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     async with pool.acquire() as conn:
+
         existing_user = await conn.fetchval(
             "SELECT user_id FROM users WHERE user_id = $1",
             user_id
         )
 
         if not existing_user:
+
             await conn.execute(
                 "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
                 user_id
             )
 
             if context.args and context.args[0].startswith("inv_"):
+
                 try:
                     inviter_id = int(context.args[0].split("_")[1])
 
                     if inviter_id != user_id:
+
                         await conn.execute("""
                             UPDATE users
                             SET is_premium = TRUE,
@@ -180,15 +199,18 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 # callbacks
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
     if query.data == "show_index":
+
         from indexes import show_index_menu
         await show_index_menu(update, context)
         return
 
     elif query.data.startswith("idx:"):
+
         from indexes import handle_index_selection
         await handle_index_selection(update, context)
         return
@@ -225,6 +247,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         else:
+
             await query.message.reply_text(
                 f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
                 "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
@@ -314,14 +337,18 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await check_subscription(update.effective_user.id, context.bot):
+
         await update.message.reply_text(
             f"🚫 لاستخدام البوت يجب الاشتراك في {CHANNEL_USERNAME} أولاً"
         )
+
         return
 
-    # دعم أمر /search
+    # دعم /search بدون تعديل update.message.text
     if context.args:
-        update.message.text = " ".join(context.args)
+        context.user_data["search_query"] = " ".join(context.args)
+    else:
+        context.user_data["search_query"] = update.message.text
 
     await search_books(update, context)
 
