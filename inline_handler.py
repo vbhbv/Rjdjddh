@@ -1,185 +1,281 @@
-import os
 import re
 import hashlib
 import logging
+
 from telegram import (
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
-    InlineQueryResultArticle, 
-    InlineQueryResultCachedDocument, 
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InlineQueryResultCachedDocument,
     InputTextMessageContent
 )
+
 from telegram.ext import ContextTypes
 
-# إعداد اللوج لتعقب العمليات بدقة كاملة في السجلات
 logger = logging.getLogger(__name__)
 
-# اسم القناة الداعمة للاشتراك الإجباري
 CHANNEL_USERNAME = "@iiollr"
 
-# ===============================================
-# دالة تطهير وتوحيد النص (Normalization)
-# ===============================================
-def local_normalize_text(text: str) -> str:
+
+# =========================================
+# تطبيع النص العربي
+# =========================================
+def normalize(text: str) -> str:
+
     if not text:
         return ""
-    text = text.strip().lower()
-    
-    # خريطة استبدال وتوحيد الحروف المتشابهة لتفادي مشاكل الإملاء
+
+    text = text.lower().strip()
+
     replacements = {
-        'أ': 'ا', 'إ': 'ا', 'آ': 'ا',
-        'ة': 'ه',
-        'ى': 'ي',
-        'ئ': 'ء', 'ؤ': 'ء'
+        "أ": "ا",
+        "إ": "ا",
+        "آ": "ا",
+        "ة": "ه",
+        "ى": "ي",
+        "ؤ": "ء",
+        "ئ": "ء"
     }
-    for search, replace in replacements.items():
-        text = text.replace(search, replace)
-        
-    # إزالة الحركات والتنوين بالكامل
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
     text = re.sub(r"[ًٌٍَُِّْ]", "", text)
-    # إزالة الفراغات الزائدة
-    text = re.sub(r"\s+", " ", text)
-        
-    return text.strip()
 
-# ===============================================
-# دالة التحقق من الاشتراك الإجباري
-# ===============================================
-async def check_subscription(user_id: int, bot) -> bool:
+    return text
+
+
+# =========================================
+# التحقق من الاشتراك
+# =========================================
+async def check_subscription(user_id, bot):
+
     try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ("member", "administrator", "creator")
-    except Exception as e:
-        logger.error(f"⚠️ فشل فحص الاشتراك للمستخدم {user_id}: {e}")
-        return True  # تمرير المستخدم في حال تعطل الـ API مؤقتاً لضمان عدم توقف البوت
 
-# ===============================================
-# دالة مساعدة لتوليد كائنات النصوص (Articles)
-# ===============================================
-def make_article_result(result_id: str, title: str, description: str, message_text: str):
+        member = await bot.get_chat_member(
+            CHANNEL_USERNAME,
+            user_id
+        )
+
+        return member.status in (
+            "member",
+            "administrator",
+            "creator"
+        )
+
+    except:
+        return True
+
+
+# =========================================
+# عنصر نصي مساعد
+# =========================================
+def article(id_, title, desc, text):
+
     return InlineQueryResultArticle(
-        id=result_id,
+        id=id_,
         title=title,
-        description=description,
-        input_message_content=InputTextMessageContent(message_text, parse_mode="Markdown")
+        description=desc,
+        input_message_content=InputTextMessageContent(
+            text
+        )
     )
 
-# ===============================================
-# معالج البحث المضمن (Inline Handler)
-# ===============================================
+
+# =========================================
+# البحث المضمن
+# =========================================
 async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
+
     inline_query = update.inline_query
+
     if not inline_query:
         return
 
     query = inline_query.query.strip()
-    user = update.effective_user
-    user_id = user.id if user else 0
-    
-    logger.info(f"📥 [طلب بحث Inline]: مستخدم [{user_id}] يبحث عن: '{query}'")
 
-    pool = context.bot_data.get("db_conn") or context.bot_data.get("db_pool")
+    user_id = (
+        update.effective_user.id
+        if update.effective_user
+        else 0
+    )
+
     results = []
 
-    # 1️⃣ حالة حقل النص فارغ (واجهة الاستعداد)
+    # قاعدة البيانات
+    pool = context.bot_data.get("db_conn")
+
+    # =====================================
+    # بدون نص
+    # =====================================
     if not query:
+
         results.append(
-            make_article_result(
-                result_id="inline_welcome_state",
-                title="🔍 أهلاً بك في البحث الفوري للمكتبة!",
-                description="ابدأ بكتابة اسم الكتاب أو الرواية هنا للبحث الفوري...",
-                message_text="💡 **طريقة استخدام البحث عن بُعد:**\nاكتب اسم أي كتاب تريده مباشرة بعد معرف البوت في حقل النص داخل أي شات.\n\n*مثال:* `@boooksfree1bot دليل رام`"
+            article(
+                "welcome",
+                "🔍 البحث الفوري للمكتبة",
+                "اكتب اسم أي كتاب",
+                "📚 اكتب اسم الكتاب بعد معرف البوت مباشرة."
             )
         )
-        await inline_query.answer(results, cache_time=0, is_personal=True)
+
+        await inline_query.answer(
+            results,
+            cache_time=0,
+            is_personal=True
+        )
+
         return
 
-    # 2️⃣ التحقق من الاشتراك الإجباري
-    is_subbed = await check_subscription(user_id, context.bot)
-    if not is_subbed:
+    # =====================================
+    # تحقق الاشتراك
+    # =====================================
+    subscribed = await check_subscription(
+        user_id,
+        context.bot
+    )
+
+    if not subscribed:
+
         results.append(
-            make_article_result(
-                result_id="inline_sub_required",
-                title="⚠️ يجب الاشتراك في القناة أولاً لاستخدام البحث!",
-                description=f"انقر هنا للاشتراك في {CHANNEL_USERNAME} لتفعيل ميزة البحث.",
-                message_text=f"🚫 **عذراً، يجب عليك الاشتراك أولاً في قناة البوت الرسمية {CHANNEL_USERNAME}** لتتمكن من استخدام ميزة البحث الفوري وتحميل الكتب!"
+            article(
+                "sub_required",
+                "⚠️ يجب الاشتراك بالقناة",
+                CHANNEL_USERNAME,
+                f"اشترك أولاً في {CHANNEL_USERNAME}"
             )
         )
-        await inline_query.answer(results, cache_time=0, is_personal=True)
+
+        await inline_query.answer(
+            results,
+            cache_time=0,
+            is_personal=True
+        )
+
         return
 
-    # 3️⃣ التحقق من اتصال قاعدة البيانات
+    # =====================================
+    # تحقق قاعدة البيانات
+    # =====================================
     if not pool:
-        logger.error("🚨 اتصال قاعدة البيانات مفقود في bot_data")
+
         results.append(
-            make_article_result(
-                result_id="inline_db_missing",
-                title="⚙️ السيرفر قيد الصيانة المؤقتة",
-                description="يرجى المحاولة مرة أخرى خلال ثوانٍ...",
-                message_text="❌ عذراً، نواجه صيانة مؤقتة في محرك البحث الفوري، يرجى المحاولة لاحقاً."
+            article(
+                "db_error",
+                "⚙️ السيرفر غير متصل",
+                "قاعدة البيانات غير جاهزة",
+                "حدث خطأ مؤقت."
             )
         )
-        await inline_query.answer(results, cache_time=0, is_personal=True)
+
+        await inline_query.answer(
+            results,
+            cache_time=0,
+            is_personal=True
+        )
+
         return
 
-    # 4️⃣ تهيئة واستباق النصوص للبحث النصي المرن
-    norm_q = local_normalize_text(query)
-    search_pattern = f"%{query}%"
-    norm_pattern = f"%{norm_q}%"
-
-    # 5️⃣ تنفيذ الاستعلام المرن والآمن في PostgreSQL
+    # =====================================
+    # البحث
+    # =====================================
     try:
+
+        normalized = normalize(query)
+
+        pattern1 = f"%{query}%"
+        pattern2 = f"%{normalized}%"
+
         async with pool.acquire() as conn:
-            # استعلام يدمج بين المطابقة المباشرة والمطابقة المطهّرة بدون الحركات والهمزات
-            sql = """
-            SELECT file_id, file_name
-            FROM books
-            WHERE 
-                file_name ILIKE $1
-                OR replace(replace(replace(replace(replace(lower(file_name), 'أ', 'ا'), 'إ', 'a'), 'آ', 'a'), 'ة', 'ه'), 'ى', 'ي') ILIKE $2
-            ORDER BY (file_name ILIKE $1) DESC, file_name ASC
-            LIMIT 15;
-            """
-            rows = await conn.fetch(sql, search_pattern, norm_pattern)
-            
+
+            rows = await conn.fetch(
+                """
+                SELECT file_id, file_name
+                FROM books
+                WHERE
+                    lower(file_name) ILIKE lower($1)
+
+                    OR
+
+                    lower(name_normalized) ILIKE lower($2)
+
+                LIMIT 15
+                """,
+                pattern1,
+                pattern2
+            )
+
             for i, row in enumerate(rows):
-                file_id = str(row['file_id'])
-                file_name = str(row['file_name'])
-                
-                unique_id = hashlib.md5(f"{file_id}_{i}".encode()).hexdigest()
-                
+
+                file_id = str(row["file_id"])
+                file_name = str(row["file_name"])
+
+                unique_id = hashlib.md5(
+                    f"{file_id}_{i}".encode()
+                ).hexdigest()
+
                 results.append(
+
                     InlineQueryResultCachedDocument(
+
                         id=unique_id,
+
                         title=file_name,
-                        document_file_id=file_id,  # المعامل الصحيح المتوافق مع المكتبة الحديثة
-                        description="اضغط هنا لإرسال الكتاب فوراً كملف PDF",
-                        caption=f"📖 **{file_name}**\n\nتم التحميل بواسطة: @boooksfree1bot",
-                        parse_mode="Markdown",
+
+                        document_file_id=file_id,
+
+                        description="إرسال الكتاب PDF",
+
+                        caption=f"📚 {file_name}",
+
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
+                            [
+                                InlineKeyboardButton(
+                                    "📤 مشاركة البوت",
+                                    switch_inline_query=""
+                                )
+                            ]
                         ])
                     )
                 )
-                
-    except Exception as db_error:
-        logger.error(f"💥 انهيار أثناء جلب البيانات من القاعدة في الـ Inline: {db_error}")
-        await inline_query.answer([], cache_time=0)
+
+    except Exception as e:
+
+        logger.error(f"INLINE ERROR: {e}")
+
+        await inline_query.answer(
+            [],
+            cache_time=0,
+            is_personal=True
+        )
+
         return
 
-    # 6️⃣ حالة عدم العثور على نتائج مطابقة
+    # =====================================
+    # لا توجد نتائج
+    # =====================================
     if not results:
+
         results.append(
-            make_article_result(
-                result_id="inline_no_results",
-                title=f"❌ لم يتم العثور على نتائج لـ: '{query}'",
-                description="تأكد من كتابة الحروف بشكل صحيح أو ابحث عن اسم كتاب آخر.",
-                message_text=f"🔍 بحثت عن: *{query}* ولم أعثر على نتائج مطابقة.\n\n💡 *نصيحة:* جرب كتابة كلمة واحدة فريدة من اسم الكتاب."
+            article(
+                "no_results",
+                "❌ لا توجد نتائج",
+                query,
+                f"لم يتم العثور على: {query}"
             )
         )
 
-    # إرسال البيانات النهائية للتليجرام
+    # =====================================
+    # إرسال النتائج
+    # =====================================
     try:
-        await inline_query.answer(results, cache_time=0, is_personal=True)
-    except Exception as telegram_error:
-        logger.error(f"🚨 خطأ واجهة تليجرام في الـ Inline: {telegram_error}")
+
+        await inline_query.answer(
+            results,
+            cache_time=0,
+            is_personal=True
+        )
+
+    except Exception as e:
+
+        logger.error(f"INLINE SEND ERROR: {e}")
