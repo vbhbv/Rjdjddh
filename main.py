@@ -10,9 +10,6 @@ from telegram.ext import (
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks
 
-# استيراد معالج البحث المخصص للمجموعات
-from group_search import group_search_books
-
 # ===============================================
 # إعداد اللوج
 # ===============================================
@@ -101,6 +98,7 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         document = update.channel_post.document
+
         async with pool.acquire() as conn:
             await conn.execute("""
             INSERT INTO books(file_id, file_name)
@@ -122,45 +120,59 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# تسجيل المستخدم ومعالجة الإحالة (للمستخدمين الجدد فقط)
+# تسجيل المستخدم ومعالجة الإحالة
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get("db_conn")
+
     if not pool or not update.effective_user:
         return
 
     user_id = update.effective_user.id
+
     async with pool.acquire() as conn:
-        existing_user = await conn.fetchval("SELECT user_id FROM users WHERE user_id = $1", user_id)
-        
+        existing_user = await conn.fetchval(
+            "SELECT user_id FROM users WHERE user_id = $1",
+            user_id
+        )
+
         if not existing_user:
-            await conn.execute("INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", user_id)
-            
+            await conn.execute(
+                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
+                user_id
+            )
+
             if context.args and context.args[0].startswith("inv_"):
                 try:
                     inviter_id = int(context.args[0].split("_")[1])
-                    
+
                     if inviter_id != user_id:
                         await conn.execute("""
-                            UPDATE users 
-                            SET is_premium = TRUE, 
-                                premium_expiry = NOW() + INTERVAL '7 days' 
+                            UPDATE users
+                            SET is_premium = TRUE,
+                                premium_expiry = NOW() + INTERVAL '7 days'
                             WHERE user_id = $1
                         """, inviter_id)
-                        
-                        if context.application.user_data and inviter_id in context.application.user_data:
+
+                        if (
+                            context.application.user_data
+                            and inviter_id in context.application.user_data
+                        ):
                             if "block_until" in context.application.user_data[inviter_id]:
                                 context.application.user_data[inviter_id]["block_until"] = None
-                        
+
                         try:
                             await context.bot.send_message(
                                 chat_id=inviter_id,
-                                text="🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                     "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة أسبوع كامل!**\n"
-                                     "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
+                                text=(
+                                    "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
+                                    "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة أسبوع كامل!**\n"
+                                    "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
+                                )
                             )
                         except:
                             pass
+
                 except Exception as e:
                     logger.error(f"Error processing referral shortcut: {e}")
 
@@ -175,18 +187,21 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         from indexes import show_index_menu
         await show_index_menu(update, context)
         return
-    
+
     elif query.data.startswith("idx:"):
         from indexes import handle_index_selection
         await handle_index_selection(update, context)
         return
 
     elif query.data == "check_subscription":
+
         if await check_subscription(query.from_user.id, context.bot):
+
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
                 [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
             ])
+
             await query.message.edit_text(
                 (
                     "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
@@ -208,14 +223,17 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
+
         else:
             await query.message.reply_text(
                 f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
                 "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
             )
+
         return
 
     elif query.data == "buy_premium":
+
         text = (
             "⭐ **العضوية المميزة (Premium)**\n\n"
             "استمتع ببحث غير محدود طوال اليوم دون قيود!\n\n"
@@ -223,6 +241,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             "للتفعيل, يرجى التواصل معنا عبر المعرف أدناه:\n"
             "📩 @HMDALataar"
         )
+
         await query.message.reply_text(text, parse_mode="Markdown")
         return
 
@@ -232,13 +251,22 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # /start
 # ===============================================
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
+
     await register_user(update, context)
 
     if not await check_subscription(update.effective_user.id, context.bot):
+
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك في القناة", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
-            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+            [InlineKeyboardButton(
+                "✅ اشترك في القناة",
+                url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
+            )],
+            [InlineKeyboardButton(
+                "🔍 تحقق من الاشتراك",
+                callback_data="check_subscription"
+            )]
         ])
+
         await update.message.reply_text(
             (
                 "👋 مرحبًا بك في *بوت مكتبة الكتب*\n\n"
@@ -250,12 +278,14 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=keyboard
         )
+
         return
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
         [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
     ])
+
     await update.message.reply_text(
         (
             "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
@@ -289,7 +319,7 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # دعم /search داخل الخاص أيضاً
+    # دعم أمر /search
     if context.args:
         update.message.text = " ".join(context.args)
 
@@ -299,7 +329,9 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
 # تشغيل البوت
 # ===============================================
 def run_bot():
+
     token = os.getenv("BOT_TOKEN")
+
     if not token:
         logger.error("🚨 BOT_TOKEN not found.")
         return
@@ -313,29 +345,21 @@ def run_bot():
         .build()
     )
 
-    # تسجيل معالجات الأحداث الأساسية للبوت
+    # /start
     app.add_handler(CommandHandler("start", start))
 
-    # البحث داخل المجموعات عبر /search فقط
-    app.add_handler(CommandHandler(
-        "search",
-        group_search_books,
-        filters=filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
-    ))
+    # البحث عبر /search في الخاص والمجموعات
+    app.add_handler(CommandHandler("search", search_books_with_subscription))
 
-    # البحث داخل الخاص عبر /search أيضاً
-    app.add_handler(CommandHandler(
-        "search",
-        search_books_with_subscription,
-        filters=filters.ChatType.PRIVATE
-    ))
+    # البحث التلقائي في الخاص فقط
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+            search_books_with_subscription
+        )
+    )
 
-    # تعطيل البحث التلقائي بالمجموعات والإبقاء عليه في الخاص فقط
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-        search_books_with_subscription
-    ))
-
+    # استقبال ملفات PDF من القنوات
     app.add_handler(
         MessageHandler(
             filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
@@ -343,9 +367,12 @@ def run_bot():
         )
     )
 
+    # callbacks
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
     register_admin_handlers(app, start)
+
+    logger.info("✅ Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
