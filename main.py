@@ -4,7 +4,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
-    PicklePersistence, ContextTypes, filters
+    ChatMemberHandler, PicklePersistence, ContextTypes, filters
 )
 
 from admin_panel import register_admin_handlers
@@ -211,6 +211,41 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                     logger.error(f"Error processing referral shortcut: {e}")
 
 # ===============================================
+# الترحيب بالبوت عند إضافته للمجموعات
+# ===============================================
+async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
+    chat_member = update.chat_member
+    if not chat_member:
+        return
+
+    if (
+        chat_member.new_chat_member.user.id == context.bot.id
+        and chat_member.new_chat_member.status in ("member", "administrator")
+    ):
+        group_name = chat_member.chat.title
+        
+        welcome_text = (
+            f"🎉 **أهلاً بكم في مجموعة ( {group_name} )!**\n\n"
+            f"🤖 تم تفعيل **بوت مكتبة الكتب** داخل المجموعة بنجاح، وهو جاهز لمساعدتكم في البحث عن أي كتاب أو رواية مجاناً من بين أكثر من مليون كتاب.\n\n"
+            f"🧭 **كيفية الاستخدام والبحث داخل المجموعة:**\n"
+            f"• للبحث عن كتاب، استخدم الأمر `/search` يليه اسم الكتاب مباشرة.\n"
+            f"• **مثال صحيح:** `/search مقدمة ابن خلدون`\n\n"
+            f"📌 **تعليمات هامة:**\n"
+            f"✔️ يرجى كتابة اسم الكتاب أو جزء واضح من العنوان فقط.\n"
+            f"❌ تجنب الجمل الطويلة، الكلمات العشوائية، أو الأوصاف.\n\n"
+            f"📖 نتمنى لكم رحلة معرفية ممتعة!"
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=chat_member.chat.id,
+                text=welcome_text,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Error sending welcome message to group {chat_member.chat.id}: {e}")
+
+# ===============================================
 # callbacks
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
@@ -230,7 +265,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await handle_index_selection(update, context)
         return
 
-    # 🌟 الاستجابة لزر الأكثر تحميلاً وعرض القائمة المفلترة
+    # الاستجابة لزر الأكثر تحميلاً وعرض القائمة المفلترة
     elif query.data == "show_trending":
         from search_handler import send_trending_books
         await send_trending_books(update, context)
@@ -240,7 +275,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
 
-            # 🌟 تم إضافة الزر هنا تحت زر البريميوم مباشرة بعد نجاح عملية التحقق
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
                 [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
@@ -327,7 +361,6 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # 🌟 تم إضافة الزر هنا تحت زر البريميوم مباشرة في القائمة الرئيسية الافتراضية لأمر /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
         [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
@@ -419,13 +452,18 @@ def run_bot():
         )
     )
 
+    # معالج التقاط انضمام البوت للمجموعات
+    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
+
     # callbacks
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
     register_admin_handlers(app, start)
 
     logger.info("✅ Bot is running...")
-    app.run_polling()
+    
+    # تمرير الـ allowed_updates لالتقاط أحداث المجموعات بانتظام وبلا استثناء
+    app.run_polling(allowed_updates=["update", "message", "callback_query", "chat_member"])
 
 if __name__ == "__main__":
     run_bot()
