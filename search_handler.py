@@ -207,6 +207,19 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=share_keyboard,
                 parse_mode="Markdown"
             )
+
+            # 🌟 دمج ميزة تسجيل الإحصائيات والتنظيف الدوري التلقائي
+            pool = context.bot_data.get("db_conn")
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        # 1. تسجيل عملية التحميل الحالية في الجدول الوسيط
+                        await conn.execute("INSERT INTO download_stats (file_id) VALUES ($1);", file_id)
+                        
+                        # 2. حماية المساحة: حذف البيانات القديمة التي تجاوزت 7 أيام تلقائياً ليبقى الحجم صفرًا
+                        await conn.execute("DELETE FROM download_stats WHERE downloaded_at < NOW() - INTERVAL '7 days';")
+                except Exception as e:
+                    logger.error(f"Error in download stats execution: {e}")
         else:
             await query.message.reply_text("❌ انتهت صلاحية الرابط.")
 
