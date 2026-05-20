@@ -57,7 +57,6 @@ async def check_subscription(user_id: int, bot) -> bool:
         return member.status in ("member", "administrator", "creator")
     except Exception as e:
         logger.error(f"⚠️ [نقطة تتبع]: فشل فحص الاشتراك للمستخدم {user_id} بسبب: {e}")
-        # تفادياً لتعطيل البوت كاملاً عند توقف خوادم تليجرام، نمرر المستخدم بأمان
         return True
 
 # ===============================================
@@ -83,10 +82,8 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id if user else 0
     
-    # 📝 [نقطة تتبع 1]: استقبال طلب البحث الفوري
     logger.info(f"📥 [طلب جديد]: مستخدم [{user_id}] يبحث عن بُعد عن: '{query}'")
 
-    # جلب التوصيل الآمن لقاعدة البيانات المتوافق مع المفتاحين المسجلين في مشروعك
     pool = context.bot_data.get("db_conn") or context.bot_data.get("db_pool")
     results = []
 
@@ -137,17 +134,15 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
     norm_q = local_normalize_text(query)
     keywords = local_get_keywords(query)
     
-    # بناء استعلام دقيق متوافق مع فهارس PostgreSQL البسيطة
     ts_query = ' & '.join([f"{w}:*" for w in keywords]) if keywords else f"{norm_q}:*"
     full_pattern = f"%{query}%"
     norm_pattern = f"%{norm_q}%"
 
-    # 🛑 5. تنفيذ استعلام قاعدة البيانات داخل كتلة Try-Except محصنة كلياً لمنع الـ Crash
+    # 🛑 5. تنفيذ استعلام قاعدة البيانات
     try:
         logger.info(f"⚡ [نقطة تتبع 4]: جاري إرسال الاستعلام لـ PostgreSQL للنص المطهر: '{norm_q}'")
         
         async with pool.acquire() as conn:
-            # استعلام فائق الذكاء يعتمد على الفهارس المجهزة في ملفك الرئيسي مع إعطاء الأولوية للمطابقة
             sql = """
             SELECT file_id, file_name
             FROM books
@@ -160,20 +155,19 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
             """
             rows = await conn.fetch(sql, ts_query, full_pattern, norm_pattern)
             
-            logger.info(f"📊 [نقطة تتبع 5]: اكتمل الاستعلام بنجاح. عثرنا على ({len(rows)}) كتاب يطابق النص في قاعدة البيانات.")
+            logger.info(f"📊 [نقطة تتبع 5]: اكتمل الاستعلام بنجاح. عثرنا على ({len(rows)}) كتاب.")
 
             for i, row in enumerate(rows):
                 file_id = str(row['file_id'])
                 file_name = str(row['file_name'])
                 
-                # توليد معرف فريد وآمن لكل نتيجة يمنع تداخل تليجرام داخلياً
                 unique_id = hashlib.md5(f"{file_id}_{i}".encode()).hexdigest()
                 
                 results.append(
                     InlineQueryResultCachedDocument(
                         id=unique_id,
                         title=file_name,
-                        file_id=file_id,  # ✅ تم ضبط الاسم الهندسي الصحيح للمتغير ليتوافق مع مكتبة PTB
+                        document_file_id=file_id,  # ✅ تم التثبيت والتصحيح الجذري هنا
                         description="اضغط هنا لإرسال الكتاب فوراً كملف PDF",
                         caption=f"📖 **{file_name}**\n\nتم التحميل بواسطة: @boooksfree1bot",
                         parse_mode="Markdown",
@@ -187,7 +181,6 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
         import traceback
         logger.error(f"💥 [انهيار برمي داخل الاستعلام]: {traceback.format_exc()}")
         
-        # منع ظهور شاشة بيضاء أو تجميد الطلب عند حدوث خطأ استعلامي
         results = [
             make_article_result(
                 result_id="query_crash_state",
@@ -214,6 +207,6 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
     # إرسال البيانات النهائية الآمنة للتليجرام
     try:
         await inline_query.answer(results, cache_time=0, is_personal=True)
-        logger.info(f"🚀 [نقطة تتبع 7]: تم تسليم وتمرير قائمة النتائج الفورية إلى تليجرام بنجاح للمستخدم [{user_id}].")
+        logger.info(f"🚀 [نقطة تتبع 7]: تم تسليم وتمرير قائمة النتائج الفورية إلى تليجرام بنجاح.")
     except Exception as telegram_error:
         logger.error(f"🚨 [خطأ واجهة تليجرام]: فشل البوت في تسليم الإجابة عبر الـ API: {telegram_error}")
