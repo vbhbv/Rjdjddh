@@ -10,6 +10,9 @@ from telegram.ext import (
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks
 
+# استيراد معالج البحث المخصص للمجموعات
+from group_search import group_search_books
+
 # ===============================================
 # إعداد اللوج
 # ===============================================
@@ -306,7 +309,20 @@ def run_bot():
 
     # تسجيل معالجات الأحداث الأساسية للبوت
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+    
+    # 🌟 تفعيل ميزة البحث الحصرية داخل المجموعات (العادية والخارقة) فقط
+    app.add_handler(CommandHandler(
+        "بحث", 
+        group_search_books, 
+        filters=filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
+    ))
+
+    # 🌟 تقييد البحث النصي المباشر (بدون أمر) ليعمل في الشات الخاص (Private) فقط منعا لتضارب المجموعات
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, 
+        search_books_with_subscription
+    ))
+    
     app.add_handler(MessageHandler(filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
