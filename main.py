@@ -4,14 +4,11 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
-    InlineQueryHandler, PicklePersistence, ContextTypes, filters
+    PicklePersistence, ContextTypes, filters
 )
 
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks
-
-# استيراد معالج البحث المضمن الجديد من الملف المستقل
-from inline_search import inline_search_books
 
 # ===============================================
 # إعداد اللوج
@@ -307,12 +304,8 @@ def run_bot():
         .build()
     )
 
-    # التسجيل الاحترافي للمعالجات لضمان تشغيل الاستعلام عن بُعد فوراً وبدون تداخل
+    # تسجيل معالجات الأحداث الأساسية للبوت
     app.add_handler(CommandHandler("start", start))
-    
-    # 🌟 تم التقديم هنا ليتفوق على فلاتر الرسائل النصية المبتلعة للطلبات
-    app.add_handler(InlineQueryHandler(inline_search_books))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(MessageHandler(filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
