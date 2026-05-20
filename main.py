@@ -79,7 +79,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
             """)
 
-            # 🌟 إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
+            # إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS download_stats (
                 id SERIAL PRIMARY KEY,
@@ -88,7 +88,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             );
             """)
 
-            # 🌟 إنشاء كشاف سريع لتسريع عمليات تجميع وتنظيف البيانات الأسبوعية
+            # إنشاء كشاف سريع لتسريع عمليات تجميع وتنظيف البيانات الأسبوعية
             await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_download_stats_date 
             ON download_stats (downloaded_at);
@@ -230,13 +230,21 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await handle_index_selection(update, context)
         return
 
+    # 🌟 الاستجابة لزر الأكثر تحميلاً وعرض القائمة المفلترة
+    elif query.data == "show_trending":
+        from search_handler import send_trending_books
+        await send_trending_books(update, context)
+        return
+
     elif query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
 
+            # 🌟 تم إضافة الزر هنا تحت زر البريميوم مباشرة بعد نجاح عملية التحقق
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
-                [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+                [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
+                [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")]
             ])
 
             await query.message.edit_text(
@@ -319,9 +327,11 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
+    # 🌟 تم إضافة الزر هنا تحت زر البريميوم مباشرة في القائمة الرئيسية الافتراضية لأمر /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
-        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
+        [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")]
     ])
 
     await update.message.reply_text(
