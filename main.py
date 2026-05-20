@@ -11,7 +11,7 @@ from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks
 
 # استيراد معالج البحث المضمن الجديد من الملف المستقل
-from inline_handler import inline_search_books
+from inline_search import inline_search_books
 
 # ===============================================
 # إعداد اللوج
@@ -131,22 +131,16 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     async with pool.acquire() as conn:
-        # 1. الفحص أولاً: هل المستخدم موجود مسبقاً في قاعدة البيانات؟
         existing_user = await conn.fetchval("SELECT user_id FROM users WHERE user_id = $1", user_id)
         
-        # 2. إذا كان مستخدماً جديداً كلياً (غير مسجل سابقاً)
         if not existing_user:
-            # تسجيله في النظام لأول مرة
             await conn.execute("INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", user_id)
             
-            # معالجة نظام الإحالة والمكافأة (بما أنه مستخدم جديد)
             if context.args and context.args[0].startswith("inv_"):
                 try:
                     inviter_id = int(context.args[0].split("_")[1])
                     
-                    # التأكد أن الشخص لا يدعو نفسه
                     if inviter_id != user_id:
-                        # تفعيل البريميوم للشخص الذي شارك الرابط لمدة أسبوع واحد (7 أيام) تلقائياً
                         await conn.execute("""
                             UPDATE users 
                             SET is_premium = TRUE, 
@@ -154,12 +148,10 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                             WHERE user_id = $1
                         """, inviter_id)
                         
-                        # تصفير حظر الـ 24 ساعة في ذاكرة السيرفر للناشر ليعود للبحث مباشرة
                         if context.application.user_data and inviter_id in context.application.user_data:
                             if "block_until" in context.application.user_data[inviter_id]:
                                 context.application.user_data[inviter_id]["block_until"] = None
                         
-                        # إرسال رسالة شكر وتبشير للناشر
                         try:
                             await context.bot.send_message(
                                 chat_id=inviter_id,
@@ -179,13 +171,11 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # معالجة طلب الفهرس
     if query.data == "show_index":
         from indexes import show_index_menu
         await show_index_menu(update, context)
         return
     
-    # معالجة اختيار قسم من الفهرس
     elif query.data.startswith("idx:"):
         from indexes import handle_index_selection
         await handle_index_selection(update, context)
@@ -193,7 +183,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
-            # الكيبورد الجديد يحتوي على الفهرس والاشتراك المميز
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
                 [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
@@ -263,7 +252,6 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # زر الفهرس كزر العرض الرئيسي في المقدمة
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
         [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
@@ -319,13 +307,15 @@ def run_bot():
         .build()
     )
 
+    # التسجيل الاحترافي للمعالجات لضمان تشغيل الاستعلام عن بُعد فوراً وبدون تداخل
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
-    app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
-    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     
-    # ربط وتفعيل معالج ميزة البحث المضمن (Inline Mode) المستورد من الملف الجديد كلياً
+    # 🌟 تم التقديم هنا ليتفوق على فلاتر الرسائل النصية المبتلعة للطلبات
     app.add_handler(InlineQueryHandler(inline_search_books))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+    app.add_handler(MessageHandler(filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL, handle_pdf))
+    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
     register_admin_handlers(app, start)
     app.run_polling()
