@@ -2,7 +2,7 @@ import os
 import hashlib
 import asyncpg
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultDocument, InputTextMessageContent
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultDocument, InlineQueryResultCachedDocument, InputTextMessageContent
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     InlineQueryHandler, PicklePersistence, ContextTypes, filters
@@ -171,7 +171,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                     logger.error(f"Error processing referral shortcut: {e}")
 
 # ===============================================
-# ميزة البحث المضمن من أي مكان (Inline Mode)
+# ميزة البحث المضمن من أي مكان (Inline Mode) - النسخة القاطعة
 # ===============================================
 async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
     inline_query = update.inline_query
@@ -191,7 +191,7 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     results = []
     async with pool.acquire() as conn:
-        # 1. التحقق من الاشتراك الإجباري بالقناة الداعمة لحماية البوت من العبث الخارجي
+        # 1. التحقق من الاشتراك الإجباري بالقناة الداعمة لحماية البوت
         if not await check_subscription(user_id, context.bot):
             results.append(
                 InlineQueryResultDocument(
@@ -209,7 +209,7 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         try:
-            # استعلام SQL الهجين فائق السرعة لجلب أفضل 10 نتائج فورية ملائمة للطلب
+            # استعلام جلب البيانات الذكي والسريع
             sql = """
             SELECT file_id, file_name,
                    ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
@@ -229,28 +229,25 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
             rows = await conn.fetch(sql, ts_query, norm_q, full_pattern)
             
             for i, row in enumerate(rows):
-                # إنشاء كائن المستند المضمن ليتم إرساله كملف PDF فعلي مخزن على سيرفرات تليجرام
-                res_doc = InlineQueryResultDocument(
-                    id=f"inline_bk_{i}_{hashlib.md5(row['file_id'].encode()).hexdigest()[:8]}",
-                    title=row['file_name'],
-                    document_url="https://t.me/boooksfree1bot", # رابط هيكلي مطلوب من تليجرام
-                    mime_type="application/pdf",
-                    caption=f"📖 **{row['file_name']}**\n\nتم التحميل بواسطة: @boooksfree1bot",
-                    parse_mode="Markdown",
-                    input_message_content=None,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
-                    ])
+                # الحل القاطع: استخدام الكائن المخصص والمثالي للملفات المرفوعة مسبقاً (Cached Document)
+                results.append(
+                    InlineQueryResultCachedDocument(
+                        id=f"inline_bk_{i}_{hashlib.md5(row['file_id'].encode()).hexdigest()[:8]}",
+                        title=row['file_name'],
+                        file_id=row['file_id'], # تمرير معرف تليجرام الأصلي والآمن دون روابط
+                        caption=f"📖 **{row['file_name']}**\n\nتم التحميل بواسطة: @boooksfree1bot",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
+                        ])
+                    )
                 )
-                # إلحاق معرّف الملف المخزن الفعلي بالسيرفر ليتم توصيله وتنزيله تلقائياً في الخلفية
-                res_doc.file_id = row['file_id']
-                results.append(res_doc)
 
         except Exception as e:
             logger.error(f"Inline Database Search Error: {e}")
 
-    # إرسال قائمة النتائج الفورية تحت صندوق الكتابة للمستخدم مع كاش خفيف لتوفير موارد السيرفر
-    await inline_query.answer(results, cache_time=10)
+    # إرسال قائمة النتائج الفورية مباشرة لتعمل فوق صندوق الكتابة بسلاسة
+    await inline_query.answer(results, cache_time=2)
 
 # ===============================================
 # callbacks
@@ -404,7 +401,7 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     
-    # تسجيل معالج ميزة البحث المضمن (Inline Mode) للعمل من أي جروب أو شات
+    # تسجيل معالج ميزة البحث المضمن (Inline Mode) للعمل من أي جروب أو شات كلياً
     app.add_handler(InlineQueryHandler(inline_search_books))
 
     register_admin_handlers(app, start)
