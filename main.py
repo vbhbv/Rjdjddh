@@ -169,7 +169,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                         await conn.execute("""
                             UPDATE users
                             SET is_premium = TRUE,
-                                premium_expiry = NOW() + INTERVAL '7 days'
+                                premium_expiry = NOW() + INTERVAL '1 day'
                             WHERE user_id = $1
                         """, inviter_id)
 
@@ -185,7 +185,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                                 chat_id=inviter_id,
                                 text=(
                                     "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                    "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة أسبوع كامل!**\n"
+                                    "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة يوم واحد!**\n"
                                     "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
                                 )
                             )
