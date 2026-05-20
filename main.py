@@ -282,11 +282,17 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 # البحث
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
+
     if not await check_subscription(update.effective_user.id, context.bot):
         await update.message.reply_text(
             f"🚫 لاستخدام البوت يجب الاشتراك في {CHANNEL_USERNAME} أولاً"
         )
         return
+
+    # دعم /search داخل الخاص أيضاً
+    if context.args:
+        update.message.text = " ".join(context.args)
+
     await search_books(update, context)
 
 # ===============================================
@@ -309,21 +315,34 @@ def run_bot():
 
     # تسجيل معالجات الأحداث الأساسية للبوت
     app.add_handler(CommandHandler("start", start))
-    
-    # 🌟 تم استبدال الكلمة بـ "search" الانجليزية لضمان عدم حدوث الـ ValueError نهائياً في المجموعات
+
+    # البحث داخل المجموعات عبر /search فقط
     app.add_handler(CommandHandler(
-        "search", 
-        group_search_books, 
+        "search",
+        group_search_books,
         filters=filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
     ))
 
-    # تقييد البحث النصي المباشر (بدون أمر) ليعمل في الشات الخاص (Private) فقط
+    # البحث داخل الخاص عبر /search أيضاً
+    app.add_handler(CommandHandler(
+        "search",
+        search_books_with_subscription,
+        filters=filters.ChatType.PRIVATE
+    ))
+
+    # تعطيل البحث التلقائي بالمجموعات والإبقاء عليه في الخاص فقط
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, 
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         search_books_with_subscription
     ))
-    
-    app.add_handler(MessageHandler(filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL, handle_pdf))
+
+    app.add_handler(
+        MessageHandler(
+            filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
+            handle_pdf
+        )
+    )
+
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
     register_admin_handlers(app, start)
