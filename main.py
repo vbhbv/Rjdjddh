@@ -79,8 +79,23 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
             """)
 
+            # 🌟 إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS download_stats (
+                id SERIAL PRIMARY KEY,
+                file_id TEXT,
+                downloaded_at TIMESTAMP DEFAULT NOW()
+            );
+            """)
+
+            # 🌟 إنشاء كشاف سريع لتسريع عمليات تجميع وتنظيف البيانات الأسبوعية
+            await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_download_stats_date 
+            ON download_stats (downloaded_at);
+            """)
+
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready with premium columns.")
+        logger.info("✅ Database pool ready with premium and download stats columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
