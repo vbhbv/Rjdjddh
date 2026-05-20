@@ -310,14 +310,14 @@ def run_bot():
     # تسجيل معالجات الأحداث الأساسية للبوت
     app.add_handler(CommandHandler("start", start))
     
-    # 🌟 تفعيل ميزة البحث الحصرية داخل المجموعات (العادية والخارقة) فقط
+    # 🌟 تم استبدال الكلمة بـ "search" الانجليزية لضمان عدم حدوث الـ ValueError نهائياً في المجموعات
     app.add_handler(CommandHandler(
-        "بحث", 
+        "search", 
         group_search_books, 
         filters=filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
     ))
 
-    # 🌟 تقييد البحث النصي المباشر (بدون أمر) ليعمل في الشات الخاص (Private) فقط منعا لتضارب المجموعات
+    # تقييد البحث النصي المباشر (بدون أمر) ليعمل في الشات الخاص (Private) فقط
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, 
         search_books_with_subscription
