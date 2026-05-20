@@ -1,24 +1,31 @@
 import os
+import re
 import hashlib
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultDocument, InlineQueryResultCachedDocument, InputTextMessageContent
+from telegram import (
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
+    InlineQueryResultArticle, 
+    InlineQueryResultCachedDocument, 
+    InputTextMessageContent
+)
 from telegram.ext import ContextTypes
 
-# إعداد اللوج الخاص بالملف لتعقب العمليات بدقة
+# إعداد اللوج الخاص بالملف لتعقب العمليات بدقة كاملة في السجلات
 logger = logging.getLogger(__name__)
 
+# اسم القناة الداعمة للاشتراك الإجباري
 CHANNEL_USERNAME = "@iiollr"
 
 # ===============================================
-# دالة تطبيق وتطهير النص داخلياً (الأساس الجذري لحل مشاكل الإملاء)
+# دالة تطبيق وتطهير النص داخلياً لتفادي مشاكل الإملاء
 # ===============================================
 def local_normalize_text(text: str) -> str:
     if not text:
         return ""
-    # تحويل الحروف إلى حالاتها الصغيرة وإزالة الفراغات الزائدة
     text = text.strip().lower()
     
-    # خريطة استبدال الحروف المتشابهة لتجاوز الأخطاء الإملائية (نظرية الفستق / أحمد)
+    # خريطة استبدال وتوحيد الحروف المتشابهة
     replacements = {
         'أ': 'ا', 'إ': 'ا', 'آ': 'ا',
         'ة': 'ه',
@@ -28,17 +35,16 @@ def local_normalize_text(text: str) -> str:
     for search, replace in replacements.items():
         text = text.replace(search, replace)
         
-    # إزالة الحركات والتنوين تماماً لتوحيد البحث النصي
-    vowels = ['َ', 'ُ', 'ِ', 'ّ', 'ً', 'ٌ', 'ٍ', 'ْ']
-    for vowel in vowels:
-        text = text.replace(vowel, '')
+    # إزالة الحركات والتنوين بالكامل لتوحيد البحث النصي
+    text = re.sub(r"[ًٌٍَُِّْ]", "", text)
+    # إزالة الفراغات الزائدة والرموز المزعجة
+    text = re.sub(r"\s+", " ", text)
         
-    return text
+    return text.strip()
 
 # دالة استخراج الكلمات المفتاحية النظيفة للبحث المتقدم
 def local_get_keywords(text: str) -> list:
     cleaned = local_normalize_text(text)
-    # تقسيم النص إلى كلمات وتجاهل الكلمات الصغيرة جداً (الزائدة)
     words = [w for w in cleaned.split() if len(w) > 1]
     return words
 
@@ -50,9 +56,20 @@ async def check_subscription(user_id: int, bot) -> bool:
         member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in ("member", "administrator", "creator")
     except Exception as e:
-        logger.error(f"Subscription check bypass/error: {e}")
-        # في حال حدوث أي خطأ في الاتصال بتليجرام، نمرر المستخدم لتفادي تعطيل البوت
+        logger.error(f"⚠️ [نقطة تتبع]: فشل فحص الاشتراك للمستخدم {user_id} بسبب: {e}")
+        # تفادياً لتعطيل البوت كاملاً عند توقف خوادم تليجرام، نمرر المستخدم بأمان
         return True
+
+# ===============================================
+# دالة مساعدة لتوليد كائنات النصوص الآمنة (Articles)
+# ===============================================
+def make_article_result(result_id: str, title: str, description: str, message_text: str):
+    return InlineQueryResultArticle(
+        id=result_id,
+        title=title,
+        description=description,
+        input_message_content=InputTextMessageContent(message_text, parse_mode="Markdown")
+    )
 
 # ===============================================
 # معالج البحث المضمن الجذري والمحصن بالكامل
@@ -63,135 +80,140 @@ async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = inline_query.query.strip()
-    user_id = update.effective_user.id if update.effective_user else 0
-    pool = context.bot_data.get("db_conn")
+    user = update.effective_user
+    user_id = user.id if user else 0
+    
+    # 📝 [نقطة تتبع 1]: استقبال طلب البحث الفوري
+    logger.info(f"📥 [طلب جديد]: مستخدم [{user_id}] يبحث عن بُعد عن: '{query}'")
+
+    # جلب التوصيل الآمن لقاعدة البيانات المتوافق مع المفتاحين المسجلين في مشروعك
+    pool = context.bot_data.get("db_conn") or context.bot_data.get("db_pool")
     results = []
 
     # 🛑 1. حالة الاستعداد الفوري (إذا لم يكتب المستخدم شيئاً بعد المعرف)
     if not query:
+        logger.info(f"⏱️ [نقطة تتبع 2]: حقل النص فارغ، عرض واجهة الاستعداد للمستخدم [{user_id}]")
         results.append(
-            InlineQueryResultDocument(
-                id="emergency_waiting_state",
+            make_article_result(
+                result_id="welcome_waiting_state",
                 title="🔍 أهلاً بك في البحث الفوري للمكتبة!",
                 description="ابدأ بكتابة اسم الكتاب أو الرواية هنا للبحث الفوري...",
-                document_url="https://t.me/boooksfree1bot",
-                mime_type="text/html",
-                input_message_content=InputTextMessageContent(
-                    "💡 **طريقة الاستخدام:**\nاكتب اسم أي كتاب تريده مباشرة بعد معرف البوت في حقل النص (مثال: `@boooksfree1bot نظرية الفستق`)."
-                )
+                message_text="💡 **طريقة استخدام البحث عن بُعد:**\nاكتب اسم أي كتاب تريده مباشرة بعد معرف البوت في حقل النص داخل أي شات.\n\n*مثال:* `@boooksfree1bot نظرية الفستق`"
             )
         )
-        # cache_time=0 يضمن عدم تخزين تليجرام لأي شاشة بيضاء أو حالة فارغة
-        await inline_query.answer(results, cache_time=0)
+        await inline_query.answer(results, cache_time=0, is_personal=True)
         return
 
     # 🛑 2. التحقق من الاشتراك الإجباري
-    if not await check_subscription(user_id, context.bot):
+    is_subbed = await check_subscription(user_id, context.bot)
+    if not is_subbed:
+        logger.warning(f"🚫 [نقطة تتبع 3]: المستخدم [{user_id}] غير مشترك في القناة الداعمة. تم حجب النتائج.")
         results.append(
-            InlineQueryResultDocument(
-                id="emergency_sub_required",
+            make_article_result(
+                result_id="sub_required_state",
                 title="⚠️ يجب الاشتراك في القناة أولاً لاستخدام البحث!",
-                description=f"انقر هنا للاشتراك في {CHANNEL_USERNAME} لتفعيل الميزة.",
-                document_url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}",
-                mime_type="text/html",
-                input_message_content=InputTextMessageContent(
-                    f"🚫 **عذراً، يجب عليك الاشتراك أولاً في قناة البوت الرسمية {CHANNEL_USERNAME}** لتتمكن من استخدام ميزة البحث الفوري وتحميل الكتب من أي مكان!"
-                )
+                description=f"انقر هنا للاشتراك في {CHANNEL_USERNAME} لتفعيل ميزة البحث.",
+                message_text=f"🚫 **عذراً، يجب عليك الاشتراك أولاً في قناة البوت الرسمية {CHANNEL_USERNAME}** لتتمكن من استخدام ميزة البحث الفوري وتحميل الكتب من أي مكان!"
             )
         )
-        await inline_query.answer(results, cache_time=0)
+        await inline_query.answer(results, cache_time=0, is_personal=True)
         return
 
-    # 🛑 3. التحقق من استقرار اتصال قاعدة البيانات
+    # 🛑 3. التحقق من استقرار اتصال قاعدة البيانات في السيرفر
     if not pool:
-        logger.error("🚨 Inline Mode failure: Database pool is NOT initialized or missing in bot_data.")
+        logger.error(f"🚨 [خطأ فادح]: اتصال قاعدة البيانات (db_conn/db_pool) مفقود في الـ bot_data!")
         results.append(
-            InlineQueryResultDocument(
-                id="emergency_db_disconnect",
-                title="⚙️ السيرفر قيد التحديث المؤقت",
+            make_article_result(
+                result_id="db_disconnect_state",
+                title="⚙️ السيرفر قيد الصيانة أو التحديث المؤقت",
                 description="نعمل على تحسين النظام، يرجى المحاولة مرة أخرى خلال ثوانٍ...",
-                document_url="https://t.me/boooksfree1bot",
-                mime_type="text/html",
-                input_message_content=InputTextMessageContent("❌ عذراً، نواجه صيانة مؤقتة في محرك البحث الفوري، يرجى استخدام البحث داخل البوت حالياً.")
+                message_text="❌ عذراً، نواجه صيانة مؤقتة في محرك البحث الفوري عن بُعد، يرجى استخدام البحث الاعتيادي داخل شات البوت حالياً."
             )
         )
-        await inline_query.answer(results, cache_time=0)
+        await inline_query.answer(results, cache_time=0, is_personal=True)
         return
 
-    # ⚙️ 4. معالجة وتطبيق النص داخلياً للبحث الاستعلامي الذكي
+    # ⚙️ 4. معالجة وتطهير النص داخلياً للبحث الاستعلامي الذكي
     norm_q = local_normalize_text(query)
     keywords = local_get_keywords(query)
     
-    # بناء استعلام tsquery المتوافق مع الفهرس العربي
+    # بناء استعلام دقيق متوافق مع فهارس PostgreSQL البسيطة
     ts_query = ' & '.join([f"{w}:*" for w in keywords]) if keywords else f"{norm_q}:*"
     full_pattern = f"%{query}%"
     norm_pattern = f"%{norm_q}%"
 
     # 🛑 5. تنفيذ استعلام قاعدة البيانات داخل كتلة Try-Except محصنة كلياً لمنع الـ Crash
     try:
+        logger.info(f"⚡ [نقطة تتبع 4]: جاري إرسال الاستعلام لـ PostgreSQL للنص المطهر: '{norm_q}'")
+        
         async with pool.acquire() as conn:
-            # استعلام فائق الذكاء يطابق الفهرس العربي، الـ ILIKE، والتطهير النصي للحروف مجتمعين
+            # استعلام فائق الذكاء يعتمد على الفهارس المجهزة في ملفك الرئيسي مع إعطاء الأولوية للمطابقة
             sql = """
             SELECT file_id, file_name
             FROM books
             WHERE 
-                to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+                ($1 != '' AND to_tsvector('simple', lower(file_name)) @@ to_tsquery('simple', $1))
                 OR file_name ILIKE $2
-                OR replace(replace(replace(replace(replace(lower(file_name), 'أ', 'a'), 'إ', 'a'), 'آ', 'a'), 'ة', 'ه'), 'ى', 'ي') ILIKE $3
-            ORDER BY (file_name ILIKE $2) DESC
+                OR replace(replace(replace(replace(replace(lower(file_name), 'أ', 'ا'), 'إ', 'a'), 'آ', 'a'), 'ة', 'ه'), 'ى', 'ي') ILIKE $3
+            ORDER BY (file_name ILIKE $2) DESC, file_name ASC
             LIMIT 15;
             """
             rows = await conn.fetch(sql, ts_query, full_pattern, norm_pattern)
             
+            logger.info(f"📊 [نقطة تتبع 5]: اكتمل الاستعلام بنجاح. عثرنا على ({len(rows)}) كتاب يطابق النص في قاعدة البيانات.")
+
             for i, row in enumerate(rows):
-                # توليد معرف فريد وآمن لكل نتيجة لمنع التضارب داخلياً
-                unique_id = f"in_bk_{i}_{hashlib.md5(row['file_id'].encode()).hexdigest()[:6]}"
+                file_id = str(row['file_id'])
+                file_name = str(row['file_name'])
+                
+                # توليد معرف فريد وآمن لكل نتيجة يمنع تداخل تليجرام داخلياً
+                unique_id = hashlib.md5(f"{file_id}_{i}".encode()).hexdigest()
                 
                 results.append(
                     InlineQueryResultCachedDocument(
                         id=unique_id,
-                        title=row['file_name'],
-                        file_id=row['file_id'], # إرسال الملف الفوري الأصلي دون رفع أو روابط
-                        caption=f"📖 **{row['file_name']}**\n\nتم التحميل بواسطة: @boooksfree1bot",
+                        title=file_name,
+                        file_id=file_id,  # ✅ تم ضبط الاسم الهندسي الصحيح للمتغير ليتوافق مع مكتبة PTB
+                        description="اضغط هنا لإرسال الكتاب فوراً كملف PDF",
+                        caption=f"📖 **{file_name}**\n\nتم التحميل بواسطة: @boooksfree1bot",
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
                         ])
                     )
                 )
+                
     except Exception as db_error:
-        logger.error(f"💥 Critical Inline Database Query Exception: {db_error}", exc_info=True)
-        # منع الصمت المبهم: حتى لو انهارت قاعدة البيانات أثناء الاستعلام، نبلغ المستخدم فوراً بدل التجمد
+        import traceback
+        logger.error(f"💥 [انهيار برمي داخل الاستعلام]: {traceback.format_exc()}")
+        
+        # منع ظهور شاشة بيضاء أو تجميد الطلب عند حدوث خطأ استعلامي
         results = [
-            InlineQueryResultDocument(
-                id="emergency_query_crash",
-                title="⚠️ حدث خطأ غير متوقع أثناء معالجة البحث",
-                description="جاري إصلاح العطل تلقائياً، يرجى محاولة كتابة اسم الكتاب مجدداً.",
-                document_url="https://t.me/boooksfree1bot",
-                mime_type="text/html",
-                input_message_content=InputTextMessageContent("❌ عذراً، فشلت عملية معالجة استعلامك الفوري بسبب ضغط مؤقت.")
+            make_article_result(
+                result_id="query_crash_state",
+                title="⚠️ حدث عطل داخلي مؤقت أثناء معالجة البحث",
+                description="فريق الدعم يعمل على حل العطل حالياً، جرب كتابة اسم الكتاب مجدداً.",
+                message_text="❌ عذراً، فشلت عملية معالجة طلبك الفوري بسبب ضغط أو صيانة مؤقتة في خادم قاعدة البيانات."
             )
         ]
-        await inline_query.answer(results, cache_time=0)
+        await inline_query.answer(results, cache_time=0, is_personal=True)
         return
 
     # 🛑 6. في حال لم يتم العثور على أي نتائج مطابقة في النظام
     if not results:
+        logger.info(f"🔍 [نقطة تتبع 6]: لا توجد أي نتائج مطابقة لـ '{query}' في الفهارس.")
         results.append(
-            InlineQueryResultDocument(
-                id="emergency_no_results_found",
-                title=f"❌ لم يتم العثور على: '{query}'",
-                description="تأكد من كتابة الاسم بشكل صحيح أو ابحث عن عنوان كتاب آخر.",
-                document_url="https://t.me/boooksfree1bot",
-                mime_type="text/html",
-                input_message_content=InputTextMessageContent(
-                    f"🔍 بحثت عن: *{query}* في المكتبة الفورية ولم أعثر عليه.\nتأكد من عنوان الكتاب بدقة أو جرب البحث داخل البوت الرئيسي."
-                )
+            make_article_result(
+                result_id="no_results_found_state",
+                title=f"❌ لم يتم العثور على نتائج لـ: '{query}'",
+                description="تأكد من كتابة الحروف بشكل صحيح أو ابحث عن اسم كتاب آخر.",
+                message_text=f"🔍 بحثت عن: *{query}* في المكتبة الفورية ولم أعثر على نتائج مطابقة.\n\n💡 *نصيحة:* جرب كتابة كلمة واحدة فريدة من اسم الكتاب، أو ابحث عبر الفهرس الذكي داخل البوت الرئيسي."
             )
         )
 
-    # إرسال البيانات النهائية للتليجرام مع إلغاء الكاش لضمان الاستجابة اللحظية مع كل حرف
+    # إرسال البيانات النهائية الآمنة للتليجرام
     try:
-        await inline_query.answer(results, cache_time=0)
+        await inline_query.answer(results, cache_time=0, is_personal=True)
+        logger.info(f"🚀 [نقطة تتبع 7]: تم تسليم وتمرير قائمة النتائج الفورية إلى تليجرام بنجاح للمستخدم [{user_id}].")
     except Exception as telegram_error:
-        logger.error(f"🚨 Failed to send inline response to Telegram: {telegram_error}")
+        logger.error(f"🚨 [خطأ واجهة تليجرام]: فشل البوت في تسليم الإجابة عبر الـ API: {telegram_error}")
