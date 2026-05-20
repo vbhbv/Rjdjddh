@@ -74,7 +74,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                     f"📩 للتفعيل الفوري تواصل معنا: @HMDALataar\n\n"
                     f"🎁 **الخيار المجاني (دعم البوت):**\n"
                     f"• شارك البوت مع أصدقائك أو في المجموعات عبر الزر أدناه.\n"
-                    f"•  بمجرد ضغط أحد أصدقائك على رابطك، سيقوم البوت تلقائياً بتفعيل البريميوم لحسابك مجاناً لمدة يوم واحد!"
+                    f"•  بمجرد ضغط أحد أصدقائك على رابطك, سيقوم البوت تلقائياً بتفعيل البريميوم لحسابك مجاناً لمدة يوم واحد!"
                 )
 
                 keyboard = InlineKeyboardMarkup([
@@ -98,7 +98,7 @@ async def search_books(update, context: ContextTypes.DEFAULT_TYPE):
                     f"📩 للتفعيل الفوري تواصل معنا: @HMDALataar\n\n"
                     f"🎁 **الخيار المجاني (دعم البوت):**\n"
                     f"• شارك البوت مع أصدقائك أو في المجموعات عبر الزر أدناه.\n"
-                    f"• بمجرد ضغط أحد أصدقائك على رابطك، سيقوم البوت تلقائياً بتفعيل البريميوم لحسابك مجاناً لمدة أسبوع!"
+                    f"• بمجرد ضغط أحد أصدقائك على رابطك, سيقوم البوت تلقائياً بتفعيل البريميوم لحسابك مجاناً لمدة أسبوع!"
                 )
 
                 keyboard = InlineKeyboardMarkup([
@@ -230,3 +230,55 @@ async def handle_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "prev_page":
         context.user_data["current_page"] -= 1
         await send_books_page(update, context)
+
+# ====================================================================
+# 🌟 الميزة المضافة: جلب وعرض الكتب الأكثر تحميلاً (5 مرات فما فوق) 🌟
+# ====================================================================
+
+async def get_top_weekly_books(pool) -> list:
+    """جلب الكتب التي تم تحميلها 5 مرات فما فوق خلال آخر 7 أيام"""
+    sql = """
+    SELECT b.file_id, b.file_name, COUNT(s.id) AS download_count
+    FROM download_stats s
+    JOIN books b ON s.file_id = b.file_id
+    WHERE s.downloaded_at >= NOW() - INTERVAL '7 days'
+    GROUP BY b.file_id, b.file_name
+    HAVING COUNT(s.id) >= 5
+    ORDER BY download_count DESC
+    LIMIT 15;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetch(sql)
+
+async def send_trending_books(update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة الكتب الأكثر تحميلاً للمستخدم بأزرار تفاعلية حية"""
+    query = update.callback_query
+    pool = context.bot_data.get("db_conn")
+    
+    if not pool:
+        if query:
+            await query.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
+        return
+
+    rows = await get_top_weekly_books(pool)
+    
+    if not rows:
+        msg = "📚 لا توجد كتب تجاوزت الـ 5 تحميلات هذا الأسبوع حتى الآن."
+        if query:
+            await query.message.reply_text(msg)
+        return
+
+    text = "🔥 **الكتب الأكثر تحميلاً هذا الأسبوع (5 تحميلات فما فوق):**\n\n"
+    keyboard = []
+
+    for b in rows:
+        clean_name = b['file_name'] if len(b['file_name']) < 45 else b['file_name'][:42] + "..."
+        key = hashlib.md5(b['file_id'].encode()).hexdigest()[:16]
+        context.bot_data[f"file_{key}"] = b['file_id']
+        
+        keyboard.append([InlineKeyboardButton(f"📥 ({b['download_count']}) {clean_name}", callback_data=f"file:{key}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if query:
+        await query.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
