@@ -37,7 +37,7 @@ async def is_user_subscribed(user_id: int, bot) -> bool:
         return member.status in ("member", "administrator", "creator")
     except Exception as e:
         logger.error(f"⚠️ فشل فحص اشتراك المستخدم {user_id} في المجموعة: {e}")
-        return True  # تمرير آمن في حال توقف الـ API مؤقتاً
+        return True  # تمرير آمن في حال توقف الـ API مؤقتاً لضمان عدم تعليق البوت
 
 # ===============================================
 # المعالج الرئيسي لأمر /بحث داخل المجموعات
@@ -47,7 +47,8 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
     if not message or not message.text:
         return
 
-    # التأكد من أن الأمر يتم استدعاؤه داخل مجموعة أو سوبرجروب
+    # 🛡️ الحماية البرمجية المزدوجة: التأكد التام من أن الرسالة من مجموعة أو سوبرجروب 
+    # (تم تعديل الشرط ليتطابق مع فلاتر main.py)
     if message.chat.type not in ["group", "supergroup"]:
         return
 
@@ -55,7 +56,6 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id if user else 0
     
     # استخراج نص البحث بعد أمر /بحث
-    # يدعم: /بحث اسم الكتاب أو /بحث@معرف_البوت اسم الكتاب
     parts = message.text.split(maxsplit=1)
     
     if len(parts) < 2 or not parts[1].strip():
@@ -84,7 +84,7 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 2️⃣ جلب اتصال قاعدة البيانات من bot_data المشترك
+    # 2️⃣ جلب اتصال قاعدة البيانات من bot_data المشترك تبعا لـ main.py
     pool = context.bot_data.get("db_conn")
     if not pool:
         logger.error("🚨 اتصال قاعدة البيانات مفقود أثناء البحث في المجموعة!")
@@ -97,15 +97,15 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         async with pool.acquire() as conn:
-            # استعلام ذكي يبحث بالاسم الأصلي والمطهر لتفادي مشاكل الحروف
+            # 🛠️ تصحيح استعلام الـ SQL: تم تعديل قيم الاستبدال الخاطئة (a) إلى (ا) العربية الصحيحة لتفعيل التطبيع الحقيقي
             sql = """
             SELECT file_id, file_name
             FROM books
             WHERE 
                 file_name ILIKE $1
-                OR replace(replace(replace(replace(replace(lower(file_name), 'أ', 'ا'), 'إ', 'a'), 'آ', 'a'), 'ة', 'ه'), 'ى', 'ي') ILIKE $2
+                OR replace(replace(replace(replace(replace(lower(file_name), 'أ', 'ا'), 'إ', 'ا'), 'آ', 'ا'), 'ة', 'ه'), 'ى', 'ي') ILIKE $2
             ORDER BY (file_name ILIKE $1) DESC, file_name ASC
-            LIMIT 5; -- نحدد النتيجة بـ 5 كتب لمنع تضخم الرسائل وتشوه مظهر المجموعة
+            LIMIT 5;
             """
             rows = await conn.fetch(sql, search_pattern, norm_pattern)
 
@@ -122,13 +122,13 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 file_name = row['file_name']
                 
                 try:
-                    # إرسال الملف مباشرة بالاعتماد على الـ file_id المخزن كاش في سيرفرات تليجرام
+                    # إرسال الملف مباشرة بالاعتماد على الـ file_id المخزن
                     await context.bot.send_document(
                         chat_id=message.chat_id,
                         document=file_id,
                         caption=f"📖 **{file_name}**\n\nطلبك جاهز بواسطة: {user.mention_markdown()}",
                         parse_mode="Markdown",
-                        reply_to_message_id=message.message_id # الرد على نفس رسالة الطلب للتنظيم
+                        reply_to_message_id=message.message_id  # الرد المباشر على رسالة العضو لضمان التنظيم
                     )
                 except Exception as send_err:
                     logger.error(f"❌ فشل إرسال الملف {file_name} للمجموعة: {send_err}")
