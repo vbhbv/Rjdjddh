@@ -1,10 +1,11 @@
 import os
+import hashlib
 import asyncpg
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultDocument, InputTextMessageContent
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
-    PicklePersistence, ContextTypes, filters
+    InlineQueryHandler, PicklePersistence, ContextTypes, filters
 )
 
 from admin_panel import register_admin_handlers
@@ -170,6 +171,88 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                     logger.error(f"Error processing referral shortcut: {e}")
 
 # ===============================================
+# ميزة البحث المضمن من أي مكان (Inline Mode)
+# ===============================================
+async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
+    inline_query = update.inline_query
+    query = inline_query.query.strip()
+    user_id = update.effective_user.id
+    pool = context.bot_data.get("db_conn")
+
+    if not query or not pool:
+        return
+
+    # استدعاء دالات التطبيع المعتمدة في البوت لضمان تطابق دقة البحث الإملائي والكلمات الجانبية
+    from search_handler import normalize_query, get_clean_keywords
+    norm_q = normalize_query(query)
+    keywords = get_clean_keywords(norm_q)
+    ts_query = ' & '.join([f"{w}:*" for w in keywords])
+    full_pattern = f"%{query}%"
+
+    results = []
+    async with pool.acquire() as conn:
+        # 1. التحقق من الاشتراك الإجباري بالقناة الداعمة لحماية البوت من العبث الخارجي
+        if not await check_subscription(user_id, context.bot):
+            results.append(
+                InlineQueryResultDocument(
+                    id="sub_required",
+                    title="⚠️ يجب الاشتراك في القناة أولاً لاستخدام البحث المضمن!",
+                    description=f"انقر هنا للاشتراك في {CHANNEL_USERNAME}",
+                    document_url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}",
+                    mime_type="text/html",
+                    input_message_content=InputTextMessageContent(
+                        f"🚫 **عذراً، يجب عليك الاشتراك أولاً في قناة البوت الرسمية {CHANNEL_USERNAME}** لتتمكن من استخدام ميزة البحث الفوري وتحميل الكتب من أي مكان!"
+                    )
+                )
+            )
+            await inline_query.answer(results, cache_time=5)
+            return
+
+        try:
+            # استعلام SQL الهجين فائق السرعة لجلب أفضل 10 نتائج فورية ملائمة للطلب
+            sql = """
+            SELECT file_id, file_name,
+                   ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
+                   similarity(file_name, $2) AS sim
+            FROM books
+            WHERE 
+                to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
+                OR file_name ILIKE $3
+                OR file_name % $2
+            ORDER BY 
+                (file_name ILIKE $3) DESC, 
+                rank DESC, 
+                sim DESC
+            LIMIT 10;
+            """
+            
+            rows = await conn.fetch(sql, ts_query, norm_q, full_pattern)
+            
+            for i, row in enumerate(rows):
+                # إنشاء كائن المستند المضمن ليتم إرساله كملف PDF فعلي مخزن على سيرفرات تليجرام
+                res_doc = InlineQueryResultDocument(
+                    id=f"inline_bk_{i}_{hashlib.md5(row['file_id'].encode()).hexdigest()[:8]}",
+                    title=row['file_name'],
+                    document_url="https://t.me/boooksfree1bot", # رابط هيكلي مطلوب من تليجرام
+                    mime_type="application/pdf",
+                    caption=f"📖 **{row['file_name']}**\n\nتم التحميل بواسطة: @boooksfree1bot",
+                    parse_mode="Markdown",
+                    input_message_content=None,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
+                    ])
+                )
+                # إلحاق معرّف الملف المخزن الفعلي بالسيرفر ليتم توصيله وتنزيله تلقائياً في الخلفية
+                res_doc.file_id = row['file_id']
+                results.append(res_doc)
+
+        except Exception as e:
+            logger.error(f"Inline Database Search Error: {e}")
+
+    # إرسال قائمة النتائج الفورية تحت صندوق الكتابة للمستخدم مع كاش خفيف لتوفير موارد السيرفر
+    await inline_query.answer(results, cache_time=10)
+
+# ===============================================
 # callbacks
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
@@ -320,6 +403,9 @@ def run_bot():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
+    
+    # تسجيل معالج ميزة البحث المضمن (Inline Mode) للعمل من أي جروب أو شات
+    app.add_handler(InlineQueryHandler(inline_search_books))
 
     register_admin_handlers(app, start)
     app.run_polling()
