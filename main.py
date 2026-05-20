@@ -1,8 +1,7 @@
 import os
-import hashlib
 import asyncpg
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultDocument, InlineQueryResultCachedDocument, InputTextMessageContent
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     InlineQueryHandler, PicklePersistence, ContextTypes, filters
@@ -10,6 +9,9 @@ from telegram.ext import (
 
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks
+
+# استيراد معالج البحث المضمن الجديد من الملف المستقل
+from inline_handler import inline_search_books
 
 # ===============================================
 # إعداد اللوج
@@ -171,85 +173,6 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                     logger.error(f"Error processing referral shortcut: {e}")
 
 # ===============================================
-# ميزة البحث المضمن من أي مكان (Inline Mode) - النسخة القاطعة
-# ===============================================
-async def inline_search_books(update, context: ContextTypes.DEFAULT_TYPE):
-    inline_query = update.inline_query
-    query = inline_query.query.strip()
-    user_id = update.effective_user.id
-    pool = context.bot_data.get("db_conn")
-
-    if not query or not pool:
-        return
-
-    # استدعاء دالات التطبيع المعتمدة في البوت لضمان تطابق دقة البحث الإملائي والكلمات الجانبية
-    from search_handler import normalize_query, get_clean_keywords
-    norm_q = normalize_query(query)
-    keywords = get_clean_keywords(norm_q)
-    ts_query = ' & '.join([f"{w}:*" for w in keywords])
-    full_pattern = f"%{query}%"
-
-    results = []
-    async with pool.acquire() as conn:
-        # 1. التحقق من الاشتراك الإجباري بالقناة الداعمة لحماية البوت
-        if not await check_subscription(user_id, context.bot):
-            results.append(
-                InlineQueryResultDocument(
-                    id="sub_required",
-                    title="⚠️ يجب الاشتراك في القناة أولاً لاستخدام البحث المضمن!",
-                    description=f"انقر هنا للاشتراك في {CHANNEL_USERNAME}",
-                    document_url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}",
-                    mime_type="text/html",
-                    input_message_content=InputTextMessageContent(
-                        f"🚫 **عذراً، يجب عليك الاشتراك أولاً في قناة البوت الرسمية {CHANNEL_USERNAME}** لتتمكن من استخدام ميزة البحث الفوري وتحميل الكتب من أي مكان!"
-                    )
-                )
-            )
-            await inline_query.answer(results, cache_time=5)
-            return
-
-        try:
-            # استعلام جلب البيانات الذكي والسريع
-            sql = """
-            SELECT file_id, file_name,
-                   ts_rank_cd(to_tsvector('arabic', file_name), to_tsquery('arabic', $1)) AS rank,
-                   similarity(file_name, $2) AS sim
-            FROM books
-            WHERE 
-                to_tsvector('arabic', file_name) @@ to_tsquery('arabic', $1)
-                OR file_name ILIKE $3
-                OR file_name % $2
-            ORDER BY 
-                (file_name ILIKE $3) DESC, 
-                rank DESC, 
-                sim DESC
-            LIMIT 10;
-            """
-            
-            rows = await conn.fetch(sql, ts_query, norm_q, full_pattern)
-            
-            for i, row in enumerate(rows):
-                # الحل القاطع: استخدام الكائن المخصص والمثالي للملفات المرفوعة مسبقاً (Cached Document)
-                results.append(
-                    InlineQueryResultCachedDocument(
-                        id=f"inline_bk_{i}_{hashlib.md5(row['file_id'].encode()).hexdigest()[:8]}",
-                        title=row['file_name'],
-                        file_id=row['file_id'], # تمرير معرف تليجرام الأصلي والآمن دون روابط
-                        caption=f"📖 **{row['file_name']}**\n\nتم التحميل بواسطة: @boooksfree1bot",
-                        parse_mode="Markdown",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("📤 مشاركة البوت", switch_inline_query="")]
-                        ])
-                    )
-                )
-
-        except Exception as e:
-            logger.error(f"Inline Database Search Error: {e}")
-
-    # إرسال قائمة النتائج الفورية مباشرة لتعمل فوق صندوق الكتابة بسلاسة
-    await inline_query.answer(results, cache_time=2)
-
-# ===============================================
 # callbacks
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
@@ -340,7 +263,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # زر الفهرس كزر Armageddon في المقدمة
+    # زر الفهرس كزر العرض الرئيسي في المقدمة
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
         [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
@@ -401,7 +324,7 @@ def run_bot():
     app.add_handler(MessageHandler(filters.Document.PDF & filters.ChatType.CHANNEL, handle_pdf))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     
-    # تسجيل معالج ميزة البحث المضمن (Inline Mode) للعمل من أي جروب أو شات كلياً
+    # ربط وتفعيل معالج ميزة البحث المضمن (Inline Mode) المستورد من الملف الجديد كلياً
     app.add_handler(InlineQueryHandler(inline_search_books))
 
     register_admin_handlers(app, start)
