@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 # إعداد اللوج لتعقب عمليات البحث داخل المجموعات
 logger = logging.getLogger(__name__)
 
-# اسم القناة الداعمة للاشتراك الإجباري
+# اسم القناة الداعمة للاشتكار الإجباري
 CHANNEL_USERNAME = "@iiollr"
 
 # ===============================================
@@ -37,32 +37,31 @@ async def is_user_subscribed(user_id: int, bot) -> bool:
         return member.status in ("member", "administrator", "creator")
     except Exception as e:
         logger.error(f"⚠️ فشل فحص اشتراك المستخدم {user_id} في المجموعة: {e}")
-        return True  # تمرير آمن في حال توقف الـ API مؤقتاً لضمان عدم تعليق البوت
+        return True  # تمرير آمن في حال تعطل الـ API مؤقتاً
 
 # ===============================================
-# المعالج الرئيسي لأمر /بحث داخل المجموعات
+# المعالج الرئيسي لأمر /search داخل المجموعات
 # ===============================================
 async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     if not message or not message.text:
         return
 
-    # 🛡️ الحماية البرمجية المزدوجة: التأكد التام من أن الرسالة من مجموعة أو سوبرجروب 
-    # (تم تعديل الشرط ليتطابق مع فلاتر main.py)
+    # التأكد التام من أن الرسالة من مجموعة أو سوبرجروب
     if message.chat.type not in ["group", "supergroup"]:
         return
 
     user = update.effective_user
     user_id = user.id if user else 0
     
-    # استخراج نص البحث بعد أمر /بحث
+    # استخراج نص البحث بعد أمر /search
     parts = message.text.split(maxsplit=1)
     
     if len(parts) < 2 or not parts[1].strip():
         await message.reply_text(
             "⚠️ **طريقة استخدام البحث في المجموعة:**\n"
             "اكتب الأمر متبوعاً باسم الكتاب.\n\n"
-            "💡 *مثال:* `/بحث دليل رام`",
+            "💡 *مثال:* `/search دليل رام`",
             parse_mode="Markdown"
         )
         return
@@ -84,7 +83,7 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 2️⃣ جلب اتصال قاعدة البيانات من bot_data المشترك تبعا لـ main.py
+    # 2️⃣ جلب اتصال قاعدة البيانات من bot_data المشترك
     pool = context.bot_data.get("db_conn")
     if not pool:
         logger.error("🚨 اتصال قاعدة البيانات مفقود أثناء البحث في المجموعة!")
@@ -97,7 +96,7 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         async with pool.acquire() as conn:
-            # 🛠️ تصحيح استعلام الـ SQL: تم تعديل قيم الاستبدال الخاطئة (a) إلى (ا) العربية الصحيحة لتفعيل التطبيع الحقيقي
+            # استعلام الـ SQL المطهّر بالكامل والمثالي للمقارنة النصية المباشرة
             sql = """
             SELECT file_id, file_name
             FROM books
@@ -122,13 +121,12 @@ async def group_search_books(update, context: ContextTypes.DEFAULT_TYPE):
                 file_name = row['file_name']
                 
                 try:
-                    # إرسال الملف مباشرة بالاعتماد على الـ file_id المخزن
                     await context.bot.send_document(
                         chat_id=message.chat_id,
                         document=file_id,
                         caption=f"📖 **{file_name}**\n\nطلبك جاهز بواسطة: {user.mention_markdown()}",
                         parse_mode="Markdown",
-                        reply_to_message_id=message.message_id  # الرد المباشر على رسالة العضو لضمان التنظيم
+                        reply_to_message_id=message.message_id  # الرد على نفس رسالة الطلب
                     )
                 except Exception as send_err:
                     logger.error(f"❌ فشل إرسال الملف {file_name} للمجموعة: {send_err}")
