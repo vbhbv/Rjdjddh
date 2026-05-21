@@ -10,6 +10,9 @@ from telegram.ext import (
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks
 
+# استيراد معالج البحث المخصص للمجموعات
+from group_search import group_search_books
+
 # ===============================================
 # إعداد اللوج
 # ===============================================
@@ -68,18 +71,11 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
                 premium_expiry TIMESTAMP
             );
             """)
+            
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;")
 
-            await conn.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
-            """)
-
-            await conn.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
-            """)
-
-            # إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
+            # التأكد من وجود جدول الإحصائيات للأكثر تحميلاً
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS download_stats (
                 id SERIAL PRIMARY KEY,
@@ -87,24 +83,16 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
                 downloaded_at TIMESTAMP DEFAULT NOW()
             );
             """)
-
-            await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_download_stats_date 
-            ON download_stats (downloaded_at);
-            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_download_stats_date ON download_stats (downloaded_at);")
 
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready with premium and download stats columns.")
+        logger.info("✅ Database pool ready with premium columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
 
-# ===============================================
-# إغلاق قاعدة البيانات
-# ===============================================
 async def close_db(app: Application):
     pool = app.bot_data.get("db_conn")
-
     if pool:
         await pool.close()
         logger.info("✅ Database pool closed.")
@@ -113,20 +101,16 @@ async def close_db(app: Application):
 # استقبال ملفات PDF
 # ===============================================
 async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
-
     if (
         update.channel_post
         and update.channel_post.document
         and update.channel_post.document.mime_type == "application/pdf"
     ):
-
         pool = context.bot_data.get("db_conn")
-
         if not pool:
             return
 
         document = update.channel_post.document
-
         async with pool.acquire() as conn:
             await conn.execute("""
             INSERT INTO books(file_id, file_name)
@@ -151,81 +135,58 @@ async def check_subscription(user_id: int, bot) -> bool:
 # تسجيل المستخدم ومعالجة الإحالة
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
-
     pool = context.bot_data.get("db_conn")
-
     if not pool or not update.effective_user:
         return
 
     user_id = update.effective_user.id
-
     async with pool.acquire() as conn:
-
-        existing_user = await conn.fetchval(
-            "SELECT user_id FROM users WHERE user_id = $1",
-            user_id
-        )
-
+        existing_user = await conn.fetchval("SELECT user_id FROM users WHERE user_id = $1", user_id)
+        
         if not existing_user:
-
-            await conn.execute(
-                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
-                user_id
-            )
-
+            await conn.execute("INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", user_id)
+            
             if context.args and context.args[0].startswith("inv_"):
-
                 try:
                     inviter_id = int(context.args[0].split("_")[1])
-
+                    
                     if inviter_id != user_id:
-
                         await conn.execute("""
-                            UPDATE users
-                            SET is_premium = TRUE,
-                                premium_expiry = NOW() + INTERVAL '1 day'
+                            UPDATE users 
+                            SET is_premium = TRUE, 
+                                premium_expiry = NOW() + INTERVAL '7 days' 
                             WHERE user_id = $1
                         """, inviter_id)
-
-                        if (
-                            context.application.user_data
-                            and inviter_id in context.application.user_data
-                        ):
+                        
+                        if context.application.user_data and inviter_id in context.application.user_data:
                             if "block_until" in context.application.user_data[inviter_id]:
                                 context.application.user_data[inviter_id]["block_until"] = None
-
+                        
                         try:
                             await context.bot.send_message(
                                 chat_id=inviter_id,
-                                text=(
-                                    "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                    "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة يوم واحد!**\n"
-                                    "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
-                                )
+                                text="🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
+                                     "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة أسبوع كامل!**\n"
+                                     "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
                             )
                         except:
                             pass
-
                 except Exception as e:
                     logger.error(f"Error processing referral shortcut: {e}")
 
 # ===============================================
-# الترحيب المضمون عند إضافة البوت للمجموعة
+# الترحيب التلقائي عند إضافة البوت للمجموعة
 # ===============================================
 async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
-    # التحقق من وجود التحديث الخاص بالأعضاء
     chat_member = update.chat_member or update.my_chat_member
     if not chat_member:
         return
 
-    # التحقق بدقة أن البوت هو العضو الجديد وأن حالته أصبحت عضواً أو مشرفاً
     if (
         chat_member.new_chat_member.user.id == context.bot.id
         and chat_member.new_chat_member.status in ("member", "administrator")
     ):
-
         group_name = chat_member.chat.title
-
         welcome_text = (
             f"🎉 **أهلاً بكم في مجموعة ( {group_name} )!**\n\n"
             f"🤖 تم تفعيل بوت مكتبة الكتب داخل المجموعة بنجاح.\n\n"
@@ -235,22 +196,19 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
             f"`/search مقدمة ابن خلدون`\n\n"
             f"🚀 استمتعوا بالبحث والقراءة الحرة داخل المجموعة!"
         )
-
         try:
             await context.bot.send_message(
                 chat_id=chat_member.chat.id,
                 text=welcome_text,
                 parse_mode="Markdown"
             )
-            logger.info(f"✅ Sent welcome message to group: {group_name} ({chat_member.chat.id})")
         except Exception as e:
-            logger.error(f"❌ Error sending group welcome to {chat_member.chat.id}: {e}")
+            logger.error(f"Error sending group welcome: {e}")
 
 # ===============================================
 # callbacks
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
     await query.answer()
 
@@ -258,7 +216,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         from indexes import show_index_menu
         await show_index_menu(update, context)
         return
-
+    
     elif query.data.startswith("idx:"):
         from indexes import handle_index_selection
         await handle_index_selection(update, context)
@@ -270,27 +228,50 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif query.data == "check_subscription":
-
         if await check_subscription(query.from_user.id, context.bot):
-
+            # تم إرجاع الأزرار الثلاثة كاملة هنا
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
                 [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")]
             ])
-
-            await query.message.edit_text("🌟 مرحبًا بك في بوت مكتبة الكتب...", reply_markup=keyboard)
-
+            await query.message.edit_text(
+                (
+                    "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
+                    "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
+                    "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
+                    "🧭 *تعليمات البحث الصحيحة:*\n"
+                    "✔️ اكتب اسم الكتاب فقط\n"
+                    "✔️ أو جزء واضح من العنوان\n\n"
+                    "❌ أمثلة بحث غير صحيحة:\n"
+                    "✖️ كلمات عشوائية\n"
+                    "✖️ جمل طويلة أو أوصاف\n\n"
+                    "⚖️ *تنويه قانوني:*\n"
+                    "إدارة وفريق بوت مكتبة الكتب يحترمون حقوق الملكية الفكرية احترامًا تامًا.\n"
+                    "جميع الملفات المفهرسة تم رفعها من قبل مستخدمي تيليجرام أو قنوات عامة.\n"
+                    "في حال وجود أي محتوى مخالف لحقوق النشر، يرجى التواصل معنا وسيتم حذفه فورًا.\n\n"
+                    "📩 باستخدامك للبوت فأنت تقرّ بذلك.\n\n"
+                    "📖 نتمنى لك قراءة ممتعة!"
+                ),
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
         else:
             await query.message.reply_text(
-                f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}"
+                f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
+                "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
             )
         return
 
     elif query.data == "buy_premium":
-        await query.message.reply_text(
-            "⭐ العضوية المميزة (Premium)\n\nللتفعيل: @HMDALataar"
+        text = (
+            "⭐ **العضوية المميزة (Premium)**\n\n"
+            "استمتع ببحث غير محدود طوال اليوم دون قيود!\n\n"
+            "💳 **السعر:** 5 دولارات شهرياً.\n"
+            "للتفعيل, يرجى التواصل معنا عبر المعرف أدناه:\n"
+            "📩 @HMDALataar"
         )
+        await query.message.reply_text(text, parse_mode="Markdown")
         return
 
     await handle_callbacks(update, context)
@@ -299,45 +280,70 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # /start
 # ===============================================
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
-
     await register_user(update, context)
 
+    if not await check_subscription(update.effective_user.id, context.bot):
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك في القناة", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
+            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+        ])
+        await update.message.reply_text(
+            (
+                "👋 مرحبًا بك في *بوت مكتبة الكتب*\n\n"
+                "📚 أكبر مكتبة رقمية مجانية على تيليجرام\n"
+                "📖 يحتوي البوت على أكثر من *مليون كتاب* في مختلف المجالات\n\n"
+                "🔐 لاستخدام البوت يجب الانضمام في القناة الداعمة علمًا انه مجاني\n"
+                "👇 اشترك أولاً ثم اضغط على (تحقق من الاشتراك)"
+            ),
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        return
+
+    # تم إرجاع الأزرار الثلاثة كاملة هنا في القائمة الرئيسية بعد تفحص الاشتراك التلقائي
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
+        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
+        [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")]
+    ])
     await update.message.reply_text(
-        "🌟 مرحبًا بك في بوت مكتبة الكتب..."
+        (
+            "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
+            "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
+            "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
+            "🧭 *تعليمات البحث الصحيحة:*\n"
+            "✔️ اكتب اسم الكتاب فقط\n"
+            "✔️ أو جزء واضح من العنوان\n\n"
+            "❌ أمثلة بحث غير صحيحة:\n"
+            "✖️ كلمات عشوائية\n"
+            "✖️ جمل طويلة أو أوصاف\n\n"
+            "⚖️ *تنويه قانوني:*\n"
+            "إدارة وفريق بوت مكتبة الكتب يحترمون حقوق الملكية الفكرية احترامًا تامًا.\n"
+            "جميع الملفات المفهرسة تم رفعها من قبل مستخدمي تيليجرام أو قنوات عامة.\n"
+            "في حال وجود أي محتوى مخالف لحقوق النشر، يرجى التواصل معنا وسيتم حذفه فورًا.\n\n"
+            "📩 باستخدامك للبوت فأنت تقرّ بذلك.\n\n"
+            "📖 نتمنى لك قراءة ممتعة!"
+        ),
+        parse_mode="Markdown",
+        reply_markup=keyboard
     )
 
 # ===============================================
-# البحث
+# البحث في الخاص
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
-
     if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text("🚫 يجب الاشتراك أولاً")
+        await update.message.reply_text(
+            f"🚫 لاستخدام البوت يجب الاشتراك في {CHANNEL_USERNAME} أولاً"
+        )
         return
-
-    if context.args:
-        context.user_data["search_query"] = " ".join(context.args)
-    else:
-        # حماية للمجموعات في حال إرسال الأمر /search فارغاً
-        if update.effective_chat.type in ("group", "supergroup"):
-            await update.message.reply_text(
-                "⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n"
-                "📌 **مثال صحيح:**\n"
-                "`/search مقدمة ابن خلدون`", 
-                parse_mode="Markdown"
-            )
-            return
-        context.user_data["search_query"] = update.message.text
-
     await search_books(update, context)
 
 # ===============================================
 # تشغيل البوت
 # ===============================================
 def run_bot():
-
     token = os.getenv("BOT_TOKEN")
-
     if not token:
         logger.error("🚨 BOT_TOKEN not found.")
         return
@@ -351,34 +357,30 @@ def run_bot():
         .build()
     )
 
-    # التسجيل الأساسي للأوامر والرسائل
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_books_with_subscription))
+    
+    app.add_handler(CommandHandler(
+        "search", 
+        group_search_books, 
+        filters=filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
+    ))
 
-    # معالجة البحث التلقائي للنصوص العادية في الخاص فقط
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, 
         search_books_with_subscription
     ))
-
-    # استقبال ملفات الـ PDF المرفوعة في القنوات العامة والخاصة
-    app.add_handler(MessageHandler(
-        filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
-        handle_pdf
-    ))
-
-    # 🌟 المعالجات الشاملة لالتقاط انضمام البوت للمجموعة (سواء كعضو عادي أو تحديث حالته الشخصية)
+    
+    app.add_handler(MessageHandler(filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL, handle_pdf))
+    
+    # معالجات التقاط دخول المجموعات لضمان الترحيب التلقائي
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.CHAT_MEMBER))
 
-    # معالجة الأزرار التفاعلية (Callbacks)
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
     register_admin_handlers(app, start)
-
-    logger.info("✅ Bot is running successfully...")
     
-    # 🔥 الخطوة المصيرية الحاكمة: إجبار البوت على جلب واستقبال تحديثات المجموعات من السيرفر فوراً دون قيد
+    # جلب تحديثات المجموعات بنجاح
     app.run_polling(allowed_updates=["update", "message", "callback_query", "chat_member", "my_chat_member"])
 
 if __name__ == "__main__":
