@@ -384,7 +384,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text("🚫 يجب الاشتراك أولاً")
+        await update.message.reply_text(" يجب الاشتراك أولاً في هذه القناة @iiollr حتى يعمل البوت")
         return
 
     if context.args:
