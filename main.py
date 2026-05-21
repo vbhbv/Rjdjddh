@@ -265,7 +265,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await handle_index_selection(update, context)
         return
 
-    # الاستجابة لزر الأكثر تحميلاً وعرض القائمة المفلترة
     elif query.data == "show_trending":
         from search_handler import send_trending_books
         await send_trending_books(update, context)
@@ -304,7 +303,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         else:
-
             await query.message.reply_text(
                 f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
                 "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
@@ -395,14 +393,11 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await check_subscription(update.effective_user.id, context.bot):
-
         await update.message.reply_text(
             f"🚫 لاستخدام البوت يجب الاشتراك في {CHANNEL_USERNAME} أولاً"
         )
-
         return
 
-    # دعم /search بدون تعديل update.message.text
     if context.args:
         context.user_data["search_query"] = " ".join(context.args)
     else:
@@ -430,13 +425,9 @@ def run_bot():
         .build()
     )
 
-    # /start
     app.add_handler(CommandHandler("start", start))
-
-    # البحث عبر /search في الخاص والمجموعات
     app.add_handler(CommandHandler("search", search_books_with_subscription))
 
-    # البحث التلقائي في الخاص فقط
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
@@ -444,7 +435,6 @@ def run_bot():
         )
     )
 
-    # استقبال ملفات PDF من القنوات
     app.add_handler(
         MessageHandler(
             filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
@@ -452,18 +442,18 @@ def run_bot():
         )
     )
 
-    # معالج التقاط انضمام البوت للمجموعات
+    # 🔥 هذا هو التعديل المهم لضمان عمل الترحيب
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # callbacks
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
     register_admin_handlers(app, start)
 
     logger.info("✅ Bot is running...")
-    
-    # تمرير الـ allowed_updates لالتقاط أحداث المجموعات بانتظام وبلا استثناء
-    app.run_polling(allowed_updates=["update", "message", "callback_query", "chat_member"])
+
+    app.run_polling(
+        allowed_updates=["message", "callback_query", "chat_member", "my_chat_member"]
+    )
 
 if __name__ == "__main__":
     run_bot()
