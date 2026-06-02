@@ -172,8 +172,8 @@ async def start_radar_flow(query):
         [InlineKeyboardButton("⬅️ العودة للقائمة الرئيسية", callback_data="check_subscription")]
     ])
     text = (
-        "🎯 **مرحباً بك في رادار الاقتراحات الذكي الموسع!**\n\n"
-        "أنا جاهز لمسح الذاكرة الفكرية للـ (100 كتاب المخصصة لكل زر) ومطابقتها مع خازن البيانات.\n"
+        "🎯 **مرحباً بك في رادار الاقتراحات الذكي!**\n\n"
+        "أنا جاهز لأقتراح كتاب لك حسب ما تريد قراءته.\n"
         "أولاً، **ما هو المجال أو الحقل المعرفي الذي يثير شغفك الآن؟**"
     )
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
