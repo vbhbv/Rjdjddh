@@ -9,6 +9,11 @@ from telegram.ext import (
 
 from admin_panel import register_admin_handlers
 from search_handler import search_books, handle_callbacks
+# استيراد دوال الرادار من الملف المستقل لضمان الربط الكامل
+from radar_handler import (
+    start_radar_flow, process_radar_category, 
+    process_radar_difficulty, execute_radar_search
+)
 
 # ===============================================
 # إعداد اللوج
@@ -213,12 +218,10 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 # الترحيب المضمون عند إضافة البوت للمجموعة
 # ===============================================
 async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
-    # التحقق من وجود التحديث الخاص بالأعضاء
     chat_member = update.chat_member or update.my_chat_member
     if not chat_member:
         return
 
-    # التحقق بدقة أن البوت هو العضو الجديد وأن حالته أصبحت عضواً أو مشرفاً
     if (
         chat_member.new_chat_member.user.id == context.bot.id
         and chat_member.new_chat_member.status in ("member", "administrator")
@@ -269,15 +272,32 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await send_trending_books(update, context)
         return
 
+    # 🎭 التوجيه البرمجي الكامل لملف رادار الاقتراحات المستقل
+    elif query.data == "radar_menu":
+        await start_radar_flow(query)
+        return
+
+    elif query.data.startswith("rad_cat:"):
+        await process_radar_category(query, context)
+        return
+
+    elif query.data.startswith("rad_diff:"):
+        await process_radar_difficulty(query, context)
+        return
+
+    elif query.data.startswith("rad_size:"):
+        await execute_radar_search(query, context)
+        return
+
     elif query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
 
-            # 🛠️ تمت إعادة الأزرار الثلاثة والكلايش التفصيلية كاملة هنا
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
-                [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
-                [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")]
+                [InlineKeyboardButton("🎯 رادار الاقتراحات الذكي", callback_data="radar_menu")],
+                [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
+                [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
             ])
 
             await query.message.edit_text(
@@ -310,7 +330,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif query.data == "buy_premium":
-        # 🛠️ تمت إعادة الكليشة الكاملة لزر بريميوم
         text = (
             "⭐ **العضوية المميزة (Premium)**\n\n"
             "استمتع ببحث غير محدود طوال اليوم دون قيود!\n\n"
@@ -331,7 +350,6 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     await register_user(update, context)
 
     if not await check_subscription(update.effective_user.id, context.bot):
-        # 🛠️ تمت إعادة كليشة وأزرار الاشتراك الإجباري الأصلية كاملة هنا
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك في القناة", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
@@ -349,11 +367,11 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 🛠️ تمت إعادة الأزرار الثلاثة والكلايش التفصيلية كاملة هنا للمشتركين
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
-        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")],
-        [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")]
+        [InlineKeyboardButton("🎯 رادار الاقتراحات الذكي", callback_data="radar_menu")],
+        [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
+        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
     ])
     
     await update.message.reply_text(
@@ -390,7 +408,6 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     if context.args:
         context.user_data["search_query"] = " ".join(context.args)
     else:
-        # حماية للمجموعات في حال إرسال الأمر /search فارغاً
         if update.effective_chat.type in ("group", "supergroup"):
             await update.message.reply_text(
                 "⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n"
@@ -423,34 +440,28 @@ def run_bot():
         .build()
     )
 
-    # التسجيل الأساسي للأوامر والرسائل
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
 
-    # معالجة البحث التلقائي للنصوص العادية في الخاص فقط
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         search_books_with_subscription
     ))
 
-    # استقبال ملفات الـ PDF المرفوعة في القنوات العامة والخاصة
     app.add_handler(MessageHandler(
         filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
         handle_pdf
     ))
 
-    # المعالجات الشاملة لالتقاط انضمام البوت للمجموعة (سواء كعضو عادي أو تحديث حالته الشخصية)
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.CHAT_MEMBER))
 
-    # معالجة الأزرار التفاعلية (Callbacks)
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
 
     register_admin_handlers(app, start)
 
     logger.info("✅ Bot is running successfully...")
     
-    # الخطوة المصيرية الحاكمة: إجبار البوت على جلب واستقبال تحديثات المجموعات من السيرفر فوراً دون قيد
     app.run_polling(allowed_updates=["update", "message", "callback_query", "chat_member", "my_chat_member"])
 
 if __name__ == "__main__":
