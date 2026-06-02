@@ -74,6 +74,9 @@ async def show_english_index_menu(update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard.append(row)
 
+    # 🔄 إضافة زر عودة ثابت في نهاية الـ 50 قسماً للرجوع للوحة التحكم الرئيسية للبوت مباشرة
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = (
         "🇬🇧 **Grand Library Index (50 Specialized Departments)**\n\n"
@@ -117,6 +120,9 @@ async def handle_english_index_selection(update, context: ContextTypes.DEFAULT_T
     context.user_data["search_results"] = [dict(r) for r in rows]
     context.user_data["current_page"] = 0
     context.user_data["search_stage"] = f"🇬🇧 Index: {category['name']}"
+    
+    # 🎯 تحديد هدف العودة الذكي: عند ضغط المستخدم على عودة من داخل نتائج (الروايات مثلاً) يعود لقائمة الفهارس الإنكليزية وليس للبداية
+    context.user_data["back_target"] = "show_english_index"
     
     # Hand over the payload to the unified interactive paginator for seamless scrolling and downloading
     from search_handler import send_books_page
