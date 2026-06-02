@@ -64,7 +64,7 @@ async def process_radar_difficulty(query, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def execute_radar_search(query, context: ContextTypes.DEFAULT_TYPE):
-    """المرحلة 4: الدمج واستخراج النتائج التصفوية من قاعدة البيانات"""
+    """المرحلة 4: الدمج الصارم واستخراج النتائج بدقة منعاً للعشوائية"""
     size = query.data.split(":")[1]
     category = context.user_data.get("radar_category", "literature")
     difficulty = context.user_data.get("radar_difficulty", "easy")
@@ -74,26 +74,41 @@ async def execute_radar_search(query, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات.")
         return
 
-    # بناء مصفوفة الكلمات المفتاحية بناءً على خيارات المستخدم
-    keywords = []
-    
+    # 1. كلمات مفتاحية إلزامية للتصنيف (تضمن ألا تخرج النتيجة عن الحقل المختار)
+    category_keywords = []
     if category == "literature":
-        keywords += ["رواية", "قصة", "حكاية", "روايات"] if difficulty == "easy" else ["الأعمال الكاملة", "ثلاثية", "مجلد", "ديستوبيا", "نقد"]
+        category_keywords = ["رواية", "قصة", "حكاية", "روايات", "قصص", "ديستوبيا"]
     elif category == "philosophy":
-        keywords += ["مبادئ", "مدخل", "تبسيط", "قصة الفلسفة", "بداية"] if difficulty == "easy" else ["نقد", "نيتشه", "ظاهراتية", "منطق", "أطروحة"]
+        category_keywords = ["فلسف", "فكر", "منطق", "نيتشه", "كانط", "أرسطو", "أفلاطون", "هيجل", "سارتر", "وجودية", "وعي"]
     elif category == "poetry":
-        keywords += ["قصائد", "أشعار", "بسيط", "روائع"] if difficulty == "easy" else ["ديوان", "المجلد", "الكاملة", "شرح"]
+        category_keywords = ["ديوان", "أشعار", "قصائد", "شعر", "المعلقات"]
     elif category == "psychology":
-        keywords += ["عادات", "نجاح", "غير حياتك", "كيف", "خطوات"] if difficulty == "easy" else ["التحليل النفسي", "فرويد", "السلوك", "المعرفي", "دراسة"]
+        category_keywords = ["نفس", "سلوك", "شخصية", "عقلي", "فرويد", "يونغ", "تطوير", "ذات"]
 
-    # فلترة الحجم المذكور بالكلمات المفتاحية كعامل مساعد ذكي للتصفية
-    if size == "short":
-        keywords += ["وجيز", "ملخص", "شذرات", "قصيرة", "كتيب", "رسالة"]
+    # 2. كلمات مفتاحية اختيارية للصعوبة والحجم (لتصفية النتائج المفحوصة)
+    refinement_keywords = []
+    if difficulty == "easy":
+        refinement_keywords += ["مبادئ", "مدخل", "تبسيط", "قصة", "بداية", "يسير", "موجز"]
     else:
-        keywords += ["موسوعة", "أجزاء", "الجزء", "كامل"]
+        refinement_keywords += ["نقد", "أطروحة", "دراسة", "عميق", "مجلد", "الأعمال"]
 
-    where_clauses = [f"file_name ILIKE '%{k}%'" for k in keywords]
-    sql_where = " OR ".join(where_clauses)
+    if size == "short":
+        refinement_keywords += ["وجيز", "ملخص", "شذرات", "قصيرة", "كتيب", "رسالة", "خلاصة"]
+    else:
+        refinement_keywords += ["موسوعة", "أجزاء", "الجزء", "كامل", "تاريخ"]
+
+    # بناء استعلام صارم: (شرط التصنيف الإلزامي) AND (شروط التصفية الاختيارية)
+    cat_clauses = [f"file_name ILIKE '%{k}%'" for k in category_keywords]
+    sql_cat_part = f"({ ' OR '.join(cat_clauses) })"
+
+    refine_clauses = [f"file_name ILIKE '%{k}%'" for k in refinement_keywords]
+    
+    if refine_clauses:
+        sql_refine_part = f"({ ' OR '.join(refine_clauses) })"
+        # الدمج بـ AND لضمان بقاء النتيجة داخل حقل التصنيف حصراً
+        sql_where = f"{sql_cat_part} AND {sql_refine_part}"
+    else:
+        sql_where = sql_cat_part
 
     sql = f"""
     SELECT file_id, file_name 
@@ -107,9 +122,9 @@ async def execute_radar_search(query, context: ContextTypes.DEFAULT_TYPE):
         async with pool.acquire() as conn:
             rows = await conn.fetch(sql)
 
+        # استعلام احتياطي مرن لكنه يظل داخل التصنيف المختار في حال كانت الفلاتر الفرعية ضيقة جداً
         if not rows:
-            # استعلام احتياطي عام في حال كانت الفلاتر مفرطة الضيق على الداتابيز
-            sql_fallback = "SELECT file_id, file_name FROM books ORDER BY RANDOM() LIMIT 5;"
+            sql_fallback = f"SELECT file_id, file_name FROM books WHERE {sql_cat_part} ORDER BY RANDOM() LIMIT 5;"
             async with pool.acquire() as conn:
                 rows = await conn.fetch(sql_fallback)
 
@@ -121,7 +136,6 @@ async def execute_radar_search(query, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_page"] = 0
         context.user_data["search_stage"] = f"🚀 رادار: {cat_titles.get(category)}"
         
-        # إرسال نص ترحيبي تمهيدي قبل استدعاء قائمة النتائج التفاعلية القياسية للمستخدم
         text_header = (
             f"🚀 **تمت التصفية بنجاح!**\n\n"
             f"خياراتك كانت:\n"
@@ -130,7 +144,6 @@ async def execute_radar_search(query, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.reply_text(text_header, parse_mode="Markdown")
         
-        # استدعاء عرض الصفحات القياسي الفوري المعتمد في البوت
         from search_handler import send_books_page
         await send_books_page(query, context)
 
