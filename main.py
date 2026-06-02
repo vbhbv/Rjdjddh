@@ -303,14 +303,15 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await execute_radar_search(query, context)
         return
 
-    elif query.data == "check_subscription":
+    # 🔄 التقاط حدث العودة للواجهة الرئيسية أو التحقق من الاشتراك بشكل موحد منعا لتكرار الرسالة
+    elif query.data == "back_to_main" or query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
 
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🗂 فهرس المكتبة الذكي", callback_data="show_index")],
-                [InlineKeyboardButton("🇬🇧 English Library Index", callback_data="show_english_index")],
-                [InlineKeyboardButton("🎯 رادار الاقتراحات الذكي", callback_data="radar_menu")],
+                [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
+                [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
+                [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
                 [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
             ])
