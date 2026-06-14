@@ -34,7 +34,7 @@ def admin_only(func):
     return wrapper
 
 # ===============================================
-# أوامر التفعيل ومنح البريميوم الزمني (محدث بالكامل حسب طلبك)
+# أوامر التفعيل ومنح البريميوم الزمني
 # ===============================================
 @admin_only
 async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -57,14 +57,15 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(context.args[0])
         duration_type = context.args[1].lower()
         
+        # تم إصلاح تمرير الـ Interval برمجياً بشكل آمن متوافق مع محرك PostgreSQL و asyncpg
         if duration_type == "month":
-            interval_str = "30 days"
+            days_to_add = 30
             duration_text = "شهر واحد (30 يوم)"
         elif duration_type == "half":
-            interval_str = "180 days"
+            days_to_add = 180
             duration_text = "نصف سنة (180 يوم)"
         elif duration_type == "year":
-            interval_str = "365 days"
+            days_to_add = 365
             duration_text = "سنة كاملة (365 يوم)"
         else:
             await update.message.reply_text("❌ خيار غير صحيح! اختر إما: `month` أو `half` أو `year`.")
@@ -73,11 +74,13 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pool = context.bot_data.get('db_conn')
         
         async with pool.acquire() as conn:
-            await conn.execute(f"""
+            # هنا الإصلاح الحقيقي: نستخدم الدالة البرمجية لقاعدة البيانات لجمع الأيام بأمان
+            await conn.execute("""
                 UPDATE users 
-                SET is_premium = TRUE, premium_expiry = NOW() + INTERVAL '{interval_str}' 
+                SET is_premium = TRUE, 
+                    premium_expiry = NOW() + ($2 || ' days')::INTERVAL
                 WHERE user_id = $1
-            """, user_id)
+            """, user_id, str(days_to_add))
         
         await update.message.reply_text(f"✅ تم تفعيل البريميوم بنجاح للمستخدم: {user_id}\n⏱ المدة الممنوحة: **{duration_text}**")
         
