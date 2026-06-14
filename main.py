@@ -74,7 +74,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
                 user_id BIGINT PRIMARY KEY,
                 joined_at TIMESTAMP DEFAULT NOW(),
                 is_premium BOOLEAN DEFAULT FALSE,
-                search_credits INT DEFAULT 0
+                premium_expiry TIMESTAMP
             );
             """)
 
@@ -83,10 +83,9 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
             """)
 
-            # إضافة حقل رصيد محاولات البحث المحدث بدلاً من التوقيت اليومي المفتوح
             await conn.execute("""
             ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
+            ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
             """)
 
             # إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
@@ -190,10 +189,10 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
                     if inviter_id != user_id:
 
-                        # التعديل: منح الداعي 10 محاولات إضافية فوراً في رصيده بالداتابيز
                         await conn.execute("""
                             UPDATE users
-                            SET search_credits = search_credits + 10
+                            SET is_premium = TRUE,
+                                premium_expiry = NOW() + INTERVAL '1 day'
                             WHERE user_id = $1
                         """, inviter_id)
 
@@ -209,10 +208,9 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                                 chat_id=inviter_id,
                                 text=(
                                     "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                    "🎁 تم إضافة **10 محاولات بحث إضافية** إلى حسابك مجاناً!\n"
-                                    "يمكنك الآن الاستمرار في تصفح وتحميل الكتب والروايات."
-                                ),
-                                parse_mode="Markdown"
+                                    "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة يوم واحد!**\n"
+                                    "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
+                                )
                             )
                         except:
                             pass
@@ -228,16 +226,12 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
     if not chat_member:
         return
 
-    # التعديل: فحص طبيعة المحادثة واستبعاد الشات الخاص منعاً لرسائل الترحيب الوهمية (None)
-    if chat_member.chat.type not in ("group", "supergroup"):
-        return
-
     if (
         chat_member.new_chat_member.user.id == context.bot.id
         and chat_member.new_chat_member.status in ("member", "administrator")
     ):
 
-        group_name = chat_member.chat.title or "المجموعة"
+        group_name = chat_member.chat.title
 
         welcome_text = (
             f"🎉 **أهلاً بكم في مجموعة ( {group_name} )!**\n\n"
