@@ -57,7 +57,6 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(context.args[0])
         duration_type = context.args[1].lower()
         
-        # تم إصلاح تمرير الـ Interval برمجياً بشكل آمن متوافق مع محرك PostgreSQL و asyncpg
         if duration_type == "month":
             days_to_add = 30
             duration_text = "شهر واحد (30 يوم)"
@@ -74,7 +73,6 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pool = context.bot_data.get('db_conn')
         
         async with pool.acquire() as conn:
-            # هنا الإصلاح الحقيقي: نستخدم الدالة البرمجية لقاعدة البيانات لجمع الأيام بأمان
             await conn.execute("""
                 UPDATE users 
                 SET is_premium = TRUE, 
@@ -84,7 +82,6 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(f"✅ تم تفعيل البريميوم بنجاح للمستخدم: {user_id}\n⏱ المدة الممنوحة: **{duration_text}**")
         
-        # إرسال رسالة مباشرة للمستخدم لتنبيهه بالتفعيل والمدة الممنوحة له
         try:
             await context.bot.send_message(
                 chat_id=user_id, 
@@ -117,6 +114,46 @@ async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ حدث خطأ: {e}")
 
 # ===============================================
+# إدارة الحظر (Ban System) لضمان عدم رد البوت نهائياً
+# ===============================================
+@admin_only
+async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حظر مستخدم تماماً من استخدام البوت: /ban ID"""
+    if not context.args:
+        await update.message.reply_text("⚠️ **طريقة الاستخدام:**\n`/ban ID`")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        
+        # تفعيل الحظر في الـ persistence و user_data لضمان قفله حتى لو عاد تشغيل السيرفر
+        if context.application.user_data is not None:
+            if user_id not in context.application.user_data:
+                context.application.user_data[user_id] = {}
+            context.application.user_data[user_id]["is_banned"] = True
+            
+        await update.message.reply_text(f"🔒 **تم حظر المستخدم بنجاح:** {user_id}\nلن يتمكن من إرسال رسائل أو استخدام أزرار المكتبة.")
+    except ValueError:
+        await update.message.reply_text("❌ يرجى كتابة معرف مستخدم (ID) رقمي صحيح.")
+
+@admin_only
+async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء حظر مستخدم: /unban ID"""
+    if not context.args:
+        await update.message.reply_text("⚠️ **طريقة الاستخدام:**\n`/unban ID`")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        
+        if context.application.user_data is not None and user_id in context.application.user_data:
+            context.application.user_data[user_id]["is_banned"] = False
+            
+        await update.message.reply_text(f"🔓 **تم إلغاء حظر المستخدم بنجاح:** {user_id}\nيمكنه الآن استخدام البوت بشكل طبيعي.")
+    except ValueError:
+        await update.message.reply_text("❌ يرجى كتابة معرف مستخدم (ID) رقمي صحيح.")
+
+# ===============================================
 # بقية المهام (تتبع، اشتراك، إحصائيات) محدثة بـ Pool Connection
 # ===============================================
 async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,6 +166,12 @@ async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
 
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق الفوري ما إذا كان المستخدم محظوراً تمنع معالجة أي حدث له
+    if update.effective_user and context.application.user_data:
+        u_id = update.effective_user.id
+        if u_id in context.application.user_data and context.application.user_data[u_id].get("is_banned"):
+            return False
+
     if REQUIRED_CHANNEL_ID is None: return True
     try:
         member = await context.bot.get_chat_member(REQUIRED_CHANNEL_ID, update.effective_user.id)
@@ -145,11 +188,10 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with pool.acquire() as conn:
             book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
             total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-            # حساب الأعضاء البريميوم الفعليين الذين لم تنتهِ صلاحيتهم بعد
             premium_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_premium = TRUE AND (premium_expiry IS NULL OR premium_expiry > NOW())")
         
         stats_text = (
-            "📊 **لوحة تحكم المكتبة الكبرى v3.0**\n"
+            "📊 **لوحة تحكم المكتبة الكبرى v3.1**\n"
             "--------------------------------------\n"
             f"📚 الكتب المفهرسة كلياً: **{book_count:,}**\n"
             f"👥 المستخدمين الكلي: **{total_users:,}**\n"
@@ -160,6 +202,10 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• نصف سنوي: `/set_premium ID half`\n"
             "• سنوي: `/set_premium ID year`\n"
             "• لإلغاء البريميوم: `/rem_premium ID`\n"
+            "--------------------------------------\n"
+            "🚫 **أوامر الحظر والتحكم:**\n"
+            "• لحظر مستخدم كلياً: `/ban ID`\n"
+            "• لإلغاء حظر مستخدم: `/unban ID`\n"
             "• للبث الشامل: `/broadcast نص الرسالة`"
         )
         await update.message.reply_text(stats_text, parse_mode='Markdown')
@@ -175,7 +221,13 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     await update.message.reply_text(f"🚀 جاري بث الرسالة لـ {len(users)} مستخدم...")
     for r in users:
-        try: await context.bot.send_message(r['user_id'], msg)
+        try: 
+            # استبعاد المستخدمين المحظورين من البث تلقائياً
+            u_id = r['user_id']
+            if context.application.user_data and u_id in context.application.user_data:
+                if context.application.user_data[u_id].get("is_banned"):
+                    continue
+            await context.bot.send_message(u_id, msg)
         except: pass
     await update.message.reply_text("✅ تم الانتهاء من إرسال البث لجميع المستخدمين.")
 
@@ -194,6 +246,12 @@ async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_admin_handlers(application, original_start_handler):
     async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # التحقق الأولي من الحظر قبل أي تتبع أو معالجة
+        if update.effective_user and application.user_data:
+            u_id = update.effective_user.id
+            if u_id in application.user_data and application.user_data[u_id].get("is_banned"):
+                return
+
         if await check_subscription(update, context):
             await track_user(update, context)
             await original_start_handler(update, context)
@@ -201,6 +259,8 @@ def register_admin_handlers(application, original_start_handler):
     application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CommandHandler("set_premium", set_premium))
     application.add_handler(CommandHandler("rem_premium", remove_premium))
+    application.add_handler(CommandHandler("ban", ban_user))
+    application.add_handler(CommandHandler("unban", unban_user))
     application.add_handler(CommandHandler("broadcast", admin_broadcast))
     application.add_handler(CommandHandler("setchannel", set_channel))
     application.add_handler(CommandHandler("start", start_with_tracking))
