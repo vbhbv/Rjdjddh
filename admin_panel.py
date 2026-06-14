@@ -34,34 +34,58 @@ def admin_only(func):
     return wrapper
 
 # ===============================================
-# أوامر التفعيل ومنح المحاولات الإضافية (محدث لنظام الـ Credits)
+# أوامر التفعيل ومنح البريميوم الزمني (محدث بالكامل حسب طلبك)
 # ===============================================
 @admin_only
 async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تمنح مستخدم 10 محاولات بحث إضافية فوراً: /set_premium ID"""
-    if not context.args:
-        await update.message.reply_text("⚠️ يرجى كتابة الأيدي بعد الأمر، مثال:\n/set_premium 12345678")
+    """
+    تفعيل البريميوم الزمني لمستخدم:
+    /set_premium ID month   -> بريميوم شهري (30 يوم)
+    /set_premium ID half    -> بريميوم نصف سنوي (180 يوم)
+    /set_premium ID year    -> بريميوم سنوي (365 يوم)
+    """
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "⚠️ **طريقة الاستخدام الصحيحة للأمر:**\n\n"
+            "• شهري (30 يوم):\n`/set_premium ID month`\n"
+            "• نصف سنوي (180 يوم):\n`/set_premium ID half`\n"
+            "• سنوي (365 يوم):\n`/set_premium ID year`"
+        )
         return
     
     try:
         user_id = int(context.args[0])
+        duration_type = context.args[1].lower()
+        
+        if duration_type == "month":
+            interval_str = "30 days"
+            duration_text = "شهر واحد (30 يوم)"
+        elif duration_type == "half":
+            interval_str = "180 days"
+            duration_text = "نصف سنة (180 يوم)"
+        elif duration_type == "year":
+            interval_str = "365 days"
+            duration_text = "سنة كاملة (365 يوم)"
+        else:
+            await update.message.reply_text("❌ خيار غير صحيح! اختر إما: `month` أو `half` أو `year`.")
+            return
+
         pool = context.bot_data.get('db_conn')
         
-        # استخدام الـ Pool بطريقة صحيحة لحقن الـ 10 محاولات في الداتابيز
         async with pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(f"""
                 UPDATE users 
-                SET search_credits = search_credits + 10 
+                SET is_premium = TRUE, premium_expiry = NOW() + INTERVAL '{interval_str}' 
                 WHERE user_id = $1
             """, user_id)
         
-        await update.message.reply_text(f"✅ تم منح **10 محاولات بحث إضافية** بنجاح للمستخدم: {user_id}")
+        await update.message.reply_text(f"✅ تم تفعيل البريميوم بنجاح للمستخدم: {user_id}\n⏱ المدة الممنوحة: **{duration_text}**")
         
-        # إرسال إشعار فوري للمستخدم في الخاص
+        # إرسال رسالة مباشرة للمستخدم لتنبيهه بالتفعيل والمدة الممنوحة له
         try:
             await context.bot.send_message(
                 chat_id=user_id, 
-                text="🎁 **مفاجأة!** تم منح حسابك **10 محاولات بحث إضافية** من قبل إدارة المكتبة مجاناً لمواصلة التصفح والتحميل."
+                text=f"🌟 **مبروك! تم تفعيل العضوية المميزة (Premium) لحسابك بنجاح.**\n\n⏳ المدة: **{duration_text}**\n🚀 يمكنك الآن الاستمتاع ببحث وتحميل غير محدود دون أي قيود!"
             )
         except: pass
     except Exception as e:
@@ -69,7 +93,7 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تصفير محاولات البحث لمستخدم معين: /rem_premium ID"""
+    """إلغاء البريموم الزمني تماماً لمستخدم معين: /rem_premium ID"""
     if not context.args:
         await update.message.reply_text("⚠️ يرجى كتابة الأيدي بعد الأمر.")
         return
@@ -79,9 +103,13 @@ async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pool = context.bot_data.get('db_conn')
         
         async with pool.acquire() as conn:
-            await conn.execute("UPDATE users SET search_credits = 0 WHERE user_id = $1", user_id)
+            await conn.execute("""
+                UPDATE users 
+                SET is_premium = FALSE, premium_expiry = NULL 
+                WHERE user_id = $1
+            """, user_id)
             
-        await update.message.reply_text(f"🚫 تم تصفير رصيد محاولات البحث تماماً للمستخدم: {user_id}")
+        await update.message.reply_text(f"🚫 تم إلغاء البريميوم الزمني تماماً للمستخدم: {user_id}")
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ: {e}")
 
@@ -114,19 +142,21 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with pool.acquire() as conn:
             book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
             total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-            # جلب إجمالي المستخدمين الذين لديهم رصيد محاولات أكبر من صفر
-            active_credited_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE search_credits > 0")
+            # حساب الأعضاء البريميوم الفعليين الذين لم تنتهِ صلاحيتهم بعد
+            premium_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_premium = TRUE AND (premium_expiry IS NULL OR premium_expiry > NOW())")
         
         stats_text = (
-            "📊 **لوحة تحكم المكتبة الكبرى v2.5**\n"
+            "📊 **لوحة تحكم المكتبة الكبرى v3.0**\n"
             "--------------------------------------\n"
             f"📚 الكتب المفهرسة كلياً: **{book_count:,}**\n"
             f"👥 المستخدمين الكلي: **{total_users:,}**\n"
-            f"🎁 الحسابات ذات المحاولات النشطة: **{active_credited_users:,}**\n"
+            f"⭐ الأعضاء المميزين (الزمني): **{premium_users:,}**\n"
             "--------------------------------------\n"
-            "🛠 **أوامر الإدارة الحصية:**\n"
-            "• لمنح شخص 10 محاولات: `/set_premium ID`\n"
-            "• لتصفير محاولات شخص: `/rem_premium ID`\n"
+            "🛠 **أوامر الإدارة والتفعيل الزمني:**\n"
+            "• شهري: `/set_premium ID month`\n"
+            "• نصف سنوي: `/set_premium ID half`\n"
+            "• سنوي: `/set_premium ID year`\n"
+            "• لإلغاء البريميوم: `/rem_premium ID`\n"
             "• للبث الشامل: `/broadcast نص الرسالة`"
         )
         await update.message.reply_text(stats_text, parse_mode='Markdown')
