@@ -89,7 +89,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
             """)
 
-            # الحذر: ضمان إضافة العمود كاحتياط لعدم ضرب الجداول المنشأة مسبقاً
             await conn.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
@@ -196,7 +195,6 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
                     if inviter_id != user_id:
 
-                        # التعديل الصارم والمباشر: إضافة 10 محاولات بحث لرصيد الداعي بدلاً من اليومي
                         await conn.execute("""
                             UPDATE users
                             SET search_credits = search_credits + 10
@@ -270,6 +268,14 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
+    
+    # 🔒 فحص الحظر الفوري عند ضغط أي زر لمنع المخترقين أو المزعجين
+    u_id = query.from_user.id
+    if context.application.user_data and u_id in context.application.user_data:
+        if context.application.user_data[u_id].get("is_banned"):
+            await query.answer("❌ أنت محظور من استخدام أزرار هذا البوت.", show_alert=True)
+            return
+
     await query.answer()
 
     if query.data == "show_index":
@@ -282,12 +288,10 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await handle_index_selection(update, context)
         return
 
-    # 🇬🇧 معالجة طلب عرض قائمة الفهرس الإنكليزي الـ 50 قسماً
     elif query.data == "show_english_index":
         await show_english_index_menu(update, context)
         return
 
-    # 🇬🇧 معالجة اختيار قسم معين من الفهرس الإنكليزي وتمريره للداتابيز
     elif query.data.startswith("eng_idx:"):
         await handle_english_index_selection(update, context)
         return
@@ -297,7 +301,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await send_trending_books(update, context)
         return
 
-    # 🎭 التوجيه البرمجي الكامل لملف رادار الاقتراحات المستقل
     elif query.data == "radar_menu":
         await start_radar_flow(query)
         return
@@ -314,7 +317,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await execute_radar_search(query, context)
         return
 
-    # 🔄 التقاط حدث العودة للواجهة الرئيسية أو التحقق من الاشتراك بشكل موحد منعا لتكرار الرسالة
     elif query.data == "back_to_main" or query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
@@ -377,6 +379,12 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # ===============================================
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
 
+    # 🔒 منع المستخدم المحظور من تشغيل البوت عبر /start نهائياً
+    if update.effective_user and context.application.user_data:
+        u_id = update.effective_user.id
+        if u_id in context.application.user_data and context.application.user_data[u_id].get("is_banned"):
+            return
+
     await register_user(update, context)
 
     if not await check_subscription(update.effective_user.id, context.bot):
@@ -431,6 +439,12 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 # البحث
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
+
+    # 🔒 فحص الحظر ومنع البحث النصي تماماً
+    if update.effective_user and context.application.user_data:
+        u_id = update.effective_user.id
+        if u_id in context.application.user_data and context.application.user_data[u_id].get("is_banned"):
+            return
 
     if not await check_subscription(update.effective_user.id, context.bot):
         await update.message.reply_text(text=" يجب الاشتراك أولاً في هذه القناة @iiollr حتى يعمل البوت")
