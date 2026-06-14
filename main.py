@@ -196,7 +196,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
                     if inviter_id != user_id:
 
-                        # التعديل الصارم: منح الداعي 10 محاولات إضافية فقط بدلاً من البريميوم الزمني الكامل
+                        # منح الداعي 10 محاولات إضافية في رصيده بالداتابيز
                         await conn.execute("""
                             UPDATE users
                             SET search_credits = search_credits + 10
@@ -234,7 +234,7 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
     if not chat_member:
         return
 
-    # التعديل المعتمد: استبعاد محادثات الخاص تماماً لضمان عدم إرسال الرسالة الترحيبية بـ None
+    # استبعاد الشات الخاص منعاً لرسائل الترحيب الوهمية (None)
     if chat_member.chat.type not in ("group", "supergroup"):
         return
 
@@ -329,7 +329,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             ])
 
             await query.message.edit_text(
-                (
+                text=(
                     "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
                     "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
                     "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
@@ -352,13 +352,11 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         else:
             await query.message.reply_text(
-                f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
-                "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
+                text=f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
             )
         return
 
     elif query.data == "buy_premium":
-        # تحديث نص خطط الاشتراك السنوية والنصف سنوية والشهرية
         text = (
             "⭐ **باقات العضوية المميزة (Premium)**\n\n"
             "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
@@ -370,7 +368,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             "يرجى التواصل المباشر معنا عبر المعرف أدناه لإرسال الأيدي وإتمام التفعيل الفوري:\n"
             "📩 @HMDALataar"
         )
-        await query.message.reply_text(text, parse_mode="Markdown")
+        await query.message.reply_text(text=text, parse_mode="Markdown")
         return
 
     await handle_callbacks(update, context)
@@ -388,7 +386,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            (
+            text=(
                 "👋 مرحبًا بك في *بوت مكتبة الكتب*\n\n"
                 "📚 أكبر مكتبة رقمية مجانية على تيليجرام\n"
                 "📖 يحتوي البوت على أكثر من *مليون كتاب* في مختلف المجالات\n\n"
@@ -409,7 +407,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await update.message.reply_text(
-        (
+        text=(
             "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
             "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
             "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
@@ -427,4 +425,27 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             "📖 نتمنى لك قراءة ممتعة!"
         ),
         parse_mode="Markdown",
-        reply_markup
+        reply_markup=keyboard
+    )
+
+# ===============================================
+# البحث
+# ===============================================
+async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not await check_subscription(update.effective_user.id, context.bot):
+        await update.message.reply_text(text=" يجب الاشتراك أولاً في هذه القناة @iiollr حتى يعمل البوت")
+        return
+
+    if context.args:
+        context.user_data["search_query"] = " ".join(context.args)
+    else:
+        if update.effective_chat.type in ("group", "supergroup"):
+            await update.message.reply_text(
+                text="⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n📌 **مثال صحيح:**\n`/search مقدمة ابن خلدون`", 
+                parse_mode="Markdown"
+            )
+            return
+        context.user_data["search_query"] = update.message.text
+
+    await search_books
