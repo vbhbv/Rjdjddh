@@ -69,11 +69,13 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON books USING gin (file_name gin_trgm_ops);
             """)
 
+            # إرجاع جدول المستخدمين للهيكلية الأصلية مع دمج حقل المحاولات للإحالات
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 joined_at TIMESTAMP DEFAULT NOW(),
                 is_premium BOOLEAN DEFAULT FALSE,
+                premium_expiry TIMESTAMP,
                 search_credits INT DEFAULT 0
             );
             """)
@@ -83,7 +85,11 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
             """)
 
-            # إضافة حقل رصيد محاولات البحث المحدث بدلاً من التوقيت اليومي المفتوح
+            await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
+            """)
+
             await conn.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
@@ -190,7 +196,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
                     if inviter_id != user_id:
 
-                        # التعديل: منح الداعي 10 محاولات إضافية فوراً في رصيده بالداتابيز
+                        # التعديل الصارم: منح الداعي 10 محاولات إضافية فقط بدلاً من البريميوم الزمني الكامل
                         await conn.execute("""
                             UPDATE users
                             SET search_credits = search_credits + 10
@@ -228,7 +234,7 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
     if not chat_member:
         return
 
-    # التعديل: فحص طبيعة المحادثة واستبعاد الشات الخاص منعاً لرسائل الترحيب الوهمية (None)
+    # التعديل المعتمد: استبعاد محادثات الخاص تماماً لضمان عدم إرسال الرسالة الترحيبية بـ None
     if chat_member.chat.type not in ("group", "supergroup"):
         return
 
@@ -319,7 +325,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-                [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+                [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")]
             ])
 
             await query.message.edit_text(
@@ -352,11 +358,16 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif query.data == "buy_premium":
+        # تحديث نص خطط الاشتراك السنوية والنصف سنوية والشهرية
         text = (
-            "⭐ **العضوية المميزة (Premium)**\n\n"
-            "استمتع ببحث غير محدود طوال اليوم دون قيود!\n\n"
-            "💳 **السعر:** 5 دولارات شهرياً.\n"
-            "للتفعيل, يرجى التواصل معنا عبر المعرف أدناه:\n"
+            "⭐ **باقات العضوية المميزة (Premium)**\n\n"
+            "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
+            "📅 **الخطط المتاحة:**\n"
+            "• الاشتراك الشهري: **5$** شهرياً.\n"
+            "• الاشتراك نصف السنوي: **25$** (توفير بقيمة شهر).\n"
+            "• الاشتراك السنوي الكلي: **45$** (العرض الأقوى).\n\n"
+            "💳 **طريقة التفعيل:**\n"
+            "يرجى التواصل المباشر معنا عبر المعرف أدناه لإرسال الأيدي وإتمام التفعيل الفوري:\n"
             "📩 @HMDALataar"
         )
         await query.message.reply_text(text, parse_mode="Markdown")
@@ -394,7 +405,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+        [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")]
     ])
     
     await update.message.reply_text(
@@ -416,76 +427,4 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             "📖 نتمنى لك قراءة ممتعة!"
         ),
         parse_mode="Markdown",
-        reply_markup=keyboard
-    )
-
-# ===============================================
-# البحث
-# ===============================================
-async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text(" يجب الاشتراك أولاً في هذه القناة @iiollr حتى يعمل البوت")
-        return
-
-    if context.args:
-        context.user_data["search_query"] = " ".join(context.args)
-    else:
-        if update.effective_chat.type in ("group", "supergroup"):
-            await update.message.reply_text(
-                "⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n"
-                "📌 **مثال صحيح:**\n"
-                "`/search مقدمة ابن خلدون`", 
-                parse_mode="Markdown"
-            )
-            return
-        context.user_data["search_query"] = update.message.text
-
-    await search_books(update, context)
-
-# ===============================================
-# تشغيل البوت
-# ===============================================
-def run_bot():
-
-    token = os.getenv("BOT_TOKEN")
-
-    if not token:
-        logger.error("🚨 BOT_TOKEN not found.")
-        return
-
-    app = (
-        Application.builder()
-        .token(token)
-        .post_init(init_db)
-        .post_shutdown(close_db)
-        .persistence(PicklePersistence(filepath="bot_data.pickle"))
-        .build()
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_books_with_subscription))
-
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-        search_books_with_subscription
-    ))
-
-    app.add_handler(MessageHandler(
-        filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
-        handle_pdf
-    ))
-
-    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.CHAT_MEMBER))
-
-    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
-
-    register_admin_handlers(app, start)
-
-    logger.info("✅ Bot is running successfully...")
-    
-    app.run_polling(allowed_updates=["update", "message", "callback_query", "chat_member", "my_chat_member"])
-
-if __name__ == "__main__":
-    run_bot()
+        reply_markup
