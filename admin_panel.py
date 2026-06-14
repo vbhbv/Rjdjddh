@@ -114,7 +114,7 @@ async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ حدث خطأ: {e}")
 
 # ===============================================
-# إدارة الحظر (Ban System) لضمان عدم رد البوت نهائياً
+# إدارة الحظر (Ban System) المصلحة والمحمية بالكامل
 # ===============================================
 @admin_only
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,15 +126,19 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = int(context.args[0])
         
-        # تفعيل الحظر في الـ persistence و user_data لضمان قفله حتى لو عاد تشغيل السيرفر
-        if context.application.user_data is not None:
-            if user_id not in context.application.user_data:
-                context.application.user_data[user_id] = {}
-            context.application.user_data[user_id]["is_banned"] = True
+        # الإصلاح الجذري: التعامل الآمن مع القاموس لمنع الـ TypeError والـ mappingproxy
+        user_data_dict = dict(context.application.user_data)
+        if user_id not in user_data_dict:
+            user_data_dict[user_id] = {}
+        
+        # تحديث القيمة بشكل مستقر وآمن على الـ Persistence الخاص بالبوت
+        context.application.user_data[user_id]["is_banned"] = True
             
         await update.message.reply_text(f"🔒 **تم حظر المستخدم بنجاح:** {user_id}\nلن يتمكن من إرسال رسائل أو استخدام أزرار المكتبة.")
     except ValueError:
         await update.message.reply_text("❌ يرجى كتابة معرف مستخدم (ID) رقمي صحيح.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ غير متوقع أثناء الحظر: {e}")
 
 @admin_only
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,12 +150,15 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = int(context.args[0])
         
-        if context.application.user_data is not None and user_id in context.application.user_data:
+        user_data_dict = dict(context.application.user_data)
+        if user_id in user_data_dict:
             context.application.user_data[user_id]["is_banned"] = False
             
         await update.message.reply_text(f"🔓 **تم إلغاء حظر المستخدم بنجاح:** {user_id}\nيمكنه الآن استخدام البوت بشكل طبيعي.")
     except ValueError:
         await update.message.reply_text("❌ يرجى كتابة معرف مستخدم (ID) رقمي صحيح.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ غير متوقع أثناء إلغاء الحظر: {e}")
 
 # ===============================================
 # بقية المهام (تتبع، اشتراك، إحصائيات) محدثة بـ Pool Connection
@@ -166,10 +173,11 @@ async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
 
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # التحقق الفوري ما إذا كان المستخدم محظوراً تمنع معالجة أي حدث له
+    # الفحص الآمن للحظر من الـ user_data المدمجة
     if update.effective_user and context.application.user_data:
         u_id = update.effective_user.id
-        if u_id in context.application.user_data and context.application.user_data[u_id].get("is_banned"):
+        user_data_dict = dict(context.application.user_data)
+        if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return False
 
     if REQUIRED_CHANNEL_ID is None: return True
@@ -220,13 +228,12 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users = await conn.fetch("SELECT user_id FROM users")
         
     await update.message.reply_text(f"🚀 جاري بث الرسالة لـ {len(users)} مستخدم...")
+    user_data_dict = dict(context.application.user_data)
     for r in users:
         try: 
-            # استبعاد المستخدمين المحظورين من البث تلقائياً
             u_id = r['user_id']
-            if context.application.user_data and u_id in context.application.user_data:
-                if context.application.user_data[u_id].get("is_banned"):
-                    continue
+            if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
+                continue
             await context.bot.send_message(u_id, msg)
         except: pass
     await update.message.reply_text("✅ تم الانتهاء من إرسال البث لجميع المستخدمين.")
@@ -246,10 +253,10 @@ async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_admin_handlers(application, original_start_handler):
     async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # التحقق الأولي من الحظر قبل أي تتبع أو معالجة
         if update.effective_user and application.user_data:
             u_id = update.effective_user.id
-            if u_id in application.user_data and application.user_data[u_id].get("is_banned"):
+            user_data_dict = dict(application.user_data)
+            if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
                 return
 
         if await check_subscription(update, context):
