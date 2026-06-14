@@ -74,7 +74,8 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
                 user_id BIGINT PRIMARY KEY,
                 joined_at TIMESTAMP DEFAULT NOW(),
                 is_premium BOOLEAN DEFAULT FALSE,
-                premium_expiry TIMESTAMP
+                premium_expiry TIMESTAMP,
+                search_credits INT DEFAULT 0
             );
             """)
 
@@ -86,6 +87,12 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             await conn.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
+            """)
+
+            # الحذر: ضمان إضافة العمود كاحتياط لعدم ضرب الجداول المنشأة مسبقاً
+            await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
             """)
 
             # إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
@@ -103,7 +110,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             """)
 
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready with premium and download stats columns.")
+        logger.info("✅ Database pool ready with premium, credits and download stats columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
@@ -189,10 +196,10 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
                     if inviter_id != user_id:
 
+                        # التعديل الصارم والمباشر: إضافة 10 محاولات بحث لرصيد الداعي بدلاً من اليومي
                         await conn.execute("""
                             UPDATE users
-                            SET is_premium = TRUE,
-                                premium_expiry = NOW() + INTERVAL '1 day'
+                            SET search_credits = search_credits + 10
                             WHERE user_id = $1
                         """, inviter_id)
 
@@ -208,9 +215,10 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                                 chat_id=inviter_id,
                                 text=(
                                     "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                    "🎁 تم تفعيل **العضوية المميزة (Premium) لحسابك مجاناً لمدة يوم واحد!**\n"
-                                    "يمكنك الآن الاستمتاع ببحث غير محدود لكافة الكتب والروايات."
-                                )
+                                    "🎁 تم إضافة **10 محاولات بحث إضافية** إلى حسابك مجاناً!\n"
+                                    "يمكنك الآن الاستمرار في تصفح وتحميل الكتب والروايات."
+                                ),
+                                parse_mode="Markdown"
                             )
                         except:
                             pass
@@ -226,12 +234,15 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
     if not chat_member:
         return
 
+    if chat_member.chat.type not in ("group", "supergroup"):
+        return
+
     if (
         chat_member.new_chat_member.user.id == context.bot.id
         and chat_member.new_chat_member.status in ("member", "administrator")
     ):
 
-        group_name = chat_member.chat.title
+        group_name = chat_member.chat.title or "المجموعة"
 
         welcome_text = (
             f"🎉 **أهلاً بكم في مجموعة ( {group_name} )!**\n\n"
@@ -313,11 +324,11 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-                [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+                [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")]
             ])
 
             await query.message.edit_text(
-                (
+                text=(
                     "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
                     "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
                     "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
@@ -340,20 +351,23 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         else:
             await query.message.reply_text(
-                f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n"
-                "🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
+                text=f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
             )
         return
 
     elif query.data == "buy_premium":
         text = (
-            "⭐ **العضوية المميزة (Premium)**\n\n"
-            "استمتع ببحث غير محدود طوال اليوم دون قيود!\n\n"
-            "💳 **السعر:** 5 دولارات شهرياً.\n"
-            "للتفعيل, يرجى التواصل معنا عبر المعرف أدناه:\n"
+            "⭐ **باقات العضوية المميزة (Premium)**\n\n"
+            "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
+            "📅 **الخطط المتاحة:**\n"
+            "• الاشتراك الشهري: **5$** شهرياً.\n"
+            "• الاشتراك نصف السنوي: **25$** (توفير بقيمة شهر).\n"
+            "• الاشتراك السنوي الكلي: **45$** (العرض الأقوى).\n\n"
+            "💳 **طريقة التفعيل:**\n"
+            "يرجى التواصل المباشر معنا عبر المعرف أدناه لإرسال الأيدي وإتمام التفعيل الفوري:\n"
             "📩 @HMDALataar"
         )
-        await query.message.reply_text(text, parse_mode="Markdown")
+        await query.message.reply_text(text=text, parse_mode="Markdown")
         return
 
     await handle_callbacks(update, context)
@@ -371,7 +385,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            (
+            text=(
                 "👋 مرحبًا بك في *بوت مكتبة الكتب*\n\n"
                 "📚 أكبر مكتبة رقمية مجانية على تيليجرام\n"
                 "📖 يحتوي البوت على أكثر من *مليون كتاب* في مختلف المجالات\n\n"
@@ -388,11 +402,11 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-        [InlineKeyboardButton("⭐ تفعيل البحث اللامحدود (5$)", callback_data="buy_premium")]
+        [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")]
     ])
     
     await update.message.reply_text(
-        (
+        text=(
             "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
             "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
             "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
@@ -419,7 +433,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text(" يجب الاشتراك أولاً في هذه القناة @iiollr حتى يعمل البوت")
+        await update.message.reply_text(text=" يجب الاشتراك أولاً في هذه القناة @iiollr حتى يعمل البوت")
         return
 
     if context.args:
@@ -427,9 +441,7 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     else:
         if update.effective_chat.type in ("group", "supergroup"):
             await update.message.reply_text(
-                "⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n"
-                "📌 **مثال صحيح:**\n"
-                "`/search مقدمة ابن خلدون`", 
+                text="⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n📌 **مثال صحيح:**\n`/search مقدمة ابن خلدون`", 
                 parse_mode="Markdown"
             )
             return
