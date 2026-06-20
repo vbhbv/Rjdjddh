@@ -367,7 +367,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             "• الاشتراك السنوي الكلي: **45$** (العرض الأقوى).\n\n"
             "💳 **طريقة التفعيل:**\n"
             "يرجى التواصل المباشر معنا عبر المعرف أدناه لإرسال الأيدي وإتمام التفعيل الفوري:\n"
-            "📩 @HMDALataar"
+            "📩 @UUUULU"
         )
         await query.message.reply_text(text=text, parse_mode="Markdown")
         return
