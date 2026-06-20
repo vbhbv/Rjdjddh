@@ -1,4 +1,5 @@
 import os
+import re
 import asyncpg
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -163,7 +164,7 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 # ===============================================
-# تسجيل المستخدم ومعالجة الإحالة
+# تسجيل المستخدم ومعالجة الإحالة (تم إصلاحها بشكل شامل)
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -181,6 +182,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
             user_id
         )
 
+        # لا تمنح المكافأة إلا إذا كان المستخدم جديداً كلياً في النظام
         if not existing_user:
 
             await conn.execute(
@@ -188,41 +190,51 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                 user_id
             )
 
+            # استخراج كود الإحالة الآمن عبر فحص دقيق للـ args أو النص الخام للرسالة
+            inviter_id = None
             if context.args and context.args[0].startswith("inv_"):
-
                 try:
                     inviter_id = int(context.args[0].split("_")[1])
+                except: pass
+            elif update.message and update.message.text:
+                match = re.search(r'/start inv_(\d+)', update.message.text)
+                if match:
+                    try:
+                        inviter_id = int(match.group(1))
+                    except: pass
 
-                    if inviter_id != user_id:
+            # إذا عثرنا على أيدي الشخص الداعي وهو لا يساوي أيدي المستخدم الجديد
+            if inviter_id and inviter_id != user_id:
+                try:
+                    # إضافة 10 محاولات في قاعدة البيانات للشخص صاحب الرابط
+                    await conn.execute("""
+                        UPDATE users
+                        SET search_credits = search_credits + 10
+                        WHERE user_id = $1
+                    """, inviter_id)
 
-                        await conn.execute("""
-                            UPDATE users
-                            SET search_credits = search_credits + 10
-                            WHERE user_id = $1
-                        """, inviter_id)
+                    # فك قفل الحظر المؤقت بأسلوب القاموس الآمن للحماية من خطأ الـ MappingProxy
+                    if context.application.user_data:
+                        user_data_dict = dict(context.application.user_data)
+                        if inviter_id in user_data_dict and "block_until" in context.application.user_data[inviter_id]:
+                            context.application.user_data[inviter_id]["block_until"] = None
 
-                        if (
-                            context.application.user_data
-                            and inviter_id in context.application.user_data
-                        ):
-                            if "block_until" in context.application.user_data[inviter_id]:
-                                context.application.user_data[inviter_id]["block_until"] = None
-
-                        try:
-                            await context.bot.send_message(
-                                chat_id=inviter_id,
-                                text=(
-                                    "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                    "🎁 تم إضافة **10 محاولات بحث إضافية** إلى حسابك مجاناً!\n"
-                                    "يمكنك الآن الاستمرار في تصفح وتحميل الكتب والروايات."
-                                ),
-                                parse_mode="Markdown"
-                            )
-                        except:
-                            pass
+                    # إرسال إشعار فوري للشخص القديم يبلغه بنجاح الإضافة
+                    try:
+                        await context.bot.send_message(
+                            chat_id=inviter_id,
+                            text=(
+                                "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
+                                "🎁 تم إضافة **10 محاولات بحث إضافية** إلى حسابك مجاناً!\n"
+                                "يمكنك الآن الاستمرار في تصفح وتحميل الكتب والروايات."
+                            ),
+                            parse_mode="Markdown"
+                        )
+                    except:
+                        pass
 
                 except Exception as e:
-                    logger.error(f"Error processing referral shortcut: {e}")
+                    logger.error(f"Error processing referral inside DB update: {e}")
 
 # ===============================================
 # الترحيب المضمون عند إضافة البوت للمجموعة
@@ -269,10 +281,11 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
     
-    # 🔒 فحص الحظر الفوري عند ضغط أي زر لمنع المخترقين أو المزعجين
+    # 🔒 فحص الحظر الفوري والآمن عند ضغط أي زر
     u_id = query.from_user.id
-    if context.application.user_data and u_id in context.application.user_data:
-        if context.application.user_data[u_id].get("is_banned"):
+    if context.application.user_data:
+        user_data_dict = dict(context.application.user_data)
+        if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             await query.answer("❌ أنت محظور من استخدام أزرار هذا البوت.", show_alert=True)
             return
 
@@ -382,7 +395,8 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     # 🔒 منع المستخدم المحظور من تشغيل البوت عبر /start نهائياً
     if update.effective_user and context.application.user_data:
         u_id = update.effective_user.id
-        if u_id in context.application.user_data and context.application.user_data[u_id].get("is_banned"):
+        user_data_dict = dict(context.application.user_data)
+        if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
     await register_user(update, context)
@@ -443,7 +457,8 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     # 🔒 فحص الحظر ومنع البحث النصي تماماً
     if update.effective_user and context.application.user_data:
         u_id = update.effective_user.id
-        if u_id in context.application.user_data and context.application.user_data[u_id].get("is_banned"):
+        user_data_dict = dict(context.application.user_data)
+        if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
     if not await check_subscription(update.effective_user.id, context.bot):
