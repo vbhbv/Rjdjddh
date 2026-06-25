@@ -211,6 +211,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• سنوي: `/set_premium ID year`\n"
             "• لإلغاء البريميوم: `/rem_premium ID`\n"
             "--------------------------------------\n"
+            "📢 **إعدادات الاشتراك الإجباري:**\n"
+            "• تعيين/تغيير القناة: `/setchannel @username` أو `/setchannel ID`\n"
+            "--------------------------------------\n"
             "🚫 **أوامر الحظر والتحكم:**\n"
             "• لحظر مستخدم كلياً: `/ban ID`\n"
             "• لإلغاء حظر مستخدم: `/unban ID`\n"
@@ -241,15 +244,24 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global REQUIRED_CHANNEL_ID
-    if context.args:
-        try:
-            arg = context.args[0]
-            if arg.startswith("@"):
-                chat = await context.bot.get_chat(arg)
-                REQUIRED_CHANNEL_ID = chat.id
-            else: REQUIRED_CHANNEL_ID = int(arg)
-            await update.message.reply_text(f"✅ تم تعيين قناة الاشتراك الإجباري بنجاح: {REQUIRED_CHANNEL_ID}")
-        except: await update.message.reply_text("❌ معرف القناة غير صحيح أو البوت ليس مشرفاً بها.")
+    if not context.args:
+        await update.message.reply_text("⚠️ **طريقة الاستخدام:**\n`/setchannel @username` أو `/setchannel ID`")
+        return
+        
+    try:
+        arg = context.args[0]
+        if arg.startswith("@"):
+            chat = await context.bot.get_chat(arg)
+            REQUIRED_CHANNEL_ID = chat.id
+            channel_name = chat.title or arg
+        else:
+            REQUIRED_CHANNEL_ID = int(arg)
+            chat = await context.bot.get_chat(REQUIRED_CHANNEL_ID)
+            channel_name = chat.title or str(REQUIRED_CHANNEL_ID)
+            
+        await update.message.reply_text(f"✅ تم تعيين قناة الاشتراك الإجباري بنجاح!\n📌 القناة: **{channel_name}**\n🆔 المعرف الرقمي: `{REQUIRED_CHANNEL_ID}`")
+    except Exception as e:
+        await update.message.reply_text("❌ لم يتم العثور على القناة. تأكد من صحة اليوزر/الأيدي وأن البوت تم رفعه مشرفاً داخل القناة أولاً.")
 
 def register_admin_handlers(application, original_start_handler):
     async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
