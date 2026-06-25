@@ -8,7 +8,7 @@ from telegram.ext import (
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
 )
 
-from admin_panel import register_admin_handlers
+from admin_panel import register_admin_handlers, REQUIRED_CHANNEL_ID  # 🔄 تم استيراد المتغير الديناميكي هنا
 from search_handler import search_books, handle_callbacks
 # استيراد دوال الرادار من الملف المستقل لضمان الربط الكامل
 from radar_handler import (
@@ -152,16 +152,30 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
             """, document.file_id, document.file_name)
 
 # ===============================================
-# الاشتراك الإجباري
+# الاشتراك الإجباري (تم تعديل الدالتين بالأسفل ليصبح الفحص ديناميكياً)
 # ===============================================
-CHANNEL_USERNAME = "@iiollr"
-
 async def check_subscription(user_id: int, bot) -> bool:
+    import admin_panel
+    if admin_panel.REQUIRED_CHANNEL_ID is None: 
+        return True
     try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        member = await bot.get_chat_member(admin_panel.REQUIRED_CHANNEL_ID, user_id)
         return member.status in ("member", "administrator", "creator")
     except:
         return False
+
+async def get_channel_invite_link(bot) -> str:
+    import admin_panel
+    if admin_panel.REQUIRED_CHANNEL_ID is None:
+        return "https://t.me/"
+    try:
+        chat = await bot.get_chat(admin_panel.REQUIRED_CHANNEL_ID)
+        if chat.username:
+            return f"https://t.me/{chat.username}"
+        elif chat.invite_link:
+            return chat.invite_link
+    except: pass
+    return "https://t.me/"
 
 # ===============================================
 # تسجيل المستخدم ومعالجة الإحالة (تم إصلاحها بشكل شامل)
@@ -365,8 +379,9 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         else:
+            target_link = await get_channel_invite_link(context.bot)
             await query.message.reply_text(
-                text=f"❌ لم يتم العثور على اشتراكك في {CHANNEL_USERNAME}\n🔔 يرجى الاشتراك أولاً ثم إعادة المحاولة"
+                text=f"❌ لم يتم العثور على اشتراكك في القناة المطلوبة.\n🔔 يرجى الانضمام هنا أولاً ثم إعادة المحاولة:\n{target_link}"
             )
         return
 
@@ -402,8 +417,9 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     await register_user(update, context)
 
     if not await check_subscription(update.effective_user.id, context.bot):
+        target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك في القناة", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
+            [InlineKeyboardButton("✅ اشترك في القناة", url=target_link)],
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
@@ -462,7 +478,8 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
             return
 
     if not await check_subscription(update.effective_user.id, context.bot):
-        await update.message.reply_text(text=" يجب الاشتراك أولاً في هذه القناة @iiollr حتى يعمل البوت")
+        target_link = await get_channel_invite_link(context.bot)
+        await update.message.reply_text(text=f"⚠️ يجب الاشتراك أولاً في القناة الداعمة لتتمكن من البحث واستخدام خدمات البوت:\n{target_link}")
         return
 
     if context.args:
