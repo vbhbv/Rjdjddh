@@ -152,24 +152,34 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
             """, document.file_id, document.file_name)
 
 # ===============================================
-# الاشتراك الإجباري (تم تعديل الدالتين بالأسفل ليصبح الفحص ديناميكياً)
+# الاشتراك الإجباري الديناميكي والمستمر عبر الـ Persistence
 # ===============================================
 async def check_subscription(user_id: int, bot) -> bool:
-    import admin_panel
-    if admin_panel.REQUIRED_CHANNEL_ID is None: 
+    try:
+        from __main__ import app
+        channel_id = app.bot_data.get("required_channel_id")
+    except:
+        channel_id = None
+
+    if channel_id is None: 
         return True
     try:
-        member = await bot.get_chat_member(admin_panel.REQUIRED_CHANNEL_ID, user_id)
+        member = await bot.get_chat_member(channel_id, user_id)
         return member.status in ("member", "administrator", "creator")
     except:
         return False
 
 async def get_channel_invite_link(bot) -> str:
-    import admin_panel
-    if admin_panel.REQUIRED_CHANNEL_ID is None:
+    try:
+        from __main__ import app
+        channel_id = app.bot_data.get("required_channel_id")
+    except:
+        channel_id = None
+
+    if channel_id is None:
         return "https://t.me/"
     try:
-        chat = await bot.get_chat(admin_panel.REQUIRED_CHANNEL_ID)
+        chat = await bot.get_chat(channel_id)
         if chat.username:
             return f"https://t.me/{chat.username}"
         elif chat.invite_link:
@@ -344,6 +354,19 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await execute_radar_search(query, context)
         return
 
+    elif query.data == "show_advertising_info":
+        adv_text = (
+            "📢 **الإعلانات ودعم استمرار البوت**\n"
+            "--------------------------------------\n"
+            "مستخدمينا الأعزاء، إن الحفاظ على هذا البوت وتطويره ليستمر في خدمتكم كأكبر مكتبة رقمية مجانية يتطلب تكاليف تشغيلية مرتفعة لتغطية مصاريف السيرفرات وقواعد البيانات الضخمة التي تحتضن أكثر من 1.5 مليون كتاب ومصدر.\n\n"
+            "ومن أجل ضمان استمرارية هذه الخدمة وتغطية هذه التكاليف، فتحنا باب الإعلان وفق شروط تناسب طابع هذه المكتبة؛ حيث **نروج للقنوات الثقافية والعلمية والتعليمية فقط**، نصرةً للمحتوى الهادف وحفاظاً على بيئة معرفية تليق بجمهورنا من القراء والباحثين.\n\n"
+            "📬 **للاستفسار وحجز الإعلانات:**\n"
+            "التواصل المباشر مع إدارة البوت ومعرفة التفاصيل، يرجى مراسلتنا عبر المعرف التالي:\n"
+            "📩 @UUUULU"
+        )
+        await query.message.reply_text(text=adv_text, parse_mode="Markdown")
+        return
+
     elif query.data == "back_to_main" or query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
@@ -353,7 +376,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-                [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")]
+                [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium"),
+                 InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
 
             await query.message.edit_text(
@@ -440,7 +464,8 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-        [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")]
+        [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium"),
+         InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
     ])
     
     await update.message.reply_text(
@@ -506,6 +531,7 @@ def run_bot():
         logger.error("🚨 BOT_TOKEN not found.")
         return
 
+    global app
     app = (
         Application.builder()
         .token(token)
