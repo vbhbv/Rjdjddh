@@ -359,8 +359,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             "📢 **الإعلانات ودعم استمرار البوت**\n"
             "--------------------------------------\n"
             "مستخدمينا الأعزاء، إن الحفاظ على هذا البوت وتطويره ليستمر في خدمتكم كأكبر مكتبة رقمية مجانية يتطلب تكاليف تشغيلية مرتفعة لتغطية مصاريف السيرفرات وقواعد البيانات الضخمة التي تحتضن أكثر من 1.5 مليون كتاب ومصدر.\n\n"
-            "ومن أجل ضمان استمرارية هذه الخدمة وتغطية هذه التكاليف، فتحنا باب الإعلان وفق شروط تناسب طابع هذه المكتبة؛ حيث **نروج للقنوات الثقافية والعلمية والتعليمية فقط**، نصرةً للمحتوى الهادف وحفاظاً على بيئة معرفية تليق بجمهورنا من القراء والباحثين.\n\n"
-            "📬 **للاستفسار وحجز الإعلانات:**\n"
+            "ومن أجل ضمان استمرارية هذه الخدمة وتغطية هذه التكاليف، فتحنا باب الإعلان وفق شروط صارمة تناسب طابع هذه المكتبة؛ حيث **نروج للقنوات الثقافية والعلمية والتعليمية فقط**، نصرةً للمحتوى الهادف وحفاظاً على بيئة معرفية تليق بجمهورنا من القراء والباحثين.\n\n"
+            "📬 **للاستفسار وحجز المساحات الإعلانية:**\n"
             "التواصل المباشر مع إدارة البوت ومعرفة التفاصيل، يرجى مراسلتنا عبر المعرف التالي:\n"
             "📩 @UUUULU"
         )
@@ -371,13 +371,14 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
 
+            # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-                [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium"),
-                 InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
+                [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")],
+                [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
 
             await query.message.edit_text(
@@ -459,13 +460,14 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
-        [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium"),
-         InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
+        [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")],
+        [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
     ])
     
     await update.message.reply_text(
