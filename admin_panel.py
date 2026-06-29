@@ -270,4 +270,15 @@ def register_admin_handlers(application, original_start_handler):
             if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
                 return
 
-        if await check_subscription
+        if await check_subscription(update, context):
+            await track_user(update, context)
+            await original_start_handler(update, context)
+
+    application.add_handler(CommandHandler("admin", admin_panel))
+    application.add_handler(CommandHandler("set_premium", set_premium))
+    application.add_handler(CommandHandler("rem_premium", remove_premium))
+    application.add_handler(CommandHandler("ban", ban_user))
+    application.add_handler(CommandHandler("unban", unban_user))
+    application.add_handler(CommandHandler("broadcast", admin_broadcast))
+    application.add_handler(CommandHandler("setchannel", set_channel))
+    application.add_handler(CommandHandler("start", start_with_tracking))
