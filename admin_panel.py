@@ -16,11 +16,6 @@ except ValueError:
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
 # ===============================================
-# متغير القناة الاشتراك الإجباري
-# ===============================================
-REQUIRED_CHANNEL_ID = None  # سيُحدد عبر /setchannel
-
-# ===============================================
 # دوال مساعدة
 # ===============================================
 def admin_only(func):
@@ -126,12 +121,10 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = int(context.args[0])
         
-        # الإصلاح الجذري: التعامل الآمن مع القاموس لمنع الـ TypeError والـ mappingproxy
         user_data_dict = dict(context.application.user_data)
         if user_id not in user_data_dict:
             user_data_dict[user_id] = {}
         
-        # تحديث القيمة بشكل مستقر وآمن على الـ Persistence الخاص بالبوت
         context.application.user_data[user_id]["is_banned"] = True
             
         await update.message.reply_text(f"🔒 **تم حظر المستخدم بنجاح:** {user_id}\nلن يتمكن من إرسال رسائل أو استخدام أزرار المكتبة.")
@@ -180,14 +173,18 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return False
 
-    if REQUIRED_CHANNEL_ID is None: return True
+    # جلب المعرف المخزن دائمياً في البوت والمطابق لملف main.py
+    required_channel = context.bot_data.get("required_channel_id")
+    if required_channel is None: 
+        return True
     try:
-        member = await context.bot.get_chat_member(REQUIRED_CHANNEL_ID, update.effective_user.id)
+        member = await context.bot.get_chat_member(required_channel, update.effective_user.id)
         if member.status in ["left", "kicked"]:
             await update.message.reply_text("❌ يجب الاشتراك في القناة أولاً قبل استخدام البوت.")
             return False
         return True
-    except: return False
+    except: 
+        return False
 
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -243,7 +240,6 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global REQUIRED_CHANNEL_ID
     if not context.args:
         await update.message.reply_text("⚠️ **طريقة الاستخدام:**\n`/setchannel @username` أو `/setchannel ID`")
         return
@@ -252,14 +248,17 @@ async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         arg = context.args[0]
         if arg.startswith("@"):
             chat = await context.bot.get_chat(arg)
-            REQUIRED_CHANNEL_ID = chat.id
+            target_id = chat.id
             channel_name = chat.title or arg
         else:
-            REQUIRED_CHANNEL_ID = int(arg)
-            chat = await context.bot.get_chat(REQUIRED_CHANNEL_ID)
-            channel_name = chat.title or str(REQUIRED_CHANNEL_ID)
+            target_id = int(arg)
+            chat = await context.bot.get_chat(target_id)
+            channel_name = chat.title or str(target_id)
             
-        await update.message.reply_text(f"✅ تم تعيين قناة الاشتراك الإجباري بنجاح!\n📌 القناة: **{channel_name}**\n🆔 المعرف الرقمي: `{REQUIRED_CHANNEL_ID}`")
+        # الحفظ الدائم والأبدي والمشترك داخل bot_data لمنع الاختفاء عند الريستارت
+        context.bot_data["required_channel_id"] = target_id
+        
+        await update.message.reply_text(f"✅ تم تعيين قناة الاشتراك الإجباري بنجاح وحفظها دائمياً!\n📌 القناة: **{channel_name}**\n🆔 المعرف الرقمي: `{target_id}`")
     except Exception as e:
         await update.message.reply_text("❌ لم يتم العثور على القناة. تأكد من صحة اليوزر/الأيدي وأن البوت تم رفعه مشرفاً داخل القناة أولاً.")
 
@@ -271,15 +270,4 @@ def register_admin_handlers(application, original_start_handler):
             if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
                 return
 
-        if await check_subscription(update, context):
-            await track_user(update, context)
-            await original_start_handler(update, context)
-
-    application.add_handler(CommandHandler("admin", admin_panel))
-    application.add_handler(CommandHandler("set_premium", set_premium))
-    application.add_handler(CommandHandler("rem_premium", remove_premium))
-    application.add_handler(CommandHandler("ban", ban_user))
-    application.add_handler(CommandHandler("unban", unban_user))
-    application.add_handler(CommandHandler("broadcast", admin_broadcast))
-    application.add_handler(CommandHandler("setchannel", set_channel))
-    application.add_handler(CommandHandler("start", start_with_tracking))
+        if await check_subscription
