@@ -8,7 +8,8 @@ from telegram.ext import (
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
 )
 
-from admin_panel import register_admin_handlers, REQUIRED_CHANNEL_ID  # 🔄 تم استيراد المتغير الديناميكي هنا
+# 🛠 تم تصحيح هذا السطر وإلغاء المتغير القديم المتسبب في الـ ImportError
+from admin_panel import register_admin_handlers  
 from search_handler import search_books, handle_callbacks
 # استيراد دوال الرادار من الملف المستقل لضمان الربط الكامل
 from radar_handler import (
