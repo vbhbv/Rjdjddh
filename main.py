@@ -566,7 +566,7 @@ def run_bot():
 
     logger.info("✅ Bot is running successfully...")
     
-    app.run_polling(allowed_updates=["update", "message", "callback_query", "chat_member", "my_chat_member"])
+    app.run_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
 
 if __name__ == "__main__":
     run_bot()
