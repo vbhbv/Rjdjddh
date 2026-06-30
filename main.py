@@ -127,30 +127,38 @@ async def close_db(app: Application):
         logger.info("✅ Database pool closed.")
 
 # ===============================================
-# استقبال ملفات PDF
+# استقبال ملفات PDF وفهرستها بدقة
 # ===============================================
 async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
+    # استخراج الرسالة سواء كانت منشور قناة أو رسالة عادية في جروب/خاص
+    msg = update.channel_post or update.message
+    if not msg or not msg.document:
+        return
 
-    if (
-        update.channel_post
-        and update.channel_post.document
-        and update.channel_post.document.mime_type == "application/pdf"
-    ):
-
+    if msg.document.mime_type == "application/pdf":
         pool = context.bot_data.get("db_conn")
-
         if not pool:
             return
 
-        document = update.channel_post.document
+        document = msg.document
+        file_id = document.file_id
+        file_name = document.file_name or "Unknown_Book.pdf"
+        
+        # تنظيف أولي مبسط للاسم لملء حقل name_normalized منعاً لظهوره كـ NULL
+        name_normalized = file_name.replace(".pdf", "").replace("_", " ").replace("-", " ")
 
-        async with pool.acquire() as conn:
-            await conn.execute("""
-            INSERT INTO books(file_id, file_name)
-            VALUES($1, $2)
-            ON CONFLICT (file_id) DO UPDATE
-            SET file_name = EXCLUDED.file_name;
-            """, document.file_id, document.file_name)
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                INSERT INTO books(file_id, file_name, name_normalized)
+                VALUES($1, $2, $3)
+                ON CONFLICT (file_id) DO UPDATE
+                SET file_name = EXCLUDED.file_name,
+                    name_normalized = EXCLUDED.name_normalized;
+                """, file_id, file_name, name_normalized)
+                logger.info(f"✅ Successfully indexed new book: {file_name}")
+        except Exception as e:
+            logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
 # الاشتراك الإجباري الديناميكي والمستمر عبر الـ Persistence
@@ -189,33 +197,27 @@ async def get_channel_invite_link(bot) -> str:
     return "https://t.me/"
 
 # ===============================================
-# تسجيل المستخدم ومعالجة الإحالة (تم إصلاحها بشكل شامل)
+# تسجيل المستخدم ومعالجة الإحالة
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
-
     pool = context.bot_data.get("db_conn")
-
     if not pool or not update.effective_user:
         return
 
     user_id = update.effective_user.id
 
     async with pool.acquire() as conn:
-
         existing_user = await conn.fetchval(
             "SELECT user_id FROM users WHERE user_id = $1",
             user_id
         )
 
-        # لا تمنح المكافأة إلا إذا كان المستخدم جديداً كلياً في النظام
         if not existing_user:
-
             await conn.execute(
                 "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
                 user_id
             )
 
-            # استخراج كود الإحالة الآمن عبر فحص دقيق للـ args أو النص الخام للرسالة
             inviter_id = None
             if context.args and context.args[0].startswith("inv_"):
                 try:
@@ -228,23 +230,19 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                         inviter_id = int(match.group(1))
                     except: pass
 
-            # إذا عثرنا على أيدي الشخص الداعي وهو لا يساوي أيدي المستخدم الجديد
             if inviter_id and inviter_id != user_id:
                 try:
-                    # إضافة 10 محاولات في قاعدة البيانات للشخص صاحب الرابط
                     await conn.execute("""
                         UPDATE users
                         SET search_credits = search_credits + 10
                         WHERE user_id = $1
                     """, inviter_id)
 
-                    # فك قفل الحظر المؤقت بأسلوب القاموس الآمن للحماية من خطأ الـ MappingProxy
                     if context.application.user_data:
                         user_data_dict = dict(context.application.user_data)
                         if inviter_id in user_data_dict and "block_until" in context.application.user_data[inviter_id]:
                             context.application.user_data[inviter_id]["block_until"] = None
 
-                    # إرسال إشعار فوري للشخص القديم يبلغه بنجاح الإضافة
                     try:
                         await context.bot.send_message(
                             chat_id=inviter_id,
@@ -276,9 +274,7 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
         chat_member.new_chat_member.user.id == context.bot.id
         and chat_member.new_chat_member.status in ("member", "administrator")
     ):
-
         group_name = chat_member.chat.title or "المجموعة"
-
         welcome_text = (
             f"🎉 **أهلاً بكم في مجموعة ( {group_name} )!**\n\n"
             f"🤖 تم تفعيل بوت مكتبة الكتب داخل المجموعة بنجاح.\n\n"
@@ -288,7 +284,6 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
             f"`/search مقدمة ابن خلدون`\n\n"
             f"🚀 استمتعوا بالبحث والقراءة الحرة داخل المجموعة!"
         )
-
         try:
             await context.bot.send_message(
                 chat_id=chat_member.chat.id,
@@ -303,10 +298,7 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
 # callbacks
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
-    
-    # 🔒 فحص الحظر الفوري والآمن عند ضغط أي زر
     u_id = query.from_user.id
     if context.application.user_data:
         user_data_dict = dict(context.application.user_data)
@@ -320,41 +312,32 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         from indexes import show_index_menu
         await show_index_menu(update, context)
         return
-
     elif query.data.startswith("idx:"):
         from indexes import handle_index_selection
         await handle_index_selection(update, context)
         return
-
     elif query.data == "show_english_index":
         await show_english_index_menu(update, context)
         return
-
     elif query.data.startswith("eng_idx:"):
         await handle_english_index_selection(update, context)
         return
-
     elif query.data == "show_trending":
         from search_handler import send_trending_books
         await send_trending_books(update, context)
         return
-
     elif query.data == "radar_menu":
         await start_radar_flow(query)
         return
-
     elif query.data.startswith("rad_cat:"):
         await process_radar_category(query, context)
         return
-
     elif query.data.startswith("rad_diff:"):
         await process_radar_difficulty(query, context)
         return
-
     elif query.data.startswith("rad_size:"):
         await execute_radar_search(query, context)
         return
-
     elif query.data == "show_advertising_info":
         adv_text = (
             "📢 **الإعلانات ودعم استمرار البوت**\n"
@@ -367,12 +350,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.reply_text(text=adv_text, parse_mode="Markdown")
         return
-
-    elif query.data == "back_to_main" or query.data == "check_subscription":
-
+    elif query.data in ("back_to_main", "check_subscription"):
         if await check_subscription(query.from_user.id, context.bot):
-
-            # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
@@ -381,7 +360,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")],
                 [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
-
             await query.message.edit_text(
                 text=(
                     "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
@@ -403,18 +381,16 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
-
         else:
             target_link = await get_channel_invite_link(context.bot)
             await query.message.reply_text(
                 text=f"❌ لم يتم العثور على اشتراكك في القناة المطلوبة.\n🔔 يرجى الانضمام هنا أولاً ثم إعادة المحاولة:\n{target_link}"
             )
         return
-
     elif query.data == "buy_premium":
         text = (
             "⭐ **باقات العضوية المميزة (Premium)**\n\n"
-            "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
+            "اففتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
             "📅 **الخطط المتاحة:**\n"
             "• الاشتراك الشهري: **5$** شهرياً.\n"
             "• الاشتراك نصف السنوي: **25$** (توفير بقيمة شهر).\n"
@@ -432,8 +408,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # /start
 # ===============================================
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
-
-    # 🔒 منع المستخدم المحظور من تشغيل البوت عبر /start نهائياً
     if update.effective_user and context.application.user_data:
         u_id = update.effective_user.id
         user_data_dict = dict(context.application.user_data)
@@ -461,7 +435,6 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
@@ -494,11 +467,9 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ===============================================
-# البحث
+# البحث مع التحقق من الاشتراك والـ Ban القديم
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
-
-    # 🔒 فحص الحظر ومنع البحث النصي تماماً
     if update.effective_user and context.application.user_data:
         u_id = update.effective_user.id
         user_data_dict = dict(context.application.user_data)
@@ -507,66 +478,10 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
 
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
-        await update.message.reply_text(text=f"⚠️ يجب الاشتراك أولاً في القناة الداعمة لتتمكن من البحث واستخدام خدمات البوت:\n{target_link}")
+        await update.message.reply_text(
+            text=f"❌ عذراً، يجب عليك الاشتراك أولاً لاستخدام ميزة البحث النصي:\n{target_link}"
+        )
         return
 
-    if context.args:
-        context.user_data["search_query"] = " ".join(context.args)
-    else:
-        if update.effective_chat.type in ("group", "supergroup"):
-            await update.message.reply_text(
-                text="⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n📌 **مثال صحيح:**\n`/search مقدمة ابن خلدون`", 
-                parse_mode="Markdown"
-            )
-            return
-        context.user_data["search_query"] = update.message.text
-
+    # استدعاء دالة البحث المباشرة من ملف الـ search_handler
     await search_books(update, context)
-
-# ===============================================
-# تشغيل البوت
-# ===============================================
-def run_bot():
-
-    token = os.getenv("BOT_TOKEN")
-
-    if not token:
-        logger.error("🚨 BOT_TOKEN not found.")
-        return
-
-    global app
-    app = (
-        Application.builder()
-        .token(token)
-        .post_init(init_db)
-        .post_shutdown(close_db)
-        .persistence(PicklePersistence(filepath="bot_data.pickle"))
-        .build()
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_books_with_subscription))
-
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-        search_books_with_subscription
-    ))
-
-    app.add_handler(MessageHandler(
-        filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
-        handle_pdf
-    ))
-
-    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.CHAT_MEMBER))
-
-    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
-
-    register_admin_handlers(app, start)
-
-    logger.info("✅ Bot is running successfully...")
-    
-    app.run_polling(allowed_updates=["update", "message", "callback_query", "chat_member", "my_chat_member"])
-
-if __name__ == "__main__":
-    run_bot()
