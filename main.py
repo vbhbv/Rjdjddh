@@ -31,9 +31,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================================
-# إعداد قاعدة البيانات
+# إعداد قاعدة البيانات عبر post_init المضمونة
 # ===============================================
-async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
+async def init_db(app: Application):
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
@@ -82,21 +82,17 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             """)
 
             await conn.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
             """)
 
             await conn.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP;
             """)
 
             await conn.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
             """)
 
-            # إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS download_stats (
                 id SERIAL PRIMARY KEY,
@@ -110,18 +106,17 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON download_stats (downloaded_at);
             """)
 
-        app_context.bot_data["db_conn"] = pool
+        app.bot_data["db_conn"] = pool
         logger.info("✅ Database pool ready with premium, credits and download stats columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
 
 # ===============================================
-# إغلاق قاعدة البيانات
+# إغلاق قاعدة البيانات عند إيقاف البوت
 # ===============================================
 async def close_db(app: Application):
     pool = app.bot_data.get("db_conn")
-
     if pool:
         await pool.close()
         logger.info("✅ Database pool closed.")
@@ -130,7 +125,6 @@ async def close_db(app: Application):
 # استقبال ملفات PDF وفهرستها بدقة
 # ===============================================
 async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
-    # استخراج الرسالة سواء كانت منشور قناة أو رسالة عادية في جروب/خاص
     msg = update.channel_post or update.message
     if not msg or not msg.document:
         return
@@ -144,7 +138,6 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
         file_id = document.file_id
         file_name = document.file_name or "Unknown_Book.pdf"
         
-        # تنظيف أولي مبسط للاسم لملء حقل name_normalized منعاً لظهوره كـ NULL
         name_normalized = file_name.replace(".pdf", "").replace("_", " ").replace("-", " ")
 
         try:
@@ -161,7 +154,7 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Error indexing book: {e}")
 
 # ===============================================
-# الاشتراك الإجباري الديناميكي والمستمر عبر الـ Persistence
+# الاشتراك الإجباري الديناميكي
 # ===============================================
 async def check_subscription(user_id: int, bot) -> bool:
     try:
@@ -208,14 +201,12 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
     async with pool.acquire() as conn:
         existing_user = await conn.fetchval(
-            "SELECT user_id FROM users WHERE user_id = $1",
-            user_id
+            "SELECT user_id FROM users WHERE user_id = $1", user_id
         )
 
         if not existing_user:
             await conn.execute(
-                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING",
-                user_id
+                "INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", user_id
             )
 
             inviter_id = None
@@ -233,9 +224,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
             if inviter_id and inviter_id != user_id:
                 try:
                     await conn.execute("""
-                        UPDATE users
-                        SET search_credits = search_credits + 10
-                        WHERE user_id = $1
+                        UPDATE users SET search_credits = search_credits + 10 WHERE user_id = $1
                     """, inviter_id)
 
                     if context.application.user_data:
@@ -248,26 +237,21 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                             chat_id=inviter_id,
                             text=(
                                 "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                "🎁 تم إضافة **10 محاولات بحث إفاضية** إلى حسابك مجاناً!\n"
+                                "🎁 تم إضافة **10 محاولات بحث إضافية** إلى حسابك مجاناً!\n"
                                 "يمكنك الآن الاستمرار في تصفح وتحميل الكتب والروايات."
                             ),
                             parse_mode="Markdown"
                         )
-                    except:
-                        pass
-
+                    except: pass
                 except Exception as e:
                     logger.error(f"Error processing referral inside DB update: {e}")
 
 # ===============================================
-# الترحيب المضمون عند إضافة البوت للمجموعة
+# الترحيب المضمون في المجموعات
 # ===============================================
 async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
     chat_member = update.chat_member or update.my_chat_member
-    if not chat_member:
-        return
-
-    if chat_member.chat.type not in ("group", "supergroup"):
+    if not chat_member or chat_member.chat.type not in ("group", "supergroup"):
         return
 
     if (
@@ -285,17 +269,12 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
             f"🚀 استمتعوا بالبحث والقراءة الحرة داخل المجموعة!"
         )
         try:
-            await context.bot.send_message(
-                chat_id=chat_member.chat.id,
-                text=welcome_text,
-                parse_mode="Markdown"
-            )
-            logger.info(f"✅ Sent welcome message to group: {group_name} ({chat_member.chat.id})")
+            await context.bot.send_message(chat_id=chat_member.chat.id, text=welcome_text, parse_mode="Markdown")
         except Exception as e:
-            logger.error(f"❌ Error sending group welcome to {chat_member.chat.id}: {e}")
+            logger.error(f"❌ Error sending group welcome: {e}")
 
 # ===============================================
-# callbacks
+# Callbacks Handler
 # ===============================================
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -342,10 +321,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         adv_text = (
             "📢 **الإعلانات ودعم استمرار البوت**\n"
             "--------------------------------------\n"
-            "مستخدمينا الأعزاء، إن الحفاظ على هذا البوت وتطويره ليستمر في خدمتكم كأكبر مكتبة رقمية مجانية يتطلب تكاليف تشغيلية مرتفعة لتغطية مصاريف السيرفرات وقواعد البيانات الضخمة التي تحتضن أكثر من 1.5 مليون كتاب ومصدر.\n\n"
-            "ومن أجل ضمان استمرارية هذه الخدمة وتغطية هذه التكاليف، فتحنا باب الإعلان وفق شروط صارمة تناسب طابع هذه المكتبة؛ حيث **نروج للقنوات الثقافية والعلمية والتعليمية فقط**، نصرةً للمحتوى الهادف وحفاظاً على بيئة معرفية تليق بجمهورنا من القراء والباحثين.\n\n"
+            "مستخدمينا الأعزاء، إن الحفاظ على هذا البوت وتطويره ليستمر في خدمتكم يتطلب تكاليف تشغيلية مرتفعة للسيرفرات...\n\n"
             "📬 **للاستفسار وحجز المساحات الإعلانية:**\n"
-            "التواصل المباشر مع إدارة البوت ومعرفة التفاصيل، يرجى مراسلتنا عبر المعرف التالي:\n"
             "📩 @UUUULU"
         )
         await query.message.reply_text(text=adv_text, parse_mode="Markdown")
@@ -361,44 +338,16 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
             await query.message.edit_text(
-                text=(
-                    "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
-                    "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
-                    "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
-                    "🧭 *تعليمات البحث الصحيحة:*\n"
-                    "✔️ اكتب اسم الكتاب فقط\n"
-                    "✔️ أو جزء واضح من العنوان\n\n"
-                    "❌ أمثلة بحث غير صحيحة:\n"
-                    "✖️ كلمات عشوائية\n"
-                    "✖️ جمل طويلة أو أوصاف\n\n"
-                    "⚖️ *تنويه قانوني:*\n"
-                    "إدارة وفريق بوت مكتبة الكتب يحترمون حقوق الملكية الفكرية احترامًا تامًا.\n"
-                    "جميع الملفات المفهرسة تم رفعها من قبل مستخدمي تيليجرام أو قنوات عامة.\n"
-                    "في حال وجود أي محتوى مخالف لحقوق النشر، يرجى التواصل معنا وسيتم حذفه فورًا.\n\n"
-                    "📩 باستخدامك للبوت فأنت تقرّ بذلك.\n\n"
-                    "📖 نتمنى لك قراءة ممتعة!"
-                ),
+                text="🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب...",
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
         else:
             target_link = await get_channel_invite_link(context.bot)
-            await query.message.reply_text(
-                text=f"❌ لم يتم العثور على اشتراكك في القناة المطلوبة.\n🔔 يرجى الانضمام هنا أولاً ثم إعادة المحاولة:\n{target_link}"
-            )
+            await query.message.reply_text(text=f"❌ لم يتم العثور على اشتراكك.\n🔔 يرجى الانضمام هنا:\n{target_link}")
         return
     elif query.data == "buy_premium":
-        text = (
-            "⭐ **باقات العضوية المميزة (Premium)**\n\n"
-            "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
-            "📅 **الخطط المتاحة:**\n"
-            "• الاشتراك الشهري: **5$** شهرياً.\n"
-            "• الاشتراك نصف السنوي: **25$** (توفير بقيمة شهر).\n"
-            "• الاشتراك السنوي الكلي: **45$** (العرض الأقوى).\n\n"
-            "💳 **طريقة التفعيل:**\n"
-            "يرجى التواصل المباشر معنا عبر المعرف أدناه لإرسال الأيدي وإتمام التفعيل الفوري:\n"
-            "📩 @UUUULU"
-        )
+        text = "⭐ **باقات العضوية المميزة (Premium)**\n\nالتفعيل الفوري عبر مراسلة:\n📩 @UUUULU"
         await query.message.reply_text(text=text, parse_mode="Markdown")
         return
 
@@ -423,13 +372,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            text=(
-                "👋 مرحبًا بك في *بوت مكتبة الكتب*\n\n"
-                "📚 أكبر مكتبة رقمية مجانية على تيليجرام\n"
-                "📖 يحتوي البوت على أكثر من *مليون كتاب* في مختلف المجالات\n\n"
-                "🔐 لاستخدام البوت يجب الانضمام في القناة الداعمة علمًا انه مجاني\n"
-                "👇 اشترك أولاً ثم اضغط على (تحقق من الاشتراك)"
-            ),
+            text="👋 مرحبًا بك في *بوت مكتبة الكتب*\n\n🔐 لاستخدام البوت يجب الانضمام في القناة الداعمة أولاً.",
             parse_mode="Markdown",
             reply_markup=keyboard
         )
@@ -445,29 +388,13 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await update.message.reply_text(
-        text=(
-            "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
-            "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
-            "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
-            "🧭 *تعليمات البحث الصحيحة:*\n"
-            "✔️ اكتب اسم الكتاب فقط\n"
-            "✔️ أو جزء واضح من العنوان\n\n"
-            "❌ أمثلة بحث غير صحيحة:\n"
-            "✖️ كلمات عشوائية\n"
-            "✖️ جمل طويلة أو أوصاف\n\n"
-            "⚖️ *تنويه قانوني:*\n"
-            "إدارة وفريق بوت مكتبة الكتب يحترمون حقوق الملكية الفكرية احترامًا تامًا.\n"
-            "جميع الملفات المفهرسة تم رفعها من قبل مستخدمي تيليجرام أو قنوات عامة.\n"
-            "في حال وجود أي محتوى مخالف لحقوق النشر, يرجى التواصل معنا وسيتم حذفه فورًا.\n\n"
-            "📩 باستخدامك للبوت فأنت تقرّ بذلك.\n\n"
-            "📖 نتمنى لك قراءة ممتعة!"
-        ),
+        text="🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب...",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
 
 # ===============================================
-# البحث مع التحقق من الاشتراك والـ Ban القديم
+# البحث النصي
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user and context.application.user_data:
@@ -478,16 +405,13 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
 
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
-        await update.message.reply_text(
-            text=f"❌ عذراً، يجب عليك الاشتراك أولاً لاستخدام ميزة البحث النصي:\n{target_link}"
-        )
+        await update.message.reply_text(text=f"❌ عذراً، يجب عليك الاشتراك أولاً لاستخدام البحث:\n{target_link}")
         return
 
-    # استدعاء دالة البحث المباشرة من ملف الـ search_handler
     await search_books(update, context)
 
 # ===============================================
-# 🚀 محرك التشغيل الرئيسي وربط جميع الأحداث (المعالجات)
+# 🚀 تشغيل البوت عبر هـيكلية التطبيق الحديثة والآمنة
 # ===============================================
 app = None
 
@@ -498,36 +422,25 @@ def main():
         logger.error("🚨 BOT_TOKEN environment variable is missing.")
         return
 
-    # استخدام الـ Persistence لحفظ البيانات وحالة الاشتراك الإجباري
     persistence = PicklePersistence(filepath="bot_persistence.pickle")
 
-    app = Application.builder().token(token).persistence(persistence).build()
+    # 🛠 الحل المعتمد: ربط دالة init_db بـ post_init لتعمل بشكل فوري وآمن قبل تفعيل السيرفر
+    app = Application.builder().token(token).persistence(persistence).post_init(init_db).build()
 
-    # 1. إعداد قاعدة البيانات وتوليد الجداول تلقائياً عند التشغيل
-    app.job_queue.run_once(init_db, when=0)
-
-    # 2. تسجيل أوامر لوحة التحكم (الأدمن)
     register_admin_handlers(app)
 
-    # 3. تسجيل معالجات البوت الأساسية للأعضاء والمجموعات والقنوات
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
-    
-    # معالجة الضغط على أي زر إنلاين
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     
-    # استقبال وفهرسة ملفات الـ PDF المرفوعة بالقنوات، الجروبات، أو الخاص
+    # فلاتر دقيقة لاستقبال ملفات الـ PDF
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.Document.PDF, handle_pdf))
-
-    # الترحيب عند دخول البوت إلى مجموعة جديدة
+    
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
-
-    # معالجة البحث النصي المباشر بدون أوامر (إذا أرسل المستخدم اسم الكتاب مباشرة)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
 
-    # بدء تشغيل واستقبال التحديثات من سيرفرات تيليجرام
-    logger.info("🚀 Bot is running and polling...")
+    logger.info("🚀 Bot is running smoothly using post_init hook...")
     app.run_polling()
 
 if __name__ == "__main__":
