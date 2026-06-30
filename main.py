@@ -8,15 +8,15 @@ from telegram.ext import (
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
 )
 
-# 🛠 تم تصحيح هذا السطر وإلغاء المتغير القديم المتسبب في الـ ImportError
+# 🛠 استيراد الدوال من الملفات الخارجية لضمان الربط الكامل
 from admin_panel import register_admin_handlers  
 from search_handler import search_books, handle_callbacks
-# استيراد دوال الرادار من الملف المستقل لضمان الربط الكامل
+# استيراد دوال الرادار من الملف المستقل
 from radar_handler import (
     start_radar_flow, process_radar_category, 
     process_radar_difficulty, execute_radar_search
 )
-# 🇬🇧 استيراد دوال الفهرس الإنكليزي الـ 50 قسماً لربطه بالمنظومة الرئيسية
+# 🇬🇧 استيراد دوال الفهرس الإنكليزي الـ 50 قسماً
 from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
@@ -478,10 +478,10 @@ def main():
 
     persistence = PicklePersistence(filepath="bot_persistence.pickle")
 
-    # استخدام post_init بدلاً من الـ Job Queue لتهيئة قواعد البيانات بشكل سليم وآمن من الـ Race Conditions
     app = Application.builder().token(token).persistence(persistence).post_init(init_db).build()
 
-    register_admin_handlers(app)
+    # 🛠 تم تصحيح المشكلة هنا بتمرير دالة start كمعامل ثانٍ لإصلاح خطأ الـ TypeError
+    register_admin_handlers(app, start)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
