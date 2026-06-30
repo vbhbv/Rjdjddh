@@ -248,7 +248,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                             chat_id=inviter_id,
                             text=(
                                 "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابطك.**\n\n"
-                                "🎁 تم إضافة **10 محاولات بحث إضافية** إلى حسابك مجاناً!\n"
+                                "🎁 تم إضافة **10 محاولات بحث إفاضية** إلى حسابك مجاناً!\n"
                                 "يمكنك الآن الاستمرار في تصفح وتحميل الكتب والروايات."
                             ),
                             parse_mode="Markdown"
@@ -390,7 +390,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "buy_premium":
         text = (
             "⭐ **باقات العضوية المميزة (Premium)**\n\n"
-            "اففتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
+            "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
             "📅 **الخطط المتاحة:**\n"
             "• الاشتراك الشهري: **5$** شهرياً.\n"
             "• الاشتراك نصف السنوي: **25$** (توفير بقيمة شهر).\n"
@@ -485,3 +485,50 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
 
     # استدعاء دالة البحث المباشرة من ملف الـ search_handler
     await search_books(update, context)
+
+# ===============================================
+# 🚀 محرك التشغيل الرئيسي وربط جميع الأحداث (المعالجات)
+# ===============================================
+app = None
+
+def main():
+    global app
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        logger.error("🚨 BOT_TOKEN environment variable is missing.")
+        return
+
+    # استخدام الـ Persistence لحفظ البيانات وحالة الاشتراك الإجباري
+    persistence = PicklePersistence(filepath="bot_persistence.pickle")
+
+    app = Application.builder().token(token).persistence(persistence).build()
+
+    # 1. إعداد قاعدة البيانات وتوليد الجداول تلقائياً عند التشغيل
+    app.job_queue.run_once(init_db, when=0)
+
+    # 2. تسجيل أوامر لوحة التحكم (الأدمن)
+    register_admin_handlers(app)
+
+    # 3. تسجيل معالجات البوت الأساسية للأعضاء والمجموعات والقنوات
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("search", search_books_with_subscription))
+    
+    # معالجة الضغط على أي زر إنلاين
+    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
+    
+    # استقبال وفهرسة ملفات الـ PDF المرفوعة بالقنوات، الجروبات، أو الخاص
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.Document.PDF, handle_pdf))
+
+    # الترحيب عند دخول البوت إلى مجموعة جديدة
+    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # معالجة البحث النصي المباشر بدون أوامر (إذا أرسل المستخدم اسم الكتاب مباشرة)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+
+    # بدء تشغيل واستقبال التحديثات من سيرفرات تيليجرام
+    logger.info("🚀 Bot is running and polling...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
