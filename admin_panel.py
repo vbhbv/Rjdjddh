@@ -3,7 +3,7 @@ import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
-from telegram.error import FloodWait, Forbidden, BadRequest
+from telegram.error import TelegramError, Forbidden, BadRequest
 from functools import wraps
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # إعدادات المشرفين
 # ===============================================
 try:
-    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "5493390715"))  # تم ضبط المعرف الافتراضي الخاص بك
+    ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "5493390715"))
 except ValueError:
     ADMIN_USER_ID = 0
     print("⚠️ ADMIN_ID environment variable is not valid.")
@@ -35,12 +35,6 @@ def admin_only(func):
 # ===============================================
 @admin_only
 async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    تفعيل البريميوم الزمني لمستخدم:
-    /set_premium ID month   -> بريميوم شهري (30 يوم)
-    /set_premium ID half    -> بريميوم نصف سنوي (180 يوم)
-    /set_premium ID year    -> بريميوم سنوي (365 يوم)
-    """
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
             "⚠️ **طريقة الاستخدام الصحيحة للأمر:**\n\n"
@@ -90,7 +84,6 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إلغاء البريموم الزمني تماماً لمستخدم معين: /rem_premium ID"""
     if not context.args:
         await update.message.reply_text("⚠️ يرجى كتابة الأيدي بعد الأمر.")
         return
@@ -111,25 +104,22 @@ async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ حدث خطأ: {e}")
 
 # ===============================================
-# إدارة الحظر (Ban System) المصلحة والمحمية بالكامل
+# إدارة الحظر (Ban System)
 # ===============================================
 @admin_only
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """حظر مستخدم تماماً من استخدام البوت: /ban ID"""
     if not context.args:
         await update.message.reply_text("⚠️ طريقة الاستخدام:\n/ban ID")
         return
 
     try:  
         user_id = int(context.args[0])  
-          
         user_data_dict = dict(context.application.user_data)  
         if user_id not in user_data_dict:  
             user_data_dict[user_id] = {}  
           
         context.application.user_data[user_id]["is_banned"] = True  
-              
-        await update.message.reply_text(f"🔒 **تم حظر المستخدم بنجاح:** {user_id}\nلن يتمكن من إرسال رسائل أو استخدام أزرار المكتبة.")  
+        await update.message.reply_text(f"🔒 **تم حظر المستخدم بنجاح:** {user_id}")  
     except ValueError:  
         await update.message.reply_text("❌ يرجى كتابة معرف مستخدم (ID) رقمي صحيح.")  
     except Exception as e:  
@@ -137,26 +127,24 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إلغاء حظر مستخدم: /unban ID"""
     if not context.args:
         await update.message.reply_text("⚠️ طريقة الاستخدام:\n/unban ID")
         return
 
     try:  
         user_id = int(context.args[0])  
-          
         user_data_dict = dict(context.application.user_data)  
         if user_id in user_data_dict:  
             context.application.user_data[user_id]["is_banned"] = False  
               
-        await update.message.reply_text(f"🔓 **تم إلغاء حظر المستخدم بنجاح:** {user_id}\nيمكنه الآن استخدام البوت بشكل طبيعي.")  
+        await update.message.reply_text(f"🔓 **تم إلغاء حظر المستخدم بنجاح:** {user_id}")  
     except ValueError:  
         await update.message.reply_text("❌ يرجى كتابة معرف مستخدم (ID) رقمي صحيح.")  
     except Exception as e:  
         await update.message.reply_text(f"❌ خطأ غير متوقع أثناء إلغاء الحظر: {e}")
 
 # ===============================================
-# بقية المهام (تتبع، اشتراك، إحصائيات) محدثة بـ Pool Connection
+# بقية المهام والاشتراكات
 # ===============================================
 async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user and update.effective_user.id:
@@ -219,7 +207,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(stats_text, parse_mode='Markdown')
 
 # ===============================================
-# ميزة الإذاعة الآمنة والذكية في الخلفية (Background Broadcast)
+# ميزة الإذاعة الآمنة والذكية في الخلفية المصلحة تماماً
 # ===============================================
 async def _background_broadcast(users, msg, context: ContextTypes.DEFAULT_TYPE, admin_chat_id: int):
     user_data_dict = dict(context.application.user_data) if context.application.user_data else {}
@@ -236,32 +224,39 @@ async def _background_broadcast(users, msg, context: ContextTypes.DEFAULT_TYPE, 
             await context.bot.send_message(chat_id=u_id, text=msg)  
             success_count += 1
             
-            # ⏱ تهدئة تلقائية كل 20 رسالة لعدم تجاوز حد الـ Flood الخاص بتليجرام
             if index % 20 == 0:
                 await asyncio.sleep(1.0)
                 
-        except FloodWait as e:
-            # في حال حدوث تدفق زائد، ينام الخيط الخلفي فقط ويستمر البوت الرئيسي بالعمل
-            await asyncio.sleep(e.retry_after)
-            try:
-                await context.bot.send_message(chat_id=u_id, text=msg)
-                success_count += 1
-            except:
-                fail_count += 1
-        except (Forbidden, BadRequest):
+        except Forbidden:
             fail_count += 1
+        except BadRequest:
+            fail_count += 1
+        except TelegramError as e:
+            # صيد أخطاء التدفق (Flood / Rate Limits) ديناميكياً من نص الخطأ دون الحاجة لاستيراد مخصص تالف
+            if "retry after" in str(e).lower():
+                try:
+                    retry_after = int(''.join(filter(str.isdigit, str(e))))
+                except:
+                    retry_after = 10
+                await asyncio.sleep(retry_after)
+                try:
+                    await context.bot.send_message(chat_id=u_id, text=msg)
+                    success_count += 1
+                except:
+                    fail_count += 1
+            else:
+                fail_count += 1
         except Exception:
             fail_count += 1
 
-    # إرسال إشعار للمشرف في الخاص فور اكتمال الإذاعة بنجاح
     try:
         await context.bot.send_message(
             chat_id=admin_chat_id,
             text=(
-                "📢 **اكتملت إذاعة الخلفية بنجاح الكلي!**\n\n"
-                f"🟢 تم التسليم بنجاح: **{success_count:,}** مستخدم.\n"
-                f"🔴 فشل الإرسال (حظر/محذوف): **{fail_count:,}** حساب.\n\n"
-                "⚡ البوت عمل طوال فترة البث بكفاءة مطلقة مع بقية الأعضاء."
+                "📢 **اكتملت إذاعة الخلفية بنجاح!**\n\n"
+                f"🟢 تم التسليم بنجاح: **{success_count:,}**\n"
+                f"🔴 فشل الإرسال (حظر/محذوف): **{fail_count:,}**\n\n"
+                "⚡ البوت لم يتأثر طوال فترة البث وعمل بكفاءة."
             ),
             parse_mode="Markdown"
         )
@@ -286,11 +281,10 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
           
     await update.message.reply_text(
         f"🚀 **بدأت الإذاعة لـ {len(users)} مستخدم في الخلفية!**\n"  
-        f"⚡ البوت شغال الآن بكامل طاقته ويستقبل طلبات البحث كالمعتاد دون أي تهنيج.\n"
+        f"⚡ البوت يعمل الآن بكامل طاقته ويستقبل طلبات البحث كالمعتاد.\n"
         f"📊 سيصلك تقرير تفصيلي هنا فور الانتهاء كلياً."
     )  
     
-    # 🔥 تشغيل دالة الإذاعة كمهمة مستقلة تفصلها تماماً عن المحرك الرئيسي للبوت
     asyncio.create_task(
         _background_broadcast(users, msg, context, update.effective_chat.id)
     )
@@ -313,10 +307,9 @@ async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             channel_name = chat.title or str(target_id)  
               
         context.bot_data["required_channel_id"] = target_id  
-          
-        await update.message.reply_text(f"✅ تم تعيين قناة الاشتراك الإجباري بنجاح وحفظها دائمياً!\n📌 القناة: **{channel_name}**\n🆔 المعرف الرقمي: `{target_id}`")  
+        await update.message.reply_text(f"✅ تم تعيين قناة الاشتراك الإجباري بنجاح وحفظها دائمياً!\n📌 القناة: **{channel_name}**")  
     except Exception as e:  
-        await update.message.reply_text("❌ لم يتم العثور على القناة. تأكد من صحة اليوزر/الأيدي وأن البوت تم رفعه مشرفاً داخل القناة أولاً.")
+        await update.message.reply_text("❌ لم يتم العثور على القناة. تأكد من رفع البوت مشرفاً أولاً.")
 
 def register_admin_handlers(application, original_start_handler):
     async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -336,5 +329,4 @@ def register_admin_handlers(application, original_start_handler):
     application.add_handler(CommandHandler("ban", ban_user))  
     application.add_handler(CommandHandler("unban", unban_user))  
     application.add_handler(CommandHandler("broadcast", admin_broadcast))  
-    application.add_handler(CommandHandler("setchannel", set_channel))  
-    application.add_handler(CommandHandler("start", start_with_tracking))
+    application.add_handler(CommandHandler("setchannel", set_channel))
