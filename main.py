@@ -544,8 +544,8 @@ def main():
         .build()
     )
 
-    # 1. تسجيل دوال لوحة التحكم والأدمن
-    register_admin_handlers(application)
+    # 1. تم تصحيح الاستدعاء وتمرير دالة الـ start الأصلية كوسيط ثانٍ لمنع الـ TypeError
+    register_admin_handlers(application, start)
 
     # 2. تسجيل الأوامر الأساسية (Command Handlers)
     application.add_handler(CommandHandler("start", start))
