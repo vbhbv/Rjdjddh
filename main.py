@@ -505,4 +505,5 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
-    if not await check_subscription(
+    if not await check_subscription(update.effective_user.id, context.bot):
+        return
