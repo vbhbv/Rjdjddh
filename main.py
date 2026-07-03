@@ -372,13 +372,12 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
 
-            # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
+            # 📋 ترتيب رأسي منظم للأزرار (تم التراجع وإلغاء فهرس الأعلام)
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
-                [InlineKeyboardButton("✍️ فهرس أعلام الأدب والفكر", callback_data="show_authors_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
-                [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
+                [InlineKeyboardButton("🔥 الأكثر تحميلاً this الأسبوع", callback_data="show_trending")],
                 [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")],
                 [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
@@ -427,16 +426,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(text=text, parse_mode="Markdown")
         return
 
-    elif query.data == "show_authors_index":
-        from authors_index import show_index_menu
-        await show_index_menu(update, context)
-        return
-
-    elif query.data.startswith("auth:"):
-        from authors_index import handle_index_selection
-        await handle_index_selection(update, context)
-        return
-
     await handle_callbacks(update, context)
 
 # ===============================================
@@ -472,10 +461,9 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start (تم إرجاعها لحالتها الأصلية)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
-        [InlineKeyboardButton("✍️ فهرس أعلام الأدب والفكر", callback_data="show_authors_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
@@ -544,7 +532,7 @@ def main():
         .build()
     )
 
-    # 1. تم تصحيح الاستدعاء وتمرير دالة الـ start الأصلية كوسيط ثانٍ لمنع الـ TypeError
+    # 1. تسجيل دوال لوحة التحكم والأدمن مع تمرير دالة الـ start الأصلية
     register_admin_handlers(application, start)
 
     # 2. تسجيل الأوامر الأساسية (Command Handlers)
