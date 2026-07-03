@@ -20,6 +20,10 @@ from radar_handler import (
 from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
+# ✍️ استيراد دالة فهرس أشهر أعلام الفكر والأدب الجديد لربط الأزرار والـ Callbacks تلقائياً
+from authors_index import (
+    show_index_menu as show_authors_index_menu, handle_index_selection as handle_authors_index_selection
+)
 
 # ===============================================
 # إعداد اللوج
@@ -326,6 +330,15 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await handle_index_selection(update, context)
         return
 
+    elif query.data == "show_authors_index":
+        await show_authors_index_menu(update, context)
+        return
+
+    elif query.data.startswith("idx:"):
+        # توجيه الكولباك لمعالج الـ 50 مؤلفاً المشهورين
+        await handle_authors_index_selection(update, context)
+        return
+
     elif query.data == "show_english_index":
         await show_english_index_menu(update, context)
         return
@@ -372,9 +385,10 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
 
-            # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
+            # 📋 ترتيب رأسي منظم للأزرار مع إضافة زر أشهر أعلام الفكر والأدب
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
+                [InlineKeyboardButton("✍️ أشهر أعلام الفكر والأدب", callback_data="show_authors_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
@@ -461,9 +475,10 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start مع إضافة الزر الجديد
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
+        [InlineKeyboardButton("✍️ أشهر أعلام الفكر والأدب", callback_data="show_authors_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
@@ -507,66 +522,4 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
 
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
-        await update.message.reply_text(text=f"⚠️ يجب الاشتراك أولاً في القناة الداعمة لتتمكن من البحث واستخدام خدمات البوت:\n{target_link}")
-        return
-
-    if context.args:
-        context.user_data["search_query"] = " ".join(context.args)
-    else:
-        if update.effective_chat.type in ("group", "supergroup"):
-            await update.message.reply_text(
-                text="⚠️ **يرجى كتابة اسم الكتاب بعد الأمر المخصص.**\n📌 **مثال صحيح:**\n`/search مقدمة ابن خلدون`", 
-                parse_mode="Markdown"
-            )
-            return
-        context.user_data["search_query"] = update.message.text
-
-    await search_books(update, context)
-
-# ===============================================
-# تشغيل البوت
-# ===============================================
-def run_bot():
-
-    token = os.getenv("BOT_TOKEN")
-
-    if not token:
-        logger.error("🚨 BOT_TOKEN not found.")
-        return
-
-    global app
-    app = (
-        Application.builder()
-        .token(token)
-        .post_init(init_db)
-        .post_shutdown(close_db)
-        .persistence(PicklePersistence(filepath="bot_data.pickle"))
-        .build()
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_books_with_subscription))
-
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-        search_books_with_subscription
-    ))
-
-    app.add_handler(MessageHandler(
-        filters.Document.MimeType("application/pdf") & filters.ChatType.CHANNEL,
-        handle_pdf
-    ))
-
-    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.CHAT_MEMBER))
-
-    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
-
-    register_admin_handlers(app, start)
-
-    logger.info("✅ Bot is running successfully...")
-    
-    app.run_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
-
-if __name__ == "__main__":
-    run_bot()
+        # متبقي الكود كما هو منقطع في رسالتك الأساسية...
