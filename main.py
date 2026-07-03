@@ -334,8 +334,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await show_authors_index_menu(update, context)
         return
 
-    elif query.data.startswith("idx:"):
-        # توجيه الكولباك لمعالج الـ 50 مؤلفاً المشهورين
+    elif query.data.startswith("auth:"):
+        # تم إصلاح التوجيه هنا بـ الـ prefix الجديد لمنع التداخل والتعليق
         await handle_authors_index_selection(update, context)
         return
 
