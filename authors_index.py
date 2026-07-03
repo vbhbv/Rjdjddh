@@ -30,18 +30,13 @@ AUTHORS_DATA = {
 # عرض قائمة التصنيفات الرئيسية للأعلام
 # ===============================================
 async def show_index_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    تُستدعى هذه الدالة عند الضغط على زر 'فهرس أعلام الأدب والفكر'
-    تتحقق مما إذا كان الطلب قادماً من CallbackQuery أو رسالة نصية
-    """
     query = update.callback_query
     
-    # بناء الأزرار ديناميكياً بناءً على البيانات أعلاه
+    # بناء الأزرار ديناميكياً
     keyboard = []
     for key, data in AUTHORS_DATA.items():
         keyboard.append([InlineKeyboardButton(data["title"], callback_data=f"auth:cat:{key}")])
     
-    # إضافة زر العودة للقائمة الرئيسية للبوت
     keyboard.append([InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -53,7 +48,8 @@ async def show_index_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if query:
-        await query.edit_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
+        # 🛠 تم التصحيح هنا: استخدام edit_message_text بدلاً من edit_text العاطلة
+        await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
     else:
         await update.message.reply_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
 
@@ -61,13 +57,10 @@ async def show_index_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # معالجة الضغطات والاختيارات (Callback Query)
 # ===============================================
 async def handle_index_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    تتعامل مع البيانات التي تبدأ بـ 'auth:'
-    """
     query = update.callback_query
     data = query.data
 
-    # 1. عند اختيار تصنيف معين (مثال: auth:cat:philosophy) -> عرض أسماء الأعلام داخل هذا التصنيف
+    # 1. عند اختيار تصنيف معين
     if data.startswith("auth:cat:"):
         category_key = data.split("auth:cat:")[1]
         category_data = AUTHORS_DATA.get(category_key)
@@ -77,29 +70,26 @@ async def handle_index_selection(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         keyboard = []
-        # توليد زر لكل عَلَم/مؤلف في هذا القسم، يرسل اسمه مباشرة إلى دالة البحث عند الضغط
         for author in category_data["items"]:
             keyboard.append([InlineKeyboardButton(f"📖 مؤلفات {author}", callback_data=f"auth:search:{author}")])
         
-        # زر للعودة إلى قائمة الأعلام الرئيسية
         keyboard.append([InlineKeyboardButton("🔙 العودة لفهرس الأعلام", callback_data="show_authors_index")])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await query.edit_text(
+        # 🛠 تم التصحيح هنا أيضاً: استخدام edit_message_text
+        await query.edit_message_text(
             text=f"📂 **قسم: {category_data['title']}**\n\nاختر اسم المفكر أو الأديب لعرض كافة مؤلفاته وكتبه المتوفرة في المكتبة فوراً:",
             parse_mode="Markdown",
             reply_markup=reply_markup
         )
 
-    # 2. عند اختيار عَلَم معين (مثال: auth:search:علي الوردي) -> تحويله مباشرة لمنظومة البحث النصي الرئيسية
+    # 2. عند اختيار عَلَم معين للبحث عنه
     elif data.startswith("auth:search:"):
         author_name = data.split("auth:search:")[1]
         
-        # تنبيه منبثق للمستخدم بجاري البحث
         await query.answer(f"🔍 جاري البحث عن مؤلفات: {author_name}...")
 
-        # محاكاة إدخال نصي من المستخدم لاسم العَلَم ليقوم معالج البحث الرئيسي بالباقي تلقائياً
-        # نقوم بتحديث نص الرسالة ليتوافق مع هيكلية دالة search_books في ملف search_handler
+        # محاكاة النص من أجل تمريره لدالة البحث بسلاسة
         query.message.text = author_name
         
         from search_handler import search_books
