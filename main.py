@@ -2,6 +2,7 @@ import os
 import re
 import asyncpg
 import logging
+from datetime import datetime # ✨ تم نقل الاستيراد هنا ليكون آمن ومستقر 100%
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
@@ -155,7 +156,25 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
 # ===============================================
 # الاشتراك الإجباري الديناميكي والمستمر عبر الـ Persistence
 # ===============================================
-async def check_subscription(user_id: int, bot) -> bool:
+async def check_subscription(user_id: int, bot, pool=None) -> bool:
+    """
+    تتحقق من اشتراك المستخدم، ويتم استثناء مستخدمي البريميوم من الاشتراك الإجباري تلقائياً.
+    """
+    # 🌟 خطوة الاستثناء: إذا كان المستخدم بريميوم وساري المفعول، يتخطى الفحص فوراً
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                premium_status = await conn.fetchrow(
+                    "SELECT is_premium, premium_expiry FROM users WHERE user_id = $1", 
+                    user_id
+                )
+                if premium_status and premium_status["is_premium"]:
+                    expiry = premium_status["premium_expiry"]
+                    if expiry is None or expiry > datetime.now():
+                        return True # مستخدم مميز وساري الصلاحية -> تخطي القنوات الإجبارية
+        except Exception as e:
+            logger.error(f"Error checking premium status in subscription bypass: {e}")
+
     try:
         from __main__ import app
         channel_id = app.bot_data.get("required_channel_id")
@@ -305,6 +324,7 @@ async def welcome_bot_in_group(update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
+    pool = context.bot_data.get("db_conn")
     
     # 🔒 فحص الحظر الفوري والآمن عند ضغط أي زر
     u_id = query.from_user.id
@@ -370,7 +390,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "back_to_main" or query.data == "check_subscription":
 
-        if await check_subscription(query.from_user.id, context.bot):
+        if await check_subscription(query.from_user.id, context.bot, pool):
 
             # 📋 ترتيب رأسي منظم للأزرار
             keyboard = InlineKeyboardMarkup([
@@ -433,6 +453,8 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 # ===============================================
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
 
+    pool = context.bot_data.get("db_conn")
+
     # 🔒 منع المستخدم المحظور من تشغيل البوت عبر /start نهائياً
     if update.effective_user and context.application.user_data:
         u_id = update.effective_user.id
@@ -442,7 +464,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 
     await register_user(update, context)
 
-    if not await check_subscription(update.effective_user.id, context.bot):
+    if not await check_subscription(update.effective_user.id, context.bot, pool):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ اشترك في القناة", url=target_link)],
@@ -498,6 +520,8 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
 
+    pool = context.bot_data.get("db_conn")
+
     # 🔒 فحص الحظر ومنع البحث النصي تماماً
     if update.effective_user and context.application.user_data:
         u_id = update.effective_user.id
@@ -505,7 +529,7 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
-    if not await check_subscription(update.effective_user.id, context.bot):
+    if not await check_subscription(update.effective_user.id, context.bot, pool):
         return
 
     await search_books(update, context)
