@@ -372,12 +372,12 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
 
-            # 📋 ترتيب رأسي منظم للأزرار (تم التراجع وإلغاء فهرس الأعلام)
+            # 📋 ترتيب رأسي منظم للأزرار
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
-                [InlineKeyboardButton("🔥 الأكثر تحميلاً this الأسبوع", callback_data="show_trending")],
+                [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
                 [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")],
                 [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
@@ -461,7 +461,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start (تم إرجاعها لحالتها الأصلية)
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
@@ -545,8 +545,8 @@ def main():
     # 4. تسجيل مستقبل ملفات الـ PDF للظهور في القنوات
     application.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
 
-    # 5. تسجيل معالج البحث النصي المباشر (أي رسالة نصية تعتبر بحثاً)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+    # 5. تقييد البحث النصي المباشر ليعمل في الخاص (PRIVATE) فقط ومقاطعته داخل المجموعات لمنع الرد التلقائي
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
 
     # 6. تسجيل معالج الترحيب عند دخول المجموعات
     application.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
