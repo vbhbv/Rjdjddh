@@ -64,7 +64,7 @@ async def show_index_menu(update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     keys = list(INDEX_CATEGORIES.keys())
     
-    # توزيع الأزرار بـ الكولباك المصحح "auth:" لمنع التضارب
+    # توزيع الأزرار بشكل ثنائي
     for i in range(0, len(keys), 2):
         row = [
             InlineKeyboardButton(INDEX_CATEGORIES[keys[i]]["name"], callback_data=f"auth:{keys[i]}"),
@@ -74,7 +74,7 @@ async def show_index_menu(update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard.append(row)
 
-    # 🔙 إضافة زر العودة الآمن والمنظم للقائمة الرئيسية للبوت
+    # 🔙 زر العودة الأصلي الذي يدعمه ملفك الرئيسي "back_to_main" ليخرج من الفهرس بلا أدنى مشكلة
     keyboard.append([InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -89,27 +89,24 @@ async def show_index_menu(update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def handle_index_selection(update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار المؤلف وعرض الملفات التي كُتب فيها اسمه صراحة"""
+    """معالجة اختيار المؤلف وعرض النتائج"""
     query = update.callback_query
     
-    # 🛠 تم تصحيح سطر الـ split هنا ليعمل على الـ index الصحيح بعد التعديل [1]
-    category_id = query.data.split(":")[1]
-    category = INDEX_CATEGORIES.get(category_id)
+    # استخراج الـ ID بدقة سواء تم إرساله بـ auth: أو idx: لضمان التوافق التام
+    raw_data = query.data
+    category_id = raw_data.split(":")[1] if ":" in raw_data else raw_data.replace("auth", "")
     
+    category = INDEX_CATEGORIES.get(category_id)
     if not category:
         return
 
     pool = context.bot_data.get("db_conn")
-    
-    # تنظيف الاسم من الإيموجي والرموز التعبيرية للبحث عنه صراحة في أسماء الملفات
     clean_name = category["name"].replace("✍️", "").strip()
     
-    # بناء نمط بحث مرن يطابق اسم المؤلف الصريح أو بعض الكلمات المفتاحية الأساسية المرتبطة به
     all_patterns = [clean_name, f"ل{clean_name}"] + category["keywords"]
     keywords_pattern = "|".join(set(all_patterns)) 
     
     async with pool.acquire() as conn:
-        # الاستعلام يبحث باستخدام الـ Regex (~*) لضمان جلب أي ملف كُتب فيه اسم المؤلف ضمن سياق النص
         sql = """
         SELECT file_id, file_name 
         FROM books 
@@ -122,10 +119,8 @@ async def handle_index_selection(update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"⚠️ لا توجد ملفات مكتوب فيها اسم المؤلف: {clean_name}", show_alert=True)
         return
 
-    # حفظ النتائج في الـ user_data لتمريرها لنظام الصفحات الخاص بك
     context.user_data["search_results"] = [dict(r) for r in rows]
     context.user_data["current_page"] = 0
     
-    # استدعاء دالة عرض الكتب الجاهزة بملف البحث لديك
     from search_handler import send_books_page
     await send_books_page(update, context)
