@@ -8,7 +8,7 @@ from telegram.ext import (
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
 )
 
-# 🛠 تم تصحيح هذا السطر وإلغاء المتغير القديم المتسبب في الـ ImportError
+# 🛠 استيراد الدوال من الملفات الملحقة ببرمجية البوت
 from admin_panel import register_admin_handlers  
 from search_handler import search_books, handle_callbacks
 # استيراد دوال الرادار من الملف المستقل لضمان الربط الكامل
@@ -189,7 +189,7 @@ async def get_channel_invite_link(bot) -> str:
     return "https://t.me/"
 
 # ===============================================
-# تسجيل المستخدم ومعالجة الإحالة (تم إصلاحها بشكل شامل)
+# تسجيل المستخدم ومعالجة الإحالة
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -521,3 +521,51 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         return
 
     await search_books(update, context)
+
+# ===============================================
+# دالة التشغيل الرئيسية (Main)
+# ===============================================
+def main():
+    # استرجاع التوكن من متغيرات البيئة
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        logger.error("🚨 BOT_TOKEN environment variable is missing.")
+        return
+
+    # إعداد الـ Persistence لحفظ البيانات واستمراريتها
+    persistence = PicklePersistence(filepath="bot_data.pickle")
+
+    # بناء التطبيق
+    application = (
+        Application.builder()
+        .token(token)
+        .persistence(persistence)
+        .post_init(init_db) # تشغيل قاعدة البيانات تلقائياً عند البدء
+        .build()
+    )
+
+    # 1. تسجيل دوال لوحة التحكم والأدمن
+    register_admin_handlers(application)
+
+    # 2. تسجيل الأوامر الأساسية (Command Handlers)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("search", search_books_with_subscription))
+
+    # 3. تسجيل معالج الأزرار التفاعلية (Callback Query Handler)
+    application.add_handler(CallbackQueryHandler(handle_start_callbacks))
+
+    # 4. تسجيل مستقبل ملفات الـ PDF للظهور في القنوات
+    application.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+
+    # 5. تسجيل معالج البحث النصي المباشر (أي رسالة نصية تعتبر بحثاً)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+
+    # 6. تسجيل معالج الترحيب عند دخول المجموعات
+    application.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # بدء تشغيل البوت واستقبال التحديثات (Polling)
+    logger.info("🚀 Bot is polling...")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
