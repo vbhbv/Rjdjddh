@@ -375,6 +375,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
+                [InlineKeyboardButton("✍️ فهرس أعلام الأدب والفكر", callback_data="show_authors_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
@@ -426,6 +427,16 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(text=text, parse_mode="Markdown")
         return
 
+    elif query.data == "show_authors_index":
+        from authors_index import show_index_menu
+        await show_index_menu(update, context)
+        return
+
+    elif query.data.startswith("auth:"):
+        from authors_index import handle_index_selection
+        await handle_index_selection(update, context)
+        return
+
     await handle_callbacks(update, context)
 
 # ===============================================
@@ -464,6 +475,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
+        [InlineKeyboardButton("✍️ فهرس أعلام الأدب والفكر", callback_data="show_authors_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
@@ -507,3 +519,5 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
 
     if not await check_subscription(update.effective_user.id, context.bot):
         return
+
+    await search_books(update, context)
