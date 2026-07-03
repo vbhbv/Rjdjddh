@@ -252,7 +252,7 @@ async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
                             text=(
                                 "🎉 **شكرًا لك! لقد انضم مستخدم جديد إلى البوت من خلال رابط الدعوة الخاص بك.**\n\n"
                                 "🎁 تم إضافة **10 محاولات بحث إضافية** إلى حسابك مجاناً كهدية من الإدارة!\n"
-                                "يمكنك الآن الاستمرار في تصفح وتحميل الكتب والروايات والملفات الأكاديمية بحرية كاملة."
+                                "يمكنك الآن الاستمرار في تصفح وتحميل الكتب الروايات."
                             ),
                             parse_mode="Markdown"
                         )
@@ -354,7 +354,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي (الرادار)", callback_data="radar_menu")],
-                [InlineKeyboardButton("🔥 الأكثر تحميلاً this week", callback_data="show_trending")],
+                [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
                 [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")],
                 [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
@@ -364,7 +364,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                     "📚 أكبر مكتبة رقمية تفاعلية مجانية تضم أكثر من مليون كتاب ورواية ومصدر أكاديمي متاح بين يديك الآن.\n"
                     "🔎 يمكنك البحث بكل سهولة عن أي عنوان تريد من خلال كتابة اسم الكتاب أو جزء منه في رسالة نصية مباشرة.\n\n"
                     "🧭 *تعليمات وإرشادات البحث الصحيحة للحصول على أفضل نتيجة:*\n"
-                    "✔️ اكتب اسم الكتاب بدقة وبدون كلمات زائدة (مثل: كتاب، رواية، تحميل).\n"
+                    "✔️ اكتب اسم الكتاب بدقة وبدون كلمات زائدة.\n"
                     "✔️ أو اكتب جزءاً واضحاً وفريداً من العنوان الأصلي للمؤلف.\n\n"
                     "📖 نتمنى لك رحلة قراءة ماتعة ومثمرة!"
                 ),
@@ -374,18 +374,14 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         else:
             target_link = await get_channel_invite_link(context.bot)
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📢 انضم لقناة الدعم مجاناً", url=target_link)],
-                [InlineKeyboardButton("⭐ اطلّع على باقات البريميوم المدفوعة", callback_data="buy_premium")],
-                [InlineKeyboardButton("🔄 اضغط هنا بعد الانضمام للتحقق", callback_data="check_subscription")]
+                [InlineKeyboardButton("📢 اشترك في القناة هنا", url=target_link)],
+                [InlineKeyboardButton("🔄 تحقق من الاشتراك", callback_data="check_subscription")]
             ])
             try:
                 await query.message.reply_text(
                     text=(
-                        "🌱 **عذراً يا صديقي، خطوة واحدة بسيطة تفصلنا عن البدء!**\n\n"
-                        "إن استمرار البوت مجاناً للجميع وتغطية تكاليف السيرفرات الضخمة يعتمد كلياً على انضمامكم لقناة الدعم الرسمية.\n\n"
-                        "🔹 **لتشغيل البوت، يرجى الانضمام للقناة عبر الزر بالأسفل ثم تأكيد الاشتراك.**\n\n"
-                        "💡 **هل تفضل تجربة خالية من القنوات؟**\n"
-                        "يمكنك الاطلاع على باقات الاشتراك المدفوع (البريميوم) للتخلص نهائياً من شرط الانضمام لأي قناة والاستمتاع بمزايا حصرية غير محدودة!"
+                        "🌱 **فضلاً، اشترك في القناة أولاً ليعمل معك البوت!**\n\n"
+                        "الاشتراك في القناة مجاني تماماً، وهو الدعم الوحيد الذي يضمن استمرار البوت وتغطية تكاليف السيرفرات الضخمة ليظل متاحاً للجميع."
                     ),
                     parse_mode="Markdown",
                     reply_markup=keyboard
@@ -426,18 +422,14 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 انضم لقناة الدعم مجاناً", url=target_link)],
-            [InlineKeyboardButton("⭐ اطلّع على باقات البريميوم المدفوعة", callback_data="buy_premium")],
-            [InlineKeyboardButton("🔄 اضغط هنا بعد الانضمام للتحقق", callback_data="check_subscription")]
+            [InlineKeyboardButton("📢 اشترك في القناة هنا", url=target_link)],
+            [InlineKeyboardButton("🔄 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
             text=(
-                "👋 **أهلاً بك بك في بوت مكتبة الكتب الرقمية الكبرى!**\n\n"
-                "يسعدنا جداً انضمامك إلينا لقراءة وتحميل ملايين الروايات والمصادر مجاناً.\n\n"
-                "💡 **تنويه مهم:**\n"
-                "لكي يستمر هذا البوت في العمل وتقديم خدماته المجانية وتغطية السيرفرات الضخمة، يُرجى الانضمام أولاً لقناتنا الداعمة بالأسفل لمرة واحدة فقط.\n\n"
-                "👑 **هل تريد التخلص من القنوات الإجبارية؟**\n"
-                "بإمكانك الانتقال والاطلاع على اشتراكات البريميوم المدفوعة والتمتع بتجربة تصفح وبحث حر ومستقل كلياً وبدون إعلانات وبسرعات فائقة."
+                "👋 **أهلاً بك في بوت مكتبة الكتب الرقمية !**\n\n"
+                "📚 **فضلاً، اشترك في القناة أدناه ليعمل معك البوت بنجاح:**\n\n"
+                "الاشتراك مجاني بالكامل، وهو الدعم الذي يساعدنا على إبقاء البوت متاح مجاناً للجميع بدون اشتراكات مدفوعة."
             ),
             parse_mode="Markdown",
             reply_markup=keyboard
@@ -476,16 +468,14 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 انضم لقناة الدعم مجاناً", url=target_link)],
-            [InlineKeyboardButton("⭐ اطلّع على باقات البريميوم المدفوعة", callback_data="buy_premium")],
-            [InlineKeyboardButton("🔄 اضغط هنا بعد الانضمام للتحقق", callback_data="check_subscription")]
+            [InlineKeyboardButton("📢 اشترك في القناة هنا", url=target_link)],
+            [InlineKeyboardButton("🔄 تحقق من الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
             text=(
-                "⚠️ **توقفت عملية البحث الحالية مؤقتاً!**\n\n"
-                "يبدو أنك غادرت قناة الدعم أو لم تشترك بها بعد.\n\n"
-                "إن اشتراكك في القناة يساهم بشكل مباشر في توفير ميزانية السيرفرات وضمان بقاء البوت مفتوحاً ومتاحاً للجميع مجاناً.\n\n"
-                "👉 **يرجى الانضمام مجدداً ثم معاودة البحث، أو مراجعة عروض البريميوم لإلغاء قيود القنوات بشكل كامل.**"
+                "⚠️ **توقفت عملية البحث الحالية!**\n\n"
+                "🌱 **فضلاً، اشترك في القناة أدناه ليعمل معك البوت واستئناف البحث:**\n\n"
+                "الاشتراك مجاني تماماً، وهو الدعم الوحيد الذي يساعدنا على تغطية تكاليف السيرفرات وضمان بقاء البوت مفتوحاً ومتاحاً مجاناً للجميع."
             ),
             parse_mode="Markdown",
             reply_markup=keyboard
