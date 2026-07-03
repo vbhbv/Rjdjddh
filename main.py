@@ -20,10 +20,6 @@ from radar_handler import (
 from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
-# ✍️ استيراد دالة فهرس أشهر أعلام الفكر والأدب الجديد لربط الأزرار والـ Callbacks تلقائياً
-from authors_index import (
-    show_index_menu as show_authors_index_menu, handle_index_selection as handle_authors_index_selection
-)
 
 # ===============================================
 # إعداد اللوج
@@ -330,15 +326,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         await handle_index_selection(update, context)
         return
 
-    elif query.data == "show_authors_index":
-        await show_authors_index_menu(update, context)
-        return
-
-    elif query.data.startswith("auth:"):
-        # تم إصلاح التوجيه هنا بـ الـ prefix الجديد لمنع التداخل والتعليق
-        await handle_authors_index_selection(update, context)
-        return
-
     elif query.data == "show_english_index":
         await show_english_index_menu(update, context)
         return
@@ -385,10 +372,9 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
 
-            # 📋 ترتيب رأسي منظم للأزرار مع إضافة زر أشهر أعلام الفكر والأدب
+            # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
-                [InlineKeyboardButton("✍️ أشهر أعلام الفكر والأدب", callback_data="show_authors_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
                 [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
@@ -475,10 +461,9 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start مع إضافة الزر الجديد
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
-        [InlineKeyboardButton("✍️ أشهر أعلام الفكر والأدب", callback_data="show_authors_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
         [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
@@ -520,6 +505,4 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
-    if not await check_subscription(update.effective_user.id, context.bot):
-        target_link = await get_channel_invite_link(context.bot)
-        # متبقي الكود كما هو منقطع في رسالتك الأساسية...
+    if not await check_subscription(
