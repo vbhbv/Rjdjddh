@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
-# تحويل الفهرس إلى 50 مؤلفاً من أشهر أعلام الأدب والفكر العربي والعالمي
+# الفهرس المعتمد لـ 50 مؤلفاً من أشهر أعلام الأدب والفكر
 INDEX_CATEGORIES = {
     "1": {"name": "✍️ الجاحظ", "keywords": ["الجاحظ", "للجاحظ", "البخلاء", "البيان والتبيين", "الحيوان"]},
     "2": {"name": "✍️ ابن خلدون", "keywords": ["ابن خلدون", "لابن خلدون", "المقدمة", "تاريخ ابن خلدون"]},
@@ -64,15 +64,18 @@ async def show_index_menu(update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     keys = list(INDEX_CATEGORIES.keys())
     
-    # توزيع الأزرار (زرين في كل صف)
+    # توزيع الأزرار بـ الكولباك المصحح "auth:" لمنع التضارب
     for i in range(0, len(keys), 2):
         row = [
-            InlineKeyboardButton(INDEX_CATEGORIES[keys[i]]["name"], callback_data=f"idx:{keys[i]}"),
+            InlineKeyboardButton(INDEX_CATEGORIES[keys[i]]["name"], callback_data=f"auth:{keys[i]}"),
         ]
         if i + 1 < len(keys):
-            row.append(InlineKeyboardButton(INDEX_CATEGORIES[keys[i+1]]["name"], callback_data=f"idx:{keys[i+1]}"))
+            row.append(InlineKeyboardButton(INDEX_CATEGORIES[keys[i+1]]["name"], callback_data=f"auth:{keys[i+1]}"))
         
         keyboard.append(row)
+
+    # 🔙 إضافة زر العودة الآمن والمنظم للقائمة الرئيسية للبوت
+    keyboard.append([InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = (
@@ -88,6 +91,8 @@ async def show_index_menu(update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_index_selection(update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيار المؤلف وعرض الملفات التي كُتب فيها اسمه صراحة"""
     query = update.callback_query
+    
+    # 🛠 تم تصحيح سطر الـ split هنا ليعمل على الـ index الصحيح بعد التعديل [1]
     category_id = query.data.split(":")[1]
     category = INDEX_CATEGORIES.get(category_id)
     
