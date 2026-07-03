@@ -49,11 +49,9 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         )
 
         async with pool.acquire() as conn:
-            # تفعيل إضافات البحث المتقدم والنصوص غير الحساسة لعلامات التشكيل
             await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
 
-            # جدول الكتب والمصادر الرقمية
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -64,7 +62,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             );
             """)
 
-            # الفهارس المتقدمة لتسريع عمليات البحث العشوائي والكامل
             await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_fts_books
             ON books USING gin (to_tsvector('arabic', file_name));
@@ -75,7 +72,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON books USING gin (file_name gin_trgm_ops);
             """)
 
-            # جدول المستخدمين والبيانات المالية والبريميوم والإحالات
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -86,7 +82,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             );
             """)
 
-            # التحقق الإضافي لضمان وجود الأعمدة وتجنب أخطاء الإقلاع في قواعد البيانات القديمة
             await conn.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
@@ -102,7 +97,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
             """)
 
-            # جدول إحصائيات التحميل والكتب الأكثر رواجاً ومشاركة
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS download_stats (
                 id SERIAL PRIMARY KEY,
@@ -157,10 +151,6 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
 # نظام الاشتراك الإجباري المستقر مع استثناء البريميوم
 # ===============================================
 async def check_subscription(user_id: int, bot) -> bool:
-    """
-    تتحقق الدالة من اشتراك المستخدم داخل القناة الإجبارية المعينة من لوحة التحكم،
-    ويتم استثناء مستخدمي البريميوم الفعالين من هذا الفحص تلقائياً ودون قيود.
-    """
     try:
         from __main__ import app
         pool = app.bot_data.get("db_conn")
@@ -169,7 +159,6 @@ async def check_subscription(user_id: int, bot) -> bool:
         pool = None
         channel_id = None
 
-    # 🌟 أولاً: فحص حالة البريميوم وصلاحيته من قاعدة البيانات كخطوة استباقية للتجاوز
     if pool:
         try:
             async with pool.acquire() as conn:
@@ -180,11 +169,10 @@ async def check_subscription(user_id: int, bot) -> bool:
                 if premium_status and premium_status["is_premium"]:
                     expiry = premium_status["premium_expiry"]
                     if expiry is None or expiry > datetime.now():
-                        return True  # المستخدم يملك اشتراك بريميوم فعال -> يتم تمريره فوراً ويتخطى الاشتراك الإجباري
+                        return True  
         except Exception as e:
             logger.error(f"Error checking premium status in subscription bypass: {e}")
 
-    # ثانياً: إذا لم يكن المستخدم بريميوم، يتم التحقق من اشتراكه في القناة الإجبارية
     if channel_id is None: 
         return True
     try:
@@ -195,7 +183,6 @@ async def check_subscription(user_id: int, bot) -> bool:
         return False
 
 async def get_channel_invite_link(bot) -> str:
-    """جلب رابط الدعوة الخاص بالقناة الإجبارية المحددة في البوت"""
     try:
         from __main__ import app
         channel_id = app.bot_data.get("required_channel_id")
@@ -353,10 +340,10 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         adv_text = (
             "📢 **قسم الإعلانات ودعم استمرار البوت الرقمي**\n"
             "--------------------------------------------------\n"
-            "مستخدمينا وأعضاءنا الأعزاء، إن الحفاظ على هذا البوت الضخم وتطويره الدائم وتوفير السيرفرات السريعة ليستمر في خدمتكم يتطلب تكاليف تشغيلية مرتفعة وقواعد بيانات ضخمة تحتضن ملايين الكتب والمصادر العلمية.\n\n"
-            "ومن أجل ضمان استمرارية هذه الخدمة الثقافية المجانية للجميع، فتحنا باب الإعلانات المموزة والتبادلات الإعلانية وفق شروط ونظام رقابي صارم؛ حيث نروج فقط للقنوات الثقافية، العلمية، التعليمية، والخدمية ذات النفع العام.\n\n"
-            "📬 **للاستفسار، طلب حجز المساحات الإعلانية، أو الشراكات الاستراتيجية:**\n"
-            "📩 يمكنك التواصل مباشرة مع الإدارة عبر المعرف التالي: @UUUULU"
+            "مكتبتنا تعتمد بالكامل على دعمكم الصادق. الحفاظ على السيرفرات الضخمة وتحديثها المستمر يتطلب تكاليف تشغيلية لتظل الخدمة مجانية كلياً للجميع.\n\n"
+            "الإعلانات لدينا تخضع لرقابة صارمة، ونحرص على اختيار قنوات ومنصات مفيدة وهادفة تلائم ذائقتكم الثقافية والعلمية.\n\n"
+            "📬 **للاستفسار وحجز المساحات الإعلانية:**\n"
+            "📩 تواصل مباشرة مع الإدارة: @UUUULU"
         )
         await query.message.reply_text(text=adv_text, parse_mode="Markdown")
         return
@@ -367,7 +354,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي (الرادار)", callback_data="radar_menu")],
-                [InlineKeyboardButton("🔥 الأكثر تحميلاً هذا الأسبوع", callback_data="show_trending")],
+                [InlineKeyboardButton("🔥 الأكثر تحميلاً this week", callback_data="show_trending")],
                 [InlineKeyboardButton("⭐ اشتراكات البريميوم اللامحدود", callback_data="buy_premium")],
                 [InlineKeyboardButton("📢 الاعلان داخل البوت", callback_data="show_advertising_info")]
             ])
@@ -387,16 +374,20 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         else:
             target_link = await get_channel_invite_link(context.bot)
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ اشترك في القناة", url=target_link)],
-                [InlineKeyboardButton("🔍 تحقق من الاشتراك مجدداً", callback_data="check_subscription")]
+                [InlineKeyboardButton("📢 انضم لقناة الدعم مجاناً", url=target_link)],
+                [InlineKeyboardButton("⭐ اطلّع على باقات البريميوم المدفوعة", callback_data="buy_premium")],
+                [InlineKeyboardButton("🔄 اضغط هنا بعد الانضمام للتحقق", callback_data="check_subscription")]
             ])
             try:
                 await query.message.reply_text(
                     text=(
-                        "❌ **عذراً، لم يتم العثور على اشتراكك في القناة المطلوبة لتفعيل النظام.**\n\n"
-                        "🔔 يرجى الانضمام إلى القناة الرسمية الداعمة للبوت أولاً عبر الضغط على الزر أدناه، ثم العودة واضغط على زر التحقق لتفتح لك خدمات المكتبة فوراً:\n"
-                        f"🔗 {target_link}"
+                        "🌱 **عذراً يا صديقي، خطوة واحدة بسيطة تفصلنا عن البدء!**\n\n"
+                        "إن استمرار البوت مجاناً للجميع وتغطية تكاليف السيرفرات الضخمة يعتمد كلياً على انضمامكم لقناة الدعم الرسمية.\n\n"
+                        "🔹 **لتشغيل البوت، يرجى الانضمام للقناة عبر الزر بالأسفل ثم تأكيد الاشتراك.**\n\n"
+                        "💡 **هل تفضل تجربة خالية من القنوات؟**\n"
+                        "يمكنك الاطلاع على باقات الاشتراك المدفوع (البريميوم) للتخلص نهائياً من شرط الانضمام لأي قناة والاستمتاع بمزايا حصرية غير محدودة!"
                     ),
+                    parse_mode="Markdown",
                     reply_markup=keyboard
                 )
             except: pass
@@ -435,16 +426,18 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك في القناة الآن", url=target_link)],
-            [InlineKeyboardButton("🔍 تحقق من الاشتراك المفروض", callback_data="check_subscription")]
+            [InlineKeyboardButton("📢 انضم لقناة الدعم مجاناً", url=target_link)],
+            [InlineKeyboardButton("⭐ اطلّع على باقات البريميوم المدفوعة", callback_data="buy_premium")],
+            [InlineKeyboardButton("🔄 اضغط هنا بعد الانضمام للتحقق", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
             text=(
-                "👋 **مرحبًا بك يا فوز في بوت مكتبة الكتب الرقمية!**\n\n"
-                "📚 المكتبة الكبرى والأضخم لتحميل الكتب والروايات مجاناً على تيليجرام.\n\n"
-                "🔐 **ملاحظة أمنية تفعيلية:**\n"
-                "لاستخدام البوت والاستفادة من محرك البحث المتقدم، يجب الانضمام أولاً في القناة الرسمية الداعمة للبوت (علماً أن الخدمة مجانية بالكامل ولن تدفع شيئاً).\n\n"
-                "👇 يرجى الضغط على زر الاشتراك أدناه، ثم اضغط على زر (تحقق من الاشتراك) لتبدأ التصفح فوراً!"
+                "👋 **أهلاً بك بك في بوت مكتبة الكتب الرقمية الكبرى!**\n\n"
+                "يسعدنا جداً انضمامك إلينا لقراءة وتحميل ملايين الروايات والمصادر مجاناً.\n\n"
+                "💡 **تنويه مهم:**\n"
+                "لكي يستمر هذا البوت في العمل وتقديم خدماته المجانية وتغطية السيرفرات الضخمة، يُرجى الانضمام أولاً لقناتنا الداعمة بالأسفل لمرة واحدة فقط.\n\n"
+                "👑 **هل تريد التخلص من القنوات الإجبارية؟**\n"
+                "بإمكانك الانتقال والاطلاع على اشتراكات البريميوم المدفوعة والتمتع بتجربة تصفح وبحث حر ومستقل كلياً وبدون إعلانات وبسرعات فائقة."
             ),
             parse_mode="Markdown",
             reply_markup=keyboard
@@ -480,19 +473,19 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
-    # الفحص الإجباري المشدد للمستخدم العادي مع إعطاء الضوء الأخضر التلقائي لمستخدمي البريميوم
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك في القناة الآن", url=target_link)],
-            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+            [InlineKeyboardButton("📢 انضم لقناة الدعم مجاناً", url=target_link)],
+            [InlineKeyboardButton("⭐ اطلّع على باقات البريميوم المدفوعة", callback_data="buy_premium")],
+            [InlineKeyboardButton("🔄 اضغط هنا بعد الانضمام للتحقق", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
             text=(
-                "⚠️ **تنبيه حماية: توقفت عملية البحث الحالية!**\n\n"
-                "يبدو أنك غادرت القناة الداعمة للمكتبة أو لم تشترك بها بعد.\n"
-                "يرجى الانضمام مجدداً لاستئناف البحث وتحميل ملفات الـ PDF بحرية وبدون قيود:\n"
-                f"🔗 {target_link}"
+                "⚠️ **توقفت عملية البحث الحالية مؤقتاً!**\n\n"
+                "يبدو أنك غادرت قناة الدعم أو لم تشترك بها بعد.\n\n"
+                "إن اشتراكك في القناة يساهم بشكل مباشر في توفير ميزانية السيرفرات وضمان بقاء البوت مفتوحاً ومتاحاً للجميع مجاناً.\n\n"
+                "👉 **يرجى الانضمام مجدداً ثم معاودة البحث، أو مراجعة عروض البريميوم لإلغاء قيود القنوات بشكل كامل.**"
             ),
             parse_mode="Markdown",
             reply_markup=keyboard
@@ -510,10 +503,8 @@ def main():
         logger.error("🚨 BOT_TOKEN environment variable is missing.")
         return
 
-    # إعداد الحفظ المستمر والذاكرة التخزينية لبيانات البوت الكلية والأدمن والبان والتحكم
     persistence = PicklePersistence(filepath="bot_data.pickle")
     
-    # 🌟 جعل التطبيق معرّفاً على النطاق العالمي لضمان جلب الـ pool داخل الدوال بدون وسيط خارجي ومقاطعة فحص التليجرام
     global app
     app = (
         Application.builder()
@@ -523,10 +514,8 @@ def main():
         .build()
     )
 
-    # تسجيل وإدراج معالجات لوحة تحكم الإدارة الكاملة الملحقة بالملف المنفصل
     register_admin_handlers(app, start)
 
-    # تسجيل وإقران كافة معالجات الأوامر والرسائل والتفاعل الزري للبوت
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
@@ -534,7 +523,6 @@ def main():
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # إطلاق البوت وبدء استقبال البيانات وسحب التحديثات (Polling)
     logger.info("🚀 The cultural book library bot is polling and fully operational...")
     app.run_polling()
 
