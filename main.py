@@ -542,7 +542,6 @@ async def handle_photo_cover(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"✍️ **المؤلف:** {book_data['author'] if book_data.get('author') else 'غير مدرج'}"
             )
             await update.message.reply_text(text=success_text, parse_mode="Markdown")
-            # 💡 تلميح: يمكنك هنا استدعاء دالة إرسال الملف مباشرة للمستخدم عبر التليجرام باستخدام الـ file_id
             
         elif isinstance(result, dict) and result["status"] == "suggestion":
             book_data = result["book"]
@@ -593,10 +592,10 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
     
-    # 📸 ربط مستمع الصور الموجه مباشرة لمعالجة الأغلفة والفحص بـ OCR
-    app.add_handler(filters.ChatType.PRIVATE & MessageHandler(filters.PHOTO, handle_photo_cover))
+    # 📸 ربط مستمع الصور الموجه مباشرة لمعالجة الأغلفة والفحص بـ OCR داخل البيئة الخاصة
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, handle_photo_cover))
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     
-    app.add_handler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
     logger.info("🚀 The cultural book library bot is polling and fully operational...")
