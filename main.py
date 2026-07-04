@@ -3,7 +3,7 @@ import re
 import asyncpg
 import logging
 from datetime import datetime
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
@@ -21,6 +21,9 @@ from radar_handler import (
 from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
+
+# 📸 استيراد المحرك الاحترافي الخاص بالبحث عن طريق غلاف الكتاب
+from cover_search import telegram_photo_handler_pipeline, init_db_pool
 
 # ===============================================
 # إعداد اللوج والمراقبة
@@ -111,6 +114,10 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             """)
 
         app_context.bot_data["db_conn"] = pool
+        
+        # ⚡ تهيئة ربط الـ Pool الخاص بملف البحث عبر الأغلفة ليعمل بكفاءة بالتوازي
+        await init_db_pool(pool)
+        
         logger.info("✅ Database pool ready with premium, credits and download stats columns.")
 
     except Exception:
@@ -485,6 +492,81 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     await search_books(update, context)
 
 # ===============================================
+# 📸 استقبال الصور (أغلفة الكتب) ومعالجتها عبر الـ OCR
+# ===============================================
+async def handle_photo_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user and context.application.user_data:
+        u_id = update.effective_user.id
+        user_data_dict = dict(context.application.user_data)
+        if user_data_dict.get(u_id, {}).get("is_banned"):
+            return
+
+    if not await check_subscription(update.effective_user.id, context.bot):
+        target_link = await get_channel_invite_link(context.bot)
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 اشترك في القناة هنا", url=target_link)],
+            [InlineKeyboardButton("🔄 تحقق من الاشتراك", callback_data="check_subscription")]
+        ])
+        await update.message.reply_text(
+            text="⚠️ **توقفت عملية فحص الغلاف الحالية!**\n\n🌱 فضلاً، اشترك في القناة أولاً لتفعيل ميزة البحث بالصور واستئناف الفحص.",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        return
+
+    # إخطار المستخدم ببدء عملية معالجة الغلاف
+    processing_msg = await update.message.reply_text("🔄 جاري تحميل صورة الغلاف وقراءة النصوص الذكية... يرجى الانتظار ثوانٍ.")
+    
+    try:
+        # 1. تنزيل ملف الصورة من تيليجرام بأعلى جودة متوفرة
+        photo_file = await update.message.photo[-1].get_file()
+        
+        # إنشاء مجلد مؤقت للتحميلات إذا لم يكن موجوداً
+        os.makedirs("downloads", exist_ok=True)
+        temp_image_path = f"downloads/cover_{photo_file.file_id}.jpg"
+        
+        await photo_file.download_to_drive(temp_image_path)
+        
+        # 2. تمرير الصورة إلى خط المعالجة الاحترافي المتزامن (Async Non-blocking Pipeline)
+        result = await telegram_photo_handler_pipeline(temp_image_path)
+        
+        # 3. حذف رسالة الانتظار المؤقتة للترتيب
+        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg.message_id)
+        
+        # 4. معالجة الرد وإرسال النتائج للمستخدم بناءً على جودة التماثل
+        if isinstance(result, dict) and result["status"] == "exact_match":
+            book_data = result["book"]
+            success_text = (
+                f"{result['message']}\n\n"
+                f"📖 **اسم الكتاب:** {book_data['title']}\n"
+                f"✍️ **المؤلف:** {book_data['author'] if book_data.get('author') else 'غير مدرج'}"
+            )
+            await update.message.reply_text(text=success_text, parse_mode="Markdown")
+            # 💡 تلميح: يمكنك هنا استدعاء دالة إرسال الملف مباشرة للمستخدم عبر التليجرام باستخدام الـ file_id
+            
+        elif isinstance(result, dict) and result["status"] == "suggestion":
+            book_data = result["book"]
+            suggest_text = (
+                f"{result['message']}\n\n"
+                f"📖 **العنوان المقترح:** {book_data['title']}\n"
+                f"✍️ **المؤلف:** {book_data['author'] if book_data.get('author') else 'غير مدرج'}"
+            )
+            await update.message.reply_text(text=suggest_text, parse_mode="Markdown")
+        else:
+            # في حال فشل القراءة أو عدم جلب نصوص متطابقة بنسبة كافية
+            await update.message.reply_text(text=result, parse_mode="Markdown")
+            
+        # 5. تنظيف السيرفر وحذف ملف الصورة فوراً لحماية المساحة القرصية
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+            
+    except Exception as e:
+        logger.error(f"❌ Error inside photo cover handler pipeline: {e}", exc_info=True)
+        try:
+            await update.message.reply_text("❌ عذراً، حدث خطأ تقني غير متوقع أثناء معالجة صورة الغلاف. يرجى المحاولة لاحقاً.")
+        except: pass
+
+# ===============================================
 # دالة التشغيل والانطلاق الرئيسية والتثبيت المستدام (Main)
 # ===============================================
 def main():
@@ -510,7 +592,11 @@ def main():
     app.add_handler(CommandHandler("search", search_books_with_subscription))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+    
+    # 📸 ربط مستمع الصور الموجه مباشرة لمعالجة الأغلفة والفحص بـ OCR
+    app.add_handler(filters.ChatType.PRIVATE & MessageHandler(filters.PHOTO, handle_photo_cover))
+    
+    app.add_handler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
     logger.info("🚀 The cultural book library bot is polling and fully operational...")
