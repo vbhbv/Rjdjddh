@@ -57,7 +57,6 @@ async def error_handler(update: Optional[object], context: ContextTypes.DEFAULT_
     
     if isinstance(update, Update) and update.effective_chat:
         try:
-            # إذا كان الخطأ ناتج عن انتهاء صلاحية الضغطة أو تفاعل قديم لا نرسل رسالة مزعجة للمستخدم
             if "Query is too old" in str(context.error):
                 return
                 
@@ -138,6 +137,16 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_books_search_vector ON books USING gin (search_vector);")
 
         app_context.bot_data["db_conn"] = pool
+        
+        # ضبط إفتراضي لمعرف القناة الإجبارية للتأمين من المتغيرات البيئية
+        if not app_context.bot_data.get("required_channel_id"):
+            channel_env = os.getenv("REQUIRED_CHANNEL_ID")
+            if channel_env:
+                try:
+                    app_context.bot_data["required_channel_id"] = int(channel_env)
+                except ValueError:
+                    app_context.bot_data["required_channel_id"] = channel_env
+
         logger.info("✅ تم التحقق من الجداول وبناء الفهارس الإحصائية بنجاح تام.")
 
     except Exception as e:
@@ -172,14 +181,13 @@ async def check_subscription(user_id: int, bot: Bot) -> bool:
             async with pool.acquire() as conn:
                 res = await conn.fetchrow("SELECT is_premium, premium_expiry FROM users WHERE user_id = $1", user_id)
                 if res and res["is_premium"]:
-                    # إذا كانت العضوية مفتوحة للأبد أو تاريخ انتهائها لم يأتي بعد
                     if res["premium_expiry"] is None or res["premium_expiry"] > datetime.now():
                         return True  
         except Exception as e:
             logger.error(f"فشل فحص وضع البريميوم للحساب {user_id}: {e}")
 
-    # الخطوة 2: إذا لم يكن بريميوم، وكان نظام القناة الإجبارية معطلاً، نسمح له بالمرور مجاناً
-    if channel_id is None: 
+    # الخطوة 2: إذا لم يكن نظام القناة الإجبارية معيناً، يسمح بالمرور
+    if not channel_id: 
         return True
         
     # الخطوة 3: التحقق الفعلي من وجوده داخل القناة الرسمية للمكتبة
@@ -190,7 +198,10 @@ async def check_subscription(user_id: int, bot: Bot) -> bool:
         return False
     except Exception as e:
         logger.error(f"خطأ أثناء جلب حالة العضو من تليجرام للحساب {user_id}: {e}")
-        return False
+        # للتأمين: إذا كان الخطأ بسبب عدم صلاحيات البوت في القناة، نمرر المستخدم لكي لا يتوقف البوت عن الرد
+        if "Chat not found" in str(e) or "Not member" in str(e):
+            return False
+        return True
 
 async def get_channel_invite_link(bot: Bot) -> str:
     """
@@ -202,7 +213,7 @@ async def get_channel_invite_link(bot: Bot) -> str:
     except: 
         channel_id = None
         
-    if channel_id is None: 
+    if not channel_id: 
         return "https://t.me/"
         
     try:
@@ -213,7 +224,7 @@ async def get_channel_invite_link(bot: Bot) -> str:
             return chat.invite_link
     except Exception as e:
         logger.error(f"تعذر جلب رابط القناة: {e}")
-    return "https://t.me/"
+    return f"https://t.me/{str(channel_id).replace('-100', '')}" if isinstance(channel_id, int) else "https://t.me/"
 
 # =====================================================================
 # آلية الأرشفة التلقائية للملفات المرفوعة في القنوات المتصلة
@@ -236,7 +247,6 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = document.file_id
         file_name = document.file_name or "كتاب_غير_مصنف.pdf"
         
-        # معالجة وتجهيز الاسم للبحث الفوري
         normalized = clean_arabic_text(file_name)
         
         try:
@@ -248,7 +258,6 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 DO UPDATE SET file_name = EXCLUDED.file_name, name_normalized = EXCLUDED.name_normalized;
                 """, file_id, file_name, normalized)
                 
-                # تحديث فهارس البحث النصي بشكل فوري للملف المضاف لقاعدة البيانات
                 await conn.execute("""
                 UPDATE books SET search_vector = to_tsvector('arabic', COALESCE(file_name, ''))
                 WHERE file_id = $1;
@@ -261,17 +270,14 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================================================
 def clean_arabic_text(text: str) -> str:
     """
-    تنظيف وتبسيط وتوحيد الحروف العربية والإنجليزية لتسهيل عملية مطابقة
-    البحث على كل العقول، بغض النظر عن كتابة الهمزات أو التاء المربوطة.
+    تنظيف وتبسيط وتوحيد الحروف العربية والإنجليزية لتسهيل عملية مطابقة البحث
     """
     if not text: 
         return ""
-    # إزالة الرموز التعبيرية والخاصة الزائدة للحفاظ على الكلمات فقط
     text = re.sub(r'[^\w\s]', ' ', text)
     text = text.strip()
     text = re.sub(r'\s+', ' ', text)
     
-    # خريطة توحيد وتسهيل الحروف للمستخدم البسيط
     replacements = {
         'أ': 'ا', 'إ': 'ا', 'آ': 'ا',
         'ة': 'ه', 'ى': 'ي',
@@ -293,7 +299,6 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query_text.startswith('/'): 
         return
 
-    # التنبيه الذكي للمصطلحات القصيرة جداً
     if len(query_text) < 2:
         await update.message.reply_text(
             text="⚠️ **من فضلك اكتب كلمة أو كلمتين واضحة من اسم الكتاب** لكي يستطيع البوت إيجاده لك بدقة وسهولة.", 
@@ -303,20 +308,17 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cleaned_query = clean_arabic_text(query_text)
     
-    # تسجيل وإحصاء عملية البحث المجرية داخل قاعدة البيانات للتتبع والتحليل
     try:
         async with pool.acquire() as conn:
             await conn.execute("UPDATE stats SET value = value + 1 WHERE key = 'total_searches';")
     except: 
         pass
 
-    # رسالة مؤقتة لتوضيح العملية لجميع مستويات العقول
     searching_msg = await update.message.reply_text("🔍 **جاري البحث الآن في رفوف المكتبة الرقمية...**")
 
     rows = []
     async with pool.acquire() as conn:
         try:
-            # استخدام نظام مطابقة النصوص الهجين (Trigram Similarity + Full Text Search Vector)
             rows = await conn.fetch("""
                 SELECT file_id, file_name, similarity(file_name, $1) as sim
                 FROM books
@@ -329,13 +331,11 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"فشل تنفيذ استعلام البحث النصي: {e}")
 
-    # حذف رسالة الانتظار فور انتهاء جلب البيانات
     try:
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=searching_msg.message_id)
     except:
         pass
 
-    # إذا لم تكن هناك أي نتائج للمصطلح المبحوث عنه
     if not rows:
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("💡 تشغيل رادار المقترحات الذكي", callback_data="radar_menu")],
@@ -353,7 +353,6 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # إرسال النتائج للمستخدم بأسلوب منظم وأزرار تحميل فورية دون تعقيد
     await update.message.reply_text(text=f"✅ **إليك أفضل النتائج التي عثرنا عليها لطلبك ({query_text}):**")
     
     for row in rows:
@@ -365,7 +364,6 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📢 إرسال أو مشاركة الكتاب مع صديق", switch_inline_query_current_chat=f"book:{file_id}")]
         ])
         
-        # إرسال كل نتيجة بشكل منفصل لتسهيل التحميل الفردي للمستخدم العادي
         await update.message.reply_text(
             text=f"📖 **اسم الكتاب:**\n`{file_name}`",
             parse_mode="Markdown",
@@ -376,9 +374,6 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # نظام رادار المقترحات والترشيح التفاعلي المبسط والمفصل لجميع الفئات
 # =====================================================================
 async def start_radar_flow(query: CallbackQuery):
-    """
-    عرض خيارات الرادار لمساعدة المستخدمين الذين لا يملكون اسماً محدداً لكتاب
-    """
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📚 روايات وقصص ومسليات", callback_data="rad_cat:novels"), InlineKeyboardButton("🧠 فلسفة وعلم نفس وعقل", callback_data="rad_cat:philosophy")],
         [InlineKeyboardButton("⏳ تاريخ وثقافة وسير", callback_data="rad_cat:history"), InlineKeyboardButton("💼 مال وأعمال وتطوير الذات", callback_data="rad_cat:business")],
@@ -391,9 +386,6 @@ async def start_radar_flow(query: CallbackQuery):
     )
 
 async def process_radar_category(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
-    """
-    الخطوة الثانية: تحديد المستوى والعمق المطلوب للكتاب المقترح
-    """
     category = query.data.split(":")[1]
     context.user_data["radar_cat"] = category
     
@@ -409,9 +401,6 @@ async def process_radar_category(query: CallbackQuery, context: ContextTypes.DEF
     )
 
 async def process_radar_difficulty(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
-    """
-    الخطوة الثالثة: تحديد الحجم المفضل للكتاب
-    """
     difficulty = query.data.split(":")[1]
     context.user_data["radar_diff"] = difficulty
     
@@ -421,21 +410,15 @@ async def process_radar_difficulty(query: CallbackQuery, context: ContextTypes.D
         [InlineKeyboardButton("📚 مجلد كبير وثري (أكثر من 350 صفحة)", callback_data="rad_size:large")]
     ])
     await query.message.edit_text(
-        text="⏳ **الخطوة الثالثة والأخيرة: ما هو حجم الكتاب المفضل لجلسة اليوم؟**\n\nهل تبحث عن كتيب سريع تنهيه في ساعة، أم مجلد ثري لرحلة طويلة؟", 
+        text="⏳ **الخطوة الثالثة والأخيرة: ما هو حجم الكتاب المفضل لجلسة اليوم？**\n\nهل تبحث عن كتيب سريع تنهيه في ساعة، أم مجلد ثري لرحلة طويلة؟", 
         parse_mode="Markdown", 
         reply_markup=keyboard
     )
 
 async def execute_radar_search(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
-    """
-    الخطوة النهائية: استخراج الاقتراحات العشوائية المطابقة لمعايير المستخدم وسحبها من قاعدة البيانات
-    """
     pool = context.bot_data.get("db_conn")
     cat = context.user_data.get("radar_cat", "novels")
-    diff = context.user_data.get("radar_diff", "medium")
-    size = query.data.split(":")[1]
     
-    # خريطة الربط الكلمي لتسهيل البحث على المبتدئين
     keywords_map = {
         "novels": ["رواية", "قصة", "حكاية", "روايات", "قصص"],
         "philosophy": ["فلسفة", "علم نفس", "تحليل", "فيلسوف", "فكر"],
@@ -584,7 +567,6 @@ async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not existing_user:
             await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING", user_id)
             
-            # معالجة روابط الدعوة والإحالات المباشرة لمنح الجوائز والتحميلات الإضافية
             if context.args and context.args[0].startswith("inv_"):
                 try: 
                     inviter_id = int(context.args[0].split("_")[1])
@@ -599,9 +581,6 @@ async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.error(f"فشلت مكافأة الإحالة للحساب: {e}")
 
 async def welcome_bot_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    إرسال رسالة ترحيبية وتعليمات مبسطة عند إضافة البوت لمجموعة أو جروب ثقافي
-    """
     chat_member = update.chat_member or update.my_chat_member
     if not chat_member or chat_member.chat.type not in ("group", "supergroup"): 
         return
@@ -617,13 +596,9 @@ async def welcome_bot_in_group(update: Update, context: ContextTypes.DEFAULT_TYP
 # إدارة الأزرار التفاعلية وتحميل الملفات الفوري (Callback Queries)
 # =====================================================================
 async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    معالجة كافة النقرات وضغطات الأزرار للبوت وتوجيهها بدقة وأمان تام
-    """
     query = update.callback_query
     u_id = query.from_user.id
     
-    # فحص الحظر الإداري أولاً
     if context.application.user_data and dict(context.application.user_data).get(u_id, {}).get("is_banned"):
         try: 
             await query.answer("❌ عذراً، حسابك الحالي تم حظره من قبل الإدارة لمخالفة الشروط.", show_alert=True)
@@ -631,14 +606,12 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             pass
         return
 
-    # تأمين وحماية الضغطة من الأخطاء والـ Timeout الفجائي لتسريع استجابة السيرفر
     try:
         await query.answer()
     except Exception as e:
         logger.warning(f"⚠️ انتهت صلاحية ضغطة زر التليجرام أو تم تجاهلها: {e}")
         return
 
-    # توجيه الطلبات حسب الكود البرمجي للزر المكبوس
     if query.data == "show_index":
         await show_index_menu(update, context)
     elif query.data.startswith("idx:"):
@@ -667,21 +640,21 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             
             await query.message.reply_document(
                 document=file_id, 
-                caption="⚜️ **تم جلب وتجهيز كتابك بنجاح من الأرشيف الرقمي.**\n\nنتمنى لك قراءة ممتعة ووصفة فكرية نافعة! لا تنسى مشاركة البوت مع أصدقائك لدعمنا."
+                caption="⚜️ **تم جلب وتجهيز كتابك بنجاح من الأرشيف الرقمي.**\n\nنتمنى لك قراءة ممتعة ووصفة فكرية نافعة!"
             )
         except Exception as e:
             logger.error(f"خطأ أثناء إرسال وتحميل الملف للمستخدم {u_id}: {e}")
             await query.message.reply_text(
-                text="❌ **معذرة:** تعذر إرسال هذا الملف حالياً، قد يكون الملف قد تم حذفه من خوادم تليجرام الرئيسية أو أن الوثيقة تالفة ونعمل على إصلاحها.", 
+                text="❌ **معذرة:** تعذر إرسال هذا الملف حالياً، قد يكون الملف قد تم حذفه من خوادم تليجرام الرئيسية.", 
                 parse_mode="Markdown"
             )
             
     elif query.data == "show_advertising_info":
-        adv_text = "📢 **قسم الإعلانات والتبادل والخدمات الرقمية:**\n\nلدعم استمرارية السيرفرات ودفع نفقات حوض البيانات والمكتبة لكي تظل مجانية لكل العقول، نفتح باب التبادل الإعلاني والاشتراكات والتمويل.\n\n📩 **للتواصل المباشر مع إدارة المنصة الرسمية:** @UUUULU"
+        adv_text = "📢 **قسم الإعلانات والتبادل والخدمات الرقمية:**\n\nلدعم استمرارية السيرفرات ودفع نفقات حوض البيانات، نفتح باب التبادل الإعلاني.\n\n📩 **للتواصل المباشر مع إدارة المنصة الرسمية:** @UUUULU"
         await query.message.reply_text(text=adv_text, parse_mode="Markdown")
         
     elif query.data == "buy_premium":
-        text = "⭐ **باقات العضوية المميزة المريحة (Premium) لرواد المعرفة:**\n\nإذا كنت لا تحب الإعلانات أو الاشتراكات الإجبارية وتريد ميزات خارقة، يمكنك ترقية حسابك لعضوية البريميوم الفخمة والحصول على:\n\n• ⚡ **سرعة البرق:** الأولوية القصوى للسيرفر في معالجة طلباتك وإرسال الكتب فوراً.\n• 🚫 **تخطي تام ومطلق:** تصفح وابحث وحمل دون الحاجة للاشتراك بأي قنوات إجبارية نهائياً وبلا أي إعلانات مزعجة.\n• 📥 **تحميل بلا حدود:** إلغاء أي قيود على عدد الكتب المسموح بتحميلها يومياً.\n\n📩 **للاشتراك الفوري والآمن ومعرفة الأسعار والطرق، راسل الإدارة عبر معرف التليجرام:** @UUUULU"
+        text = "⭐ **باقات العضوية المميزة المريحة (Premium) لرواد المعرفة:**\n\n• ⚡ **سرعة البرق:** الأولوية القصوى للسيرفر في معالجة طلباتك.\n• 🚫 **تخطي تام ومطلق:** تصفح وابحث وحمل دون الحاجة للاشتراك بأي قنوات إجبارية نهائياً.\n• 📥 **تحميل بلا حدود:** إلغاء أي قيود على عدد الكتب المسموح بها.\n\n📩 **للاشتراك الفوري والآمن راسل الإدارة عبر المعرف:** @UUUULU"
         await query.message.reply_text(text=text, parse_mode="Markdown")
         
     elif query.data in ("back_to_main", "check_subscription"):
@@ -689,11 +662,11 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🇮🇶 تصفح الكتب العربية", callback_data="show_index"), InlineKeyboardButton("🇬🇧 English Books / الأجنبي", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 رادار الترشيحات والمقترحات الذكي", callback_data="radar_menu")],
-                [InlineKeyboardButton("⭐ اشتراك بريميوم (تخطي القنوات والإعلانات)", callback_data="buy_premium")],
+                [InlineKeyboardButton("⭐ اشتراك بريميوم (تخطي القنوات)", callback_data="buy_premium")],
                 [InlineKeyboardButton("📢 قسم الإعلانات والتبادل التجاري", callback_data="show_advertising_info")]
             ])
             await query.message.edit_text(
-                text="🏛️ **مرحباً بك في القائمة الرئيسية لـ مكتبة الكتب الرقمية العظمى**\n\nتم التحقق من حسابك بنجاح والنظام مفتوح بالكامل بين يديك الآن مجاناً لفحص وتحميل أكثر من نصف مليون كتاب وثيقة فكرية وأدبية وثقافية.\n\n✍️ **طريقة الاستخدام السهلة (لكل العقول):**\nاكتب اسم الكتاب أو اسم المؤلف أو الكلمة المفتاحية مباشرة في رسالة هنا للبوت، وسيقوم المحرك بالبحث الفوري وإعطائك زر التحميل المباشر والخاطف.",
+                text="🏛️ **مرحباً بك في القائمة الرئيسية لـ مكتبة الكتب الرقمية العظمى**\n\nتم التحقق من حسابك بنجاح والنظام مفتوح بالكامل بين يديك الآن مجاناً لفحص وتحميل أكثر من نصف مليون كتاب وثيقة فكرية وأدبية وثقافية.\n\n✍️ **طريقة الاستخدام السهلة (لكل العقول):**\nاكتب اسم الكتاب مباشرة هنا للبوت وسيتم جلب رابط التحميل الخاطف فورا.",
                 parse_mode="Markdown", 
                 reply_markup=keyboard
             )
@@ -703,28 +676,24 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 [InlineKeyboardButton("📢 اضغط هنا أولاً للاشتراك في القناة الرسمية", url=link)],
                 [InlineKeyboardButton("🔄 اضغط هنا لتفعيل الحساب بعد الاشتراك مباشرة", callback_data="check_subscription")]
             ])
-            try: 
-                await query.message.reply_text(
-                    text="🚫 **تنبيه هام - يجب إكمال الاشتراك لتفعيل الخدمة:**\n\nعذراً، يتطلب النظام تفعيل اشتراكك في قناة المكتبة الرسمية بالأسفل أولاً لحفظ واستمرارية الخدمة المجانية لكل الناس وتحديث محرك البحث. يرجى الانضمام للقناة ثم العودة والضغط على الزر الدائري لتفعيل الحساب فوراً.", 
-                    parse_mode="Markdown", 
-                    reply_markup=keyboard
-                )
-            except: 
-                pass
+            await query.message.reply_text(
+                text="🚫 **تنبيه هام - يجب إكمال الاشتراك لتفعيل الخدمة:**\n\nعذراً، يتطلب النظام تفعيل اشتراكك في قناة المكتبة الرسمية بالأسفل أولاً لحفظ واستمرارية الخدمة المجانية. يرجى الانضمام للقناة ثم اضغط على زر تفعيل الحساب.", 
+                parse_mode="Markdown", 
+                reply_markup=keyboard
+            )
 
 # =====================================================================
 # الترحيب البدئي، تعليمات الاستخدام الدقيقة، وحقوق الملكية الفكرية
 # =====================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    دالة استقبال المستخدم لأول مرة ومعالجة قيود العضوية والترحيب السلس
-    """
-    if update.effective_user and context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): 
+    if not update.effective_user or not update.message: 
+        return
+        
+    if context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): 
         return
         
     await register_user(update, context)
 
-    # التحقق من الاشتراك الإجباري للمستخدم وإظهار لوحة القنوات أولاً إن لم يكن مشتركاً
     if not await check_subscription(update.effective_user.id, context.bot):
         link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
@@ -732,41 +701,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 اضغط هنا لتفعيل الحساب فوراً بعد الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            text="👋 **أهلاً ومرحباً بك في منصة مكتبة الكتب الرقمية  !**\n\n"
-                 "لضمان استمرارية الخوادم وتغطية النفقات المرتفعة ولتحديث قواعد البيانات بأحدث الكتب يومياً، "
-                 "يرجى الانضمام أولاً لقناة البوت الداعمة بالأسفل، ثم اضغط على زر التفعيل لتنطلق في عالم القراءة المجاني بالكامل.", 
+            text="👋 **أهلاً ومرحباً بك في منصة مكتبة الكتب الرقمية والورقية العظمى!**\n\n"
+                 "لضمان استمرارية الخوادم وتغطية النفقات السحابية المرتفعة ولتحديث قواعد البيانات بأحدث الكتب يومياً، "
+                 "يرجى الانضمام أولاً لقناة البوت الرسمية بالأسفل، ثم اضغط على زر التفعيل لتنطلق في عالم القراءة المجاني بالكامل.", 
             parse_mode="Markdown", 
             reply_markup=keyboard
         )
         return
 
-    # إظهار القائمة الرئيسية الشاملة والمفصلة جداً مع تلبية كامل شروطك لرسالة الحقوق والتعليمات بالملف الكامل
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 تصفح الكتب العربية", callback_data="show_index"), InlineKeyboardButton("🇬🇧 English Books / الأجنبي", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 رادار الترشيحات والمقترحات الذكي", callback_data="radar_menu")],
-        [InlineKeyboardButton("⭐ اشتراك بريميوم (تخطي القنوات والإعلانات)", callback_data="buy_premium")],
+        [InlineKeyboardButton("⭐ اشتراك بريميوم (تخطي القنوات)", callback_data="buy_premium")],
         [InlineKeyboardButton("📢 قسم الإعلانات والتبادل التجاري", callback_data="show_advertising_info")]
     ])
     
     await update.message.reply_text(
         text="🏛️ **أهلاً بك في بوابة منصة مكتبة الكتب الفكرية الشاملة**\n\n"
-             "نضع بين يديك هذا المحرك التفاعلي البسيط والمتقدم جداً لمساعدتك في الحصول على أي كتاب أو رواية أو وثيقة دراسية مجاناً وبكل سهولة تامة لتناسب كافة المستويات والأعمار.\n\n"
+             "نضع بين يديك هذا المحرك التفاعلي البسيط لمساعدتك في الحصول على أي كتاب أو رواية مجاناً.\n\n"
              "⚖️ **رسالة احترام حقوق الملكية الفكرية وطبع النشر:**\n"
-             "جميع المواد، الكتب، والملفات الرقمية المتاحة في هذه المنصة يتم فهرستها وجلبها تلقائياً بالكامل من مصادر إنترنت عامة ومفتوحة للعموم ومتداولة مسبقاً. "
-             "نحن نحترم ونلتزم تماماً بحقوق الطبع والنشر والملكية الفكرية لأي كاتب أو دار نشر؛ وبناءً على ذلك، إذا كنت تملك حقاً قانونياً لمؤلف وترى أن تداوله يضرك، "
-             "يرجى مراسلتنا فوراً وبشكل ودي ومباشر عبر معرف الإدارة، وسيقوم فريق الصيانة بحذفه نهائياً من خوادم وقواعد بيانات البوت خلال دقائق معدودة.\n\n"
+             "جميع المواد يتم جلبها تلقائياً بالكامل من مصادر إنترنت عامة ومفتوحة. نحن نحترم ونلتزم تماماً بحقوق الطبع والنشر؛ وبناءً على ذلك، إذا كنت تملك حقاً قانونياً لمؤلف وترى أن تداوله يضرك، "
+             "يرجى مراسلتنا فوراً وبشكل ودي ومباشر عبر معرف الإدارة @UUUULU، وسيقوم فريق الصيانة بحذفه نهائياً.\n\n"
              "🔎 **تعليمات الاستخدام المباشرة للبحث وفحص الأرشيف:**\n"
-             "طريقة الاستخدام سهلة جداً ولا تحتاج أي شرح أو أوامر معقدة! كل ما عليك فعله هو **كتابة اسم الكتاب** أو **اسم المؤلف** أو **كلمة مفتاحية مميزة** من العنوان في رسالة نصية عادية هنا للبوت وإرسالها، "
-             "وسيقوم المحرك التلقائي بفحص مئات الآلاف من الرفوف الرقمية وجلب رابط التحميل الفوري والمباشر لك في ثوانٍ معدودة.", 
+             "كل ما عليك فعله هو **كتابة اسم الكتاب** أو **اسم المؤلف** مباشرة في رسالة نصية عادية هنا للبوت وإرسالها، وسيقوم المحرك التلقائي بالبحث وإعطائك زر التحميل الفوري.", 
         parse_mode="Markdown", 
         reply_markup=keyboard
     )
 
 async def search_books_with_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    التحقق الآمن من اشتراك المستخدم قبل تفعيل وتنفيذ محرك البحث النصي
-    """
-    if update.effective_user and context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): 
+    if not update.effective_user or not update.message: 
+        return
+        
+    if context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): 
         return
         
     if not await check_subscription(update.effective_user.id, context.bot):
@@ -776,7 +742,7 @@ async def search_books_with_subscription(update: Update, context: ContextTypes.D
             [InlineKeyboardButton("🔄 تفعيل وتحديث الحساب الآن", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            text="⚠️ **توقف مؤقت للنظام:** يرجى تفعيل أو تجديد اشتراكك في القناة الرسمية للمنصة المرفقة بالأسفل لتأصيل حسابك والتمكن من إكمال البحث المفتوح مجاناً.", 
+            text="⚠️ **توقف مؤقت للنظام:** يرجى تفعيل أو تجديد اشتراكك في القناة الرسمية للمنصة المرفقة بالأسفل لتتمكن من إكمال البحث المفتوح مجاناً.", 
             parse_mode="Markdown", 
             reply_markup=keyboard
         )
@@ -788,10 +754,7 @@ async def search_books_with_subscription(update: Update, context: ContextTypes.D
 # إدارة الصور الموفرة للأداء وموارد الاستضافة للـ VPS
 # =====================================================================
 async def handle_photo_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    توجيه معالجة الصور لتقليل الاستهلاك وحفظ أداء السيرفر السحابي
-    """
-    if update.effective_user and context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): 
+    if not update.message: 
         return
     await update.message.reply_text(
         text="⚠️ **تنظيم تشغيلي مهم:**\n\nنود إعلامكم بأن البحث عن طريق إرسال صور أغلفة الكتب معطل حالياً بشكل مؤقت؛ وذلك للحفاظ على استقرار السيرفر وسرعة معالجة الملفات النصية مجاناً لجميع الباحثين.\n\n✍️ **البديل السريع المتاح:** من فضلك اكتب اسم الكتاب أو المؤلف في رسالة نصية عادية وسنوفره لك فورا وبسرعة خيالية.",
@@ -802,24 +765,18 @@ async def handle_photo_cover(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # دالة التشغيل والانطلاق المعمارية الرئيسية (Main Operational Function)
 # =====================================================================
 def main():
-    """
-    الدالة الأم لبدء تشغيل سيرفر البوت وربط كافة الأكواد وبناء الجلسات الدائمة
-    """
     token = os.getenv("BOT_TOKEN")
     if not token:
-        logger.critical("🚨 خطأ فادح: لم يتم العثور على توكن البوت BOT_TOKEN في متغيرات البيئة! يتوجب عليك تعيينه أولاً لكي ينطلق البوت.")
+        logger.critical("🚨 خطأ فادح: لم يتم العثور على توكن البوت BOT_TOKEN في متغيرات البيئة!")
         return
 
-    # استخدام الـ PicklePersistence لحفظ بيانات الإعدادات والتحليلات عبر الإيقاف والتشغيل دون ضياعها
     persistence = PicklePersistence(filepath="bot_permanent_data.pickle")
     
     global app
     app = Application.builder().token(token).persistence(persistence).post_init(init_db).build()
 
-    # ربط معالج الأخطاء الاستثنائي الشامل لتجنب انقطاع خادم البولينج
     app.add_error_handler(error_handler)
 
-    # استدعاء وتسجيل لوحة تحكم المسؤولين المتقدمة من الملف الجانبي admin_panel
     try:
         from admin_panel import register_admin_handlers  
         register_admin_handlers(app, start)
@@ -827,20 +784,19 @@ def main():
     except Exception as e:
         logger.warning(f"⚠️ تحذير: لم يتم العثور على حزمة admin_panel أو تعذر تحميلها: {e}")
 
-    # تسجيل خطوط الأوامر الثابتة والمحركات التفاعلية للبوت لجميع الحالات
+    # تسجيل الحواضن والمعالجات الأساسية للبوت
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
     
-    # فلترة آمنة لتوجيه الرسائل النصية والصور السيرفرية ومنع تجميد المعالجة
+    # فلاتر معالجة النصوص والصور لضمان استلام طلبات البحث العادية دون تجميد
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, handle_photo_cover))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
     logger.info("🚀 نظام مكتبة الكتب الرقمية الشاملة يعمل الآن بكامل طاقته المعمارية وبدأ في استقبال طلبات المستخدمين الفورية...")
     
-    # تشغيل خوادم الاستماع المباشر من تليجرام
     app.run_polling()
 
 if __name__ == "__main__":
