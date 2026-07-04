@@ -49,20 +49,14 @@ logger = logging.getLogger(__name__)
 # معالج الأخطاء الاستثنائي لحماية السيرفر من الانهيار المفاجئ
 # =====================================================================
 async def error_handler(update: Optional[object], context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    يقوم بالقبض على أي خطأ برمجي أثناء تشغيل البوت ومعالجته فوراً
-    لمنع توقف السيرفر وضمان استمرارية الخدمة لكافة المستخدمين.
-    """
     logger.error(msg="❌ حدث خطأ استثنائي غير متوقع أثناء معالجة التحديث:", exc_info=context.error)
-    
     if isinstance(update, Update) and update.effective_chat:
         try:
             if "Query is too old" in str(context.error):
                 return
-                
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="⚠️ **نظام الحماية التشغيلي:**\n\nحدثت مشكلة تقنية بسيطة أثناء معالجة طلبك الحالي بسبب الضغط الإضافي على السيرفر. نرجو منك إعادة المحاولة مرة أخرى الآن أو استخدام أمر /start لتحديث اللوحة.",
+                text="⚠️ **نظام الحماية التشغيلي:**\n\nحدثت مشكلة تقنية بسيطة أثناء معالجة طلبك الحالي. نرجو منك إعادة المحاولة مرة أخرى أو استخدام أمر /start لتحديث اللوحة.",
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -72,13 +66,10 @@ async def error_handler(update: Optional[object], context: ContextTypes.DEFAULT_
 # معمارية وإعدادات قاعدة البيانات المتقدمة (PostgreSQL Connection Pool)
 # =====================================================================
 async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
-    """
-    إنشاء وتجهيز جداول البيانات وتفعيل إضافات البحث النصي المتقدم ثلاثي الحروف (Trigram)
-    """
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            logger.critical("🚨 لم يتم العثور على متغير البيئة DATABASE_URL! يتوجب عليك ضبطه لتشغيل البوت.")
+            logger.critical("🚨 لم يتم العثور على متغير البيئة DATABASE_URL!")
             return
 
         logger.info("⏳ جاري إنشاء حوض اتصالات قاعدة البيانات (Connection Pool)...")
@@ -92,11 +83,9 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
         )
 
         async with pool.acquire() as conn:
-            # تفعيل ميزة تجاهل الحركات التشكيلية والبحث بالتشابه اللغوي العربي
             await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
             
-            # جدول أرشفة وتخزين وثائق وملفات الكتب الرقمية
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id SERIAL PRIMARY KEY,
@@ -108,7 +97,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             );
             """)
 
-            # جدول إدارة حسابات المستخدمين والمستويات والميزات والبريميوم
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -120,7 +108,6 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             );
             """)
 
-            # جدول الإحصائيات العامة والتحليلات السيرفرية للمنصة
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS stats (
                 key TEXT PRIMARY KEY,
@@ -128,17 +115,14 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             );
             """)
             
-            # زرع القيم الأساسية للإحصائيات في حال تشغيل البوت لأول مرة
             await conn.execute("INSERT INTO stats (key, value) VALUES ('total_searches', 0) ON CONFLICT DO NOTHING;")
             await conn.execute("INSERT INTO stats (key, value) VALUES ('total_downloads', 0) ON CONFLICT DO NOTHING;")
             
-            # بناء فهارس ومؤشرات تسريع البحث المتقدم والـ Fuzzy Match
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_books_file_name_trgm ON books USING gist (file_name gist_trgm_ops);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_books_search_vector ON books USING gin (search_vector);")
 
         app_context.bot_data["db_conn"] = pool
         
-        # ضبط إفتراضي لمعرف القناة الإجبارية للتأمين من المتغيرات البيئية
         if not app_context.bot_data.get("required_channel_id"):
             channel_env = os.getenv("REQUIRED_CHANNEL_ID")
             if channel_env:
@@ -147,26 +131,22 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
                 except ValueError:
                     app_context.bot_data["required_channel_id"] = channel_env
 
-        logger.info("✅ تم التحقق من الجداول وبناء الفهارس الإحصائية بنجاح تام.")
-
+        logger.info("✅ تم التحقق من الجداول وبناء الفهارس بنجاح.")
     except Exception as e:
-        logger.error("❌ فشل كلي في إعداد وتجهيز اتصالات قاعدة البيانات المتقدمة:", exc_info=True)
+        logger.error("❌ فشل في إعداد قاعدة البيانات:", exc_info=True)
 
 async def close_db(app: Application):
-    """
-    إغلاق آمن لكافة اتصالات قاعدة البيانات عند إيقاف السيرفر لمنع تسريب الذاكرة
-    """
     pool = app.bot_data.get("db_conn")
     if pool:
         await pool.close()
-        logger.info("✅ تم إغلاق حوض الاتصالات السحابية للـ Database بسلام.")
+        logger.info("✅ تم إغلاق حوض الاتصالات السحابية بنجاح.")
 
 # =====================================================================
-# أنظمة التحقق الرقمي، الاشتراك الإجباري، وصلاحيات البريميوم
+# أنظمة التحقق الرقمي والاشتراك الإجباري الآمن
 # =====================================================================
 async def check_subscription(user_id: int, bot: Bot) -> bool:
     """
-    التحقق مما إذا كان المستخدم يمتلك بريميوم (يتخطى القنوات) أو عضو نشط في القناة الإجبارية
+    التحقق الآمن من اشتراك المستخدم مع حماية برمجية تمنع توقف البوت عن الرد
     """
     try:
         from __main__ import app
@@ -175,7 +155,6 @@ async def check_subscription(user_id: int, bot: Bot) -> bool:
     except:
         pool, channel_id = None, None
 
-    # الخطوة 1: فحص حالة الاشتراك المميز (البريميوم) أولاً
     if pool:
         try:
             async with pool.acquire() as conn:
@@ -184,38 +163,32 @@ async def check_subscription(user_id: int, bot: Bot) -> bool:
                     if res["premium_expiry"] is None or res["premium_expiry"] > datetime.now():
                         return True  
         except Exception as e:
-            logger.error(f"فشل فحص وضع البريميوم للحساب {user_id}: {e}")
+            logger.error(f"خطأ فحص البريميوم: {e}")
 
-    # الخطوة 2: إذا لم يكن نظام القناة الإجبارية معيناً، يسمح بالمرور
+    # إذا لم يتم تحديد قناة إجبارية في متغيرات البيئة، اسمح للمستخدم بالمرور فوراً
     if not channel_id: 
         return True
         
-    # الخطوة 3: التحقق الفعلي من وجوده داخل القناة الرسمية للمكتبة
     try:
         member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
         if member.status in ("member", "administrator", "creator"):
             return True
         return False
     except Exception as e:
-        logger.error(f"خطأ أثناء جلب حالة العضو من تليجرام للحساب {user_id}: {e}")
-        # للتأمين: إذا كان الخطأ بسبب عدم صلاحيات البوت في القناة، نمرر المستخدم لكي لا يتوقف البوت عن الرد
-        if "Chat not found" in str(e) or "Not member" in str(e):
-            return False
-        return True
+        logger.error(f"خطأ أثناء فحص عضوية القناة للتليجرام للحساب {user_id}: {e}")
+        # حماية كبرى: إذا لم يجد البوت القناة أو كان الـ ID خاطئاً، يعود بـ True لكي لا يتعطل البوت بالكامل
+        if "Chat not found" in str(e) or "chat not found" in str(e):
+            return True
+        return False
 
 async def get_channel_invite_link(bot: Bot) -> str:
-    """
-    استخراج وتجهيز رابط الدعوة أو المعرف العام لقناة الاشتراك الإجباري
-    """
     try:
         from __main__ import app
         channel_id = app.bot_data.get("required_channel_id")
     except: 
         channel_id = None
-        
     if not channel_id: 
         return "https://t.me/"
-        
     try:
         chat = await bot.get_chat(channel_id)
         if chat.username: 
@@ -230,10 +203,6 @@ async def get_channel_invite_link(bot: Bot) -> str:
 # آلية الأرشفة التلقائية للملفات المرفوعة في القنوات المتصلة
 # =====================================================================
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    تستمع هذه الدالة للمنشورات المرفوعة داخل قنوات الأرشفة المرتبطة بالبوت
-    وتقوم بحفظ معرّف الملف وتصنيف الاسم للبحث عنه مستقبلاً.
-    """
     if (
         update.channel_post
         and update.channel_post.document
@@ -242,45 +211,31 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pool = context.bot_data.get("db_conn")
         if not pool: 
             return
-
         document = update.channel_post.document
         file_id = document.file_id
         file_name = document.file_name or "كتاب_غير_مصنف.pdf"
-        
         normalized = clean_arabic_text(file_name)
-        
         try:
             async with pool.acquire() as conn:
                 await conn.execute("""
-                INSERT INTO books (file_id, file_name, name_normalized)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (file_id) 
-                DO UPDATE SET file_name = EXCLUDED.file_name, name_normalized = EXCLUDED.name_normalized;
+                INSERT INTO books (file_id, file_name, name_normalized) VALUES ($1, $2, $3)
+                ON CONFLICT (file_id) DO UPDATE SET file_name = EXCLUDED.file_name, name_normalized = EXCLUDED.name_normalized;
                 """, file_id, file_name, normalized)
-                
-                await conn.execute("""
-                UPDATE books SET search_vector = to_tsvector('arabic', COALESCE(file_name, ''))
-                WHERE file_id = $1;
-                """, file_id)
+                await conn.execute("UPDATE books SET search_vector = to_tsvector('arabic', COALESCE(file_name, '')) WHERE file_id = $1;", file_id)
         except Exception as e:
-            logger.error(f"فشلت عملية أرشفة الكتاب الجديد تلقائياً: {e}")
+            logger.error(f"فشلت أرشفة الكتاب: {e}")
 
 # =====================================================================
 # محرك المعالجة اللغوية والبحث المطابق الذكي (Search Engine Core)
 # =====================================================================
 def clean_arabic_text(text: str) -> str:
-    """
-    تنظيف وتبسيط وتوحيد الحروف العربية والإنجليزية لتسهيل عملية مطابقة البحث
-    """
     if not text: 
         return ""
     text = re.sub(r'[^\w\s]', ' ', text)
     text = text.strip()
     text = re.sub(r'\s+', ' ', text)
-    
     replacements = {
-        'أ': 'ا', 'إ': 'ا', 'آ': 'ا',
-        'ة': 'ه', 'ى': 'ي',
+        'أ': 'ا', 'إ': 'ا', 'آ': 'ا', 'ة': 'ه', 'ى': 'ي',
         'گ': 'ك', 'پ': 'ب', 'چ': 'ج', 'ژ': 'ج', 'ڤ': 'ف'
     }
     for old, new in replacements.items():
@@ -288,9 +243,6 @@ def clean_arabic_text(text: str) -> str:
     return text.lower()
 
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    المحرك الرئيسي للبحث عن الكتب وجلبها الفوري للمستخدم بأسلوب هجين ذكي جداً
-    """
     pool = context.bot_data.get("db_conn")
     if not pool or not update.message or not update.message.text: 
         return
@@ -307,34 +259,30 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     cleaned_query = clean_arabic_text(query_text)
-    
     try:
         async with pool.acquire() as conn:
             await conn.execute("UPDATE stats SET value = value + 1 WHERE key = 'total_searches';")
-    except: 
-        pass
+    except: pass
 
     searching_msg = await update.message.reply_text("🔍 **جاري البحث الآن في رفوف المكتبة الرقمية...**")
-
     rows = []
-    async with pool.acquire() as conn:
-        try:
+    
+    try:
+        async with pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT file_id, file_name, similarity(file_name, $1) as sim
                 FROM books
                 WHERE file_name % $1 
                    OR name_normalized ILIKE $2
                    OR to_tsvector('arabic', file_name) @@ plainto_tsquery('arabic', $1)
-                ORDER BY sim DESC, id DESC
-                LIMIT 8;
+                ORDER BY sim DESC, id DESC LIMIT 8;
             """, query_text, f"%{cleaned_query}%")
-        except Exception as e:
-            logger.error(f"فشل تنفيذ استعلام البحث النصي: {e}")
+    except Exception as e:
+        logger.error(f"فشل استعلام البحث: {e}")
 
     try:
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=searching_msg.message_id)
-    except:
-        pass
+    except: pass
 
     if not rows:
         keyboard = InlineKeyboardMarkup([
@@ -346,7 +294,6 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  f"💡 **نصائح سهلة للبحث:**\n"
                  f"• تأكد من كتابة الحروف بشكل صحيح وبدون أخطاء إملائية.\n"
                  f"• جرب كتابة كلمة واحدة فريدة ومميزة من اسم الكتاب بدلاً من العنوان الطويل.\n"
-                 f"• يمكنك كتابة اسم المؤلف (مثال: نيتشه أو نجيب محفوظ) لاستعراض مؤلفاته.\n"
                  f"• يمكنك الضغط على زر الرادار بالأسفل ليقترح عليك البوت كتباً رائعة ومسلية.",
             parse_mode="Markdown", 
             reply_markup=keyboard
@@ -354,24 +301,19 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(text=f"✅ **إليك أفضل النتائج التي عثرنا عليها لطلبك ({query_text}):**")
-    
     for row in rows:
         file_id = row["file_id"]
         file_name = row["file_name"]
-        
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 اضغط هنا لتحميل الكتاب فورا", callback_data=f"dl:{file_id}")],
             [InlineKeyboardButton("📢 إرسال أو مشاركة الكتاب مع صديق", switch_inline_query_current_chat=f"book:{file_id}")]
         ])
-        
         await update.message.reply_text(
-            text=f"📖 **اسم الكتاب:**\n`{file_name}`",
-            parse_mode="Markdown",
-            reply_markup=keyboard
+            text=f"📖 **اسم الكتاب:**\n`{file_name}`", parse_mode="Markdown", reply_markup=keyboard
         )
 
 # =====================================================================
-# نظام رادار المقترحات والترشيح التفاعلي المبسط والمفصل لجميع الفئات
+# نظام رادار المقترحات والترشيح التفاعلي
 # =====================================================================
 async def start_radar_flow(query: CallbackQuery):
     keyboard = InlineKeyboardMarkup([
@@ -380,88 +322,66 @@ async def start_radar_flow(query: CallbackQuery):
         [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")]
     ])
     await query.message.edit_text(
-        text="💡 **مرحباً بك في رادار المقترحات الذكي!**\n\nإذا كنت محتاراً ولا تعرف ماذا تقرأ اليوم، فالرادار هنا لمساعدتك واقتراح أفضل الكتب المناسبة لك.\n\n👇 **الخطوة الأولى:** اختر القسم أو المجال الذي تميل إليه وتريد القراءة فيه الآن:",
-        parse_mode="Markdown", 
-        reply_markup=keyboard
+        text="💡 **مرحباً بك في رادار المقترحات الذكي!**\n\n👇 **الخطوة الأولى:** اختر القسم أو المجال الذي تميل إليه وتريد القراءة فيه الآن:",
+        parse_mode="Markdown", reply_markup=keyboard
     )
 
 async def process_radar_category(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     category = query.data.split(":")[1]
     context.user_data["radar_cat"] = category
-    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🌱 سهل وبسيط (للمبتدئين ومن يحب الخفة)", callback_data="rad_diff:easy")],
         [InlineKeyboardButton("🪴 متوسط (عميق وممتع بنفس الوقت)", callback_data="rad_diff:medium")],
         [InlineKeyboardButton("🏛️ تخصصي متقدم (للباحثين وأهل العلم)", callback_data="rad_diff:hard")]
     ])
     await query.message.edit_text(
-        text="🎯 **الخطوة الثانية: حدد المستوى القرائي المناسب لك الآن:**\n\nهل تفضل كتاباً سهلاً وخفيفاً للبدايات، أم كتاباً يحتاج تركيزاً وعمقاً؟", 
-        parse_mode="Markdown", 
-        reply_markup=keyboard
+        text="🎯 **الخطوة الثانية: حدد المستوى القرائي المناسب لك الآن:**", parse_mode="Markdown", reply_markup=keyboard
     )
 
 async def process_radar_difficulty(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     difficulty = query.data.split(":")[1]
     context.user_data["radar_diff"] = difficulty
-    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📄 كتيب وجيز (أقل من 150 صفحة)", callback_data="rad_size:small")],
         [InlineKeyboardButton("📖 كتاب طبيعي (150 إلى 350 صفحة)", callback_data="rad_size:medium")],
         [InlineKeyboardButton("📚 مجلد كبير وثري (أكثر من 350 صفحة)", callback_data="rad_size:large")]
     ])
     await query.message.edit_text(
-        text="⏳ **الخطوة الثالثة والأخيرة: ما هو حجم الكتاب المفضل لجلسة اليوم？**\n\nهل تبحث عن كتيب سريع تنهيه في ساعة، أم مجلد ثري لرحلة طويلة؟", 
-        parse_mode="Markdown", 
-        reply_markup=keyboard
+        text="⏳ **الخطوة الثالثة والأخيرة: ما هو حجم الكتاب المفضل لجلسة اليوم؟**", parse_mode="Markdown", reply_markup=keyboard
     )
 
 async def execute_radar_search(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get("db_conn")
     cat = context.user_data.get("radar_cat", "novels")
-    
     keywords_map = {
         "novels": ["رواية", "قصة", "حكاية", "روايات", "قصص"],
         "philosophy": ["فلسفة", "علم نفس", "تحليل", "فيلسوف", "فكر"],
         "history": ["تاريخ", "سيرة", "الحضارة", "قديم", "مذكرات"],
         "business": ["مال", "استثمار", "تنمية", "نجاح", "ثراء", "إدارة"]
     }
-    
     target_keywords = keywords_map.get(cat, ["كتاب"])
-    
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT file_id, file_name FROM books
-            WHERE file_name ILIKE ANY($1)
-            ORDER BY RANDOM() LIMIT 3;
+            SELECT file_id, file_name FROM books WHERE file_name ILIKE ANY($1) ORDER BY RANDOM() LIMIT 3;
         """, [f"%{k}%" for k in target_keywords])
 
     if not rows:
         await query.message.edit_text(
-            text="⏳ **تنويه:** يقوم الرادار الآن بترتيب وفهرسة كتب جديدة في هذا القسم المحدد، يرجى تجربة خيارات أخرى أو استخدام محرك البحث النصي المباشر.", 
+            text="⏳ **تنويه:** يقوم الرادار الآن بترتيب وفهرسة كتب جديدة في هذا القسم المحدد.", 
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")]])
         )
         return
 
     response_text = "💡 **إليك 3 اقتراحات من الرادار تم اختيارها بعناية بناءً على خياراتك:**\n\n"
     keyboard_buttons = []
-    
     for i, row in enumerate(rows, 1):
         response_text += f"{i}️⃣ `{row['file_name']}`\n\n"
         keyboard_buttons.append([InlineKeyboardButton(f"📥 تحميل الترشيح رقم {i}", callback_data=f"dl:{row['file_id']}")])
-    
-    keyboard_buttons.append([
-        InlineKeyboardButton("🔄 تعديل المعايير", callback_data="radar_menu"), 
-        InlineKeyboardButton("🔙 اللوحة الرئيسية", callback_data="back_to_main")
-    ])
-    
-    await query.message.edit_text(
-        text=response_text, 
-        parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(keyboard_buttons)
-    )
+    keyboard_buttons.append([InlineKeyboardButton("🔄 تعديل المعايير", callback_data="radar_menu"), InlineKeyboardButton("🔙 اللوحة الرئيسية", callback_data="back_to_main")])
+    await query.message.edit_text(text=response_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard_buttons))
 
 # =====================================================================
-# نظام الفهارس الشاملة المفصلة (عربي وإنجليزي) لتسهيل تصفح الأقسام
+# نظام الفهارس الشاملة المفصلة (عربي وإنجليزي)
 # =====================================================================
 async def show_index_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -470,34 +390,22 @@ async def show_index_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 قسم الفكر المالي والتطوير", callback_data="idx:economy"), InlineKeyboardButton("🧬 قسم العلوم العامة والطب", callback_data="idx:science")],
         [InlineKeyboardButton("🔙 العودة إلى اللوحة الرئيسية", callback_data="back_to_main")]
     ])
-    await query.message.edit_text(
-        text="📂 **فهرس وأقسام المكتبة العربية الشاملة:**\n\nمرحباً بك في الأرشيف المبوب، يرجى الضغط على القسم الذي ترغب في استعراض أحدث الكتب المضافة إليه تلقائياً للتحميل المباشر:", 
-        parse_mode="Markdown", 
-        reply_markup=keyboard
-    )
+    await query.message.edit_text(text="📂 **فهرس وأقسام المكتبة العربية الشاملة:**", parse_mode="Markdown", reply_markup=keyboard)
 
 async def handle_index_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     category = query.data.split(":")[1]
     pool = context.bot_data.get("db_conn")
-    
     cat_keywords = {
-        "novels": ["رواية", "قصص", "ديوان"], 
-        "islamic": ["فقه", "تفسير", "القرآن", "سيرة", "حديث"],
-        "economy": ["اقتصاد", "إدارة", "تسويق", "مال"], 
-        "science": ["طب", "فيزياء", "كيمياء", "رياضيات", "علم"]
+        "novels": ["رواية", "قصص", "ديوان"], "islamic": ["فقه", "تفسير", "القرآن", "سيرة", "حديث"],
+        "economy": ["اقتصاد", "إدارة", "تسويق", "مال"], "science": ["طب", "فيزياء", "كيمياء", "رياضيات", "علم"]
     }
-    
     keywords = cat_keywords.get(category, ["كتاب"])
     async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT file_id, file_name FROM books
-            WHERE file_name ILIKE ANY($1)
-            ORDER BY id DESC LIMIT 5;
-        """, [f"%{k}%" for k in keywords])
+        rows = await conn.fetch("SELECT file_id, file_name FROM books WHERE file_name ILIKE ANY($1) ORDER BY id DESC LIMIT 5;", [f"%{k}%" for k in keywords])
 
     if not rows:
-        await query.answer("🧐 هذا القسم يخضع للتنظيم والفهرسة الحالية، جرب قسماً آخر.", show_alert=True)
+        await query.answer("🧐 هذا القسم يخضع للتنظيم والفهرسة الحالية.", show_alert=True)
         return
 
     text = f"📂 **إليك أحدث 5 وثائق ومصادر متوفرة في هذا القسم الآن:**\n\n"
@@ -506,7 +414,6 @@ async def handle_index_selection(update: Update, context: ContextTypes.DEFAULT_T
         text += f"{i}️⃣ `{r['file_name']}`\n\n"
         buttons.append([InlineKeyboardButton(f"📥 تحميل هذا الكتاب {i}", callback_data=f"dl:{r['file_id']}")])
     buttons.append([InlineKeyboardButton("🔙 العودة إلى الفهارس", callback_data="show_index")])
-    
     await query.message.edit_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def show_english_index_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -515,101 +422,74 @@ async def show_english_index_menu(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("📚 Fiction & English Stories", callback_data="eng_idx:fiction"), InlineKeyboardButton("🧠 Mindset & Development", callback_data="eng_idx:selfhelp")],
         [InlineKeyboardButton("💻 Coding & Technology Books", callback_data="eng_idx:tech"), InlineKeyboardButton("🔙 Back To Main Menu", callback_data="back_to_main")]
     ])
-    await query.message.edit_text(
-        text="🇬🇧 **English Books Section / الفهرس الإنجليزي والأكاديمي:**\n\nPlease choose your category to display recently uploaded international books:\n\nيرجى اختيار القسم لعرض أحدث الكتب والوثائق الأجنبية المضافة حديثاً:", 
-        parse_mode="Markdown", 
-        reply_markup=keyboard
-    )
+    await query.message.edit_text(text="🇬🇧 **English Books Section / الفهرس الإنجليزي والأكاديمي:**", parse_mode="Markdown", reply_markup=keyboard)
 
 async def handle_english_index_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     category = query.data.split(":")[1]
     pool = context.bot_data.get("db_conn")
-    
     eng_keywords = {
-        "fiction": ["novel", "fiction", "stories", "drama"], 
-        "selfhelp": ["mind", "habit", "power", "rich", "success", "think"], 
-        "tech": ["python", "code", "programming", "data", "learn", "ai"]
+        "fiction": ["novel", "fiction", "stories", "drama"], "selfhelp": ["mind", "habit", "power", "rich", "success", "think"], "tech": ["python", "code", "programming", "data", "learn", "ai"]
     }
     keywords = eng_keywords.get(category, ["book"])
-    
     async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT file_id, file_name FROM books
-            WHERE file_name ILIKE ANY($1)
-            ORDER BY id DESC LIMIT 5;
-        """, [f"%{k}%" for k in keywords])
+        rows = await conn.fetch("SELECT file_id, file_name FROM books WHERE file_name ILIKE ANY($1) ORDER BY id DESC LIMIT 5;", [f"%{k}%" for k in keywords])
 
     if not rows:
-        await query.answer("🧐 No English books are found in this section yet.", show_alert=True)
+        await query.answer("🧐 No English books are found here yet.", show_alert=True)
         return
 
-    text = f"🇬🇧 **Latest uploaded English Books in this section:**\n\n"
+    text = f"🇬🇧 **Latest uploaded English Books:**\n\n"
     buttons = []
     for i, r in enumerate(rows, 1):
         text += f"{i}️⃣ `{r['file_name']}`\n\n"
         buttons.append([InlineKeyboardButton(f"📥 Download Book {i}", callback_data=f"dl:{r['file_id']}")])
     buttons.append([InlineKeyboardButton("🔙 Back to English Index", callback_data="show_english_index")])
-    
     await query.message.edit_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
 
 # =====================================================================
-# نظام العضويات، الإحالات، والتسجيل الآمن
+# نظام العضويات والتسجيل الآمن
 # =====================================================================
 async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get("db_conn")
     if not pool or not update.effective_user: 
         return
-
     user_id = update.effective_user.id
     async with pool.acquire() as conn:
         existing_user = await conn.fetchval("SELECT user_id FROM users WHERE user_id = $1", user_id)
         if not existing_user:
             await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING", user_id)
-            
             if context.args and context.args[0].startswith("inv_"):
                 try: 
                     inviter_id = int(context.args[0].split("_")[1])
                     if inviter_id != user_id:
                         await conn.execute("UPDATE users SET search_credits = search_credits + 10, referral_count = referral_count + 1 WHERE user_id = $1", inviter_id)
-                        await context.bot.send_message(
-                            chat_id=inviter_id,
-                            text="🎉 **خبر سار وهدية لك!**\n\nلقد دخل صديق جديد إلى البوت باستخدام رابط الدعوة الخاص بك الموزع. تم إضافة **10 محاولات تحميل إضافية مجانية** إلى رصيد حسابك فوراً شكراً لك!",
-                            parse_mode="Markdown"
-                        )
-                except Exception as e: 
-                    logger.error(f"فشلت مكافأة الإحالة للحساب: {e}")
+                        await context.bot.send_message(chat_id=inviter_id, text="🎉 **عضو جديد دخل عبر رابط إحالتك! تم إضافة 10 محاولات لحسابك.**")
+                except Exception as e: logger.error(f"فشلت مكافأة الإحالة: {e}")
 
 async def welcome_bot_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_member = update.chat_member or update.my_chat_member
-    if not chat_member or chat_member.chat.type not in ("group", "supergroup"): 
-        return
+    if not chat_member or chat_member.chat.type not in ("group", "supergroup"): return
     if chat_member.new_chat_member.user.id == context.bot.id and chat_member.new_chat_member.status in ("member", "administrator"):
-        group_name = chat_member.chat.title or "المجموعة"
-        welcome_text = f"🏛️ **أهلاً وسهلاً بكم في واحة المعرفة داخل جروب ( {group_name} )!**\n\nتم تفعيل ميزة البحث السريع عن الكتب داخل هذا الجروب بنجاح.\n\n📌 **طريقة البحث والاستخدام هنا:**\nاكتب فقط الأمر المباشر ويليه اسم الكتاب أو الرواية بالشكل التالي:\n`/search اسم الكتاب المراد قراءته`"
-        try: 
-            await context.bot.send_message(chat_id=chat_member.chat.id, text=welcome_text, parse_mode="Markdown")
-        except: 
-            pass
+        welcome_text = f"🏛️ **أهلاً وسهلاً بكم في واحة المعرفة!**\n\n📌 **طريقة البحث والاستخدام هنا:**\n`/search اسم الكتاب`"
+        try: await context.bot.send_message(chat_id=chat_member.chat.id, text=welcome_text, parse_mode="Markdown")
+        except: pass
 
 # =====================================================================
-# إدارة الأزرار التفاعلية وتحميل الملفات الفوري (Callback Queries)
+# إدارة الأزرار التفاعلية (Callback Queries)
 # =====================================================================
 async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     u_id = query.from_user.id
     
     if context.application.user_data and dict(context.application.user_data).get(u_id, {}).get("is_banned"):
-        try: 
-            await query.answer("❌ عذراً، حسابك الحالي تم حظره من قبل الإدارة لمخالفة الشروط.", show_alert=True)
-        except: 
-            pass
+        try: await query.answer("❌ حسابك محظور من الإدارة.", show_alert=True)
+        except: pass
         return
 
-    try:
-        await query.answer()
+    try: await query.answer()
     except Exception as e:
-        logger.warning(f"⚠️ انتهت صلاحية ضغطة زر التليجرام أو تم تجاهلها: {e}")
+        logger.warning(f"⚠️ انتهت صلاحية ضغطة الزر: {e}")
         return
 
     if query.data == "show_index":
@@ -628,7 +508,6 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await process_radar_difficulty(query, context)
     elif query.data.startswith("rad_size:"):
         await execute_radar_search(query, context)
-        
     elif query.data.startswith("dl:"):
         file_id = query.data.split(":")[1]
         try:
@@ -637,26 +516,14 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 async with pool.acquire() as conn:
                     await conn.execute("UPDATE stats SET value = value + 1 WHERE key = 'total_downloads';")
             except: pass
-            
-            await query.message.reply_document(
-                document=file_id, 
-                caption="⚜️ **تم جلب وتجهيز كتابك بنجاح من الأرشيف الرقمي.**\n\nنتمنى لك قراءة ممتعة ووصفة فكرية نافعة!"
-            )
+            await query.message.reply_document(document=file_id, caption="⚜️ **تم جلب كتابك بنجاح من الأرشيف.**")
         except Exception as e:
-            logger.error(f"خطأ أثناء إرسال وتحميل الملف للمستخدم {u_id}: {e}")
-            await query.message.reply_text(
-                text="❌ **معذرة:** تعذر إرسال هذا الملف حالياً، قد يكون الملف قد تم حذفه من خوادم تليجرام الرئيسية.", 
-                parse_mode="Markdown"
-            )
-            
+            logger.error(f"خطأ تحميل الملف: {e}")
+            await query.message.reply_text(text="❌ **معذرة:** تعذر إرسال هذا الملف، قد يكون محذوفاً من خوادم تليجرام.", parse_mode="Markdown")
     elif query.data == "show_advertising_info":
-        adv_text = "📢 **قسم الإعلانات والتبادل والخدمات الرقمية:**\n\nلدعم استمرارية السيرفرات ودفع نفقات حوض البيانات، نفتح باب التبادل الإعلاني.\n\n📩 **للتواصل المباشر مع إدارة المنصة الرسمية:** @UUUULU"
-        await query.message.reply_text(text=adv_text, parse_mode="Markdown")
-        
+        await query.message.reply_text(text="📢 **قسم الإعلانات والتبادل:**\n\n📩 للتواصل مع الإدارة: @UUUULU", parse_mode="Markdown")
     elif query.data == "buy_premium":
-        text = "⭐ **باقات العضوية المميزة المريحة (Premium) لرواد المعرفة:**\n\n• ⚡ **سرعة البرق:** الأولوية القصوى للسيرفر في معالجة طلباتك.\n• 🚫 **تخطي تام ومطلق:** تصفح وابحث وحمل دون الحاجة للاشتراك بأي قنوات إجبارية نهائياً.\n• 📥 **تحميل بلا حدود:** إلغاء أي قيود على عدد الكتب المسموح بها.\n\n📩 **للاشتراك الفوري والآمن راسل الإدارة عبر المعرف:** @UUUULU"
-        await query.message.reply_text(text=text, parse_mode="Markdown")
-        
+        await query.message.reply_text(text="⭐ **باقات البريميوم:** تخطي القنوات الإجبارية نهائياً وبلا حدود تحميل.\n\n📩 للاشتراك: @UUUULU", parse_mode="Markdown")
     elif query.data in ("back_to_main", "check_subscription"):
         if await check_subscription(query.from_user.id, context.bot):
             keyboard = InlineKeyboardMarkup([
@@ -666,9 +533,8 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 [InlineKeyboardButton("📢 قسم الإعلانات والتبادل التجاري", callback_data="show_advertising_info")]
             ])
             await query.message.edit_text(
-                text="🏛️ **مرحباً بك في القائمة الرئيسية لـ مكتبة الكتب الرقمية العظمى**\n\nتم التحقق من حسابك بنجاح والنظام مفتوح بالكامل بين يديك الآن مجاناً لفحص وتحميل أكثر من نصف مليون كتاب وثيقة فكرية وأدبية وثقافية.\n\n✍️ **طريقة الاستخدام السهلة (لكل العقول):**\nاكتب اسم الكتاب مباشرة هنا للبوت وسيتم جلب رابط التحميل الخاطف فورا.",
-                parse_mode="Markdown", 
-                reply_markup=keyboard
+                text="🏛️ **مرحباً بك في القائمة الرئيسية لـ مكتبة الكتب الرقمية العظمى**\n\nتم التحقق من حسابك بنجاح. اكتب اسم الكتاب مباشرة هنا في الشات وسيقوم المحرك بجلبه لك فورا.",
+                parse_mode="Markdown", reply_markup=keyboard
             )
         else:
             link = await get_channel_invite_link(context.bot)
@@ -676,22 +542,15 @@ async def handle_start_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 [InlineKeyboardButton("📢 اضغط هنا أولاً للاشتراك في القناة الرسمية", url=link)],
                 [InlineKeyboardButton("🔄 اضغط هنا لتفعيل الحساب بعد الاشتراك مباشرة", callback_data="check_subscription")]
             ])
-            await query.message.reply_text(
-                text="🚫 **تنبيه هام - يجب إكمال الاشتراك لتفعيل الخدمة:**\n\nعذراً، يتطلب النظام تفعيل اشتراكك في قناة المكتبة الرسمية بالأسفل أولاً لحفظ واستمرارية الخدمة المجانية. يرجى الانضمام للقناة ثم اضغط على زر تفعيل الحساب.", 
-                parse_mode="Markdown", 
-                reply_markup=keyboard
-            )
+            await query.message.reply_text(text="🚫 **يجب إكمال الاشتراك أولاً لتفعيل الخدمة مجاناً.**", parse_mode="Markdown", reply_markup=keyboard)
 
 # =====================================================================
 # الترحيب البدئي، تعليمات الاستخدام الدقيقة، وحقوق الملكية الفكرية
 # =====================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user or not update.message: 
-        return
-        
-    if context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): 
-        return
-        
+    if not update.effective_user or not update.message: return
+    if context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): return
+    
     await register_user(update, context)
 
     if not await check_subscription(update.effective_user.id, context.bot):
@@ -701,11 +560,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 اضغط هنا لتفعيل الحساب فوراً بعد الاشتراك", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            text="👋 **أهلاً ومرحباً بك في منصة مكتبة الكتب الرقمية والورقية العظمى!**\n\n"
-                 "لضمان استمرارية الخوادم وتغطية النفقات السحابية المرتفعة ولتحديث قواعد البيانات بأحدث الكتب يومياً، "
-                 "يرجى الانضمام أولاً لقناة البوت الرسمية بالأسفل، ثم اضغط على زر التفعيل لتنطلق في عالم القراءة المجاني بالكامل.", 
-            parse_mode="Markdown", 
-            reply_markup=keyboard
+            text="👋 **أهلاً ومرحباً بك في منصة مكتبة الكتب الرقمية العظمى!**\n\nيرجى الانضمام أولاً لقناة البوت الرسمية بالأسفل، ثم اضغط على زر التفعيل لتنطلق في عالم القراءة المجاني بالكامل.", 
+            parse_mode="Markdown", reply_markup=keyboard
         )
         return
 
@@ -717,24 +573,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await update.message.reply_text(
-        text="🏛️ **أهلاً بك في بوابة منصة مكتبة الكتب الفكرية الشاملة**\n\n"
-             "نضع بين يديك هذا المحرك التفاعلي البسيط لمساعدتك في الحصول على أي كتاب أو رواية مجاناً.\n\n"
-             "⚖️ **رسالة احترام حقوق الملكية الفكرية وطبع النشر:**\n"
-             "جميع المواد يتم جلبها تلقائياً بالكامل من مصادر إنترنت عامة ومفتوحة. نحن نحترم ونلتزم تماماً بحقوق الطبع والنشر؛ وبناءً على ذلك، إذا كنت تملك حقاً قانونياً لمؤلف وترى أن تداوله يضرك، "
-             "يرجى مراسلتنا فوراً وبشكل ودي ومباشر عبر معرف الإدارة @UUUULU، وسيقوم فريق الصيانة بحذفه نهائياً.\n\n"
-             "🔎 **تعليمات الاستخدام المباشرة للبحث وفحص الأرشيف:**\n"
-             "كل ما عليك فعله هو **كتابة اسم الكتاب** أو **اسم المؤلف** مباشرة في رسالة نصية عادية هنا للبوت وإرسالها، وسيقوم المحرك التلقائي بالبحث وإعطائك زر التحميل الفوري.", 
-        parse_mode="Markdown", 
-        reply_markup=keyboard
+        text="🏛️ **أهلاً بك في بوابة منصة مكتبة الكتب الشاملة**\n\n⚖️ **الملكية الفكرية:** نحترم تماماً حقوق الطبع والنشر؛ إذا كنت تملك حقاً قانونياً لمؤلف وترى أن تداوله يضرك، راسلنا لحذفه فوراً عبر @UUUULU.\n\n🔎 **طريقة الاستخدام:** اكتب اسم الكتاب أو المؤلف مباشرة هنا في رسالة عادية، وسيجلب لك البوت رابط التحميل فورا.", 
+        parse_mode="Markdown", reply_markup=keyboard
     )
 
 async def search_books_with_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user or not update.message: 
-        return
-        
-    if context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): 
-        return
-        
+    if not update.effective_user or not update.message: return
+    if context.application.user_data and dict(context.application.user_data).get(update.effective_user.id, {}).get("is_banned"): return
+    
     if not await check_subscription(update.effective_user.id, context.bot):
         link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
@@ -743,23 +589,15 @@ async def search_books_with_subscription(update: Update, context: ContextTypes.D
         ])
         await update.message.reply_text(
             text="⚠️ **توقف مؤقت للنظام:** يرجى تفعيل أو تجديد اشتراكك في القناة الرسمية للمنصة المرفقة بالأسفل لتتمكن من إكمال البحث المفتوح مجاناً.", 
-            parse_mode="Markdown", 
-            reply_markup=keyboard
+            parse_mode="Markdown", reply_markup=keyboard
         )
         return
         
     await search_books(update, context)
 
-# =====================================================================
-# إدارة الصور الموفرة للأداء وموارد الاستضافة للـ VPS
-# =====================================================================
 async def handle_photo_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: 
-        return
-    await update.message.reply_text(
-        text="⚠️ **تنظيم تشغيلي مهم:**\n\nنود إعلامكم بأن البحث عن طريق إرسال صور أغلفة الكتب معطل حالياً بشكل مؤقت؛ وذلك للحفاظ على استقرار السيرفر وسرعة معالجة الملفات النصية مجاناً لجميع الباحثين.\n\n✍️ **البديل السريع المتاح:** من فضلك اكتب اسم الكتاب أو المؤلف في رسالة نصية عادية وسنوفره لك فورا وبسرعة خيالية.",
-        parse_mode="Markdown"
-    )
+    if not update.message: return
+    await update.message.reply_text(text="⚠️ **البحث الصوري معطل حالياً.** من فضلك اكتب اسم الكتاب نصياً وسنوفره لك فورا.", parse_mode="Markdown")
 
 # =====================================================================
 # دالة التشغيل والانطلاق المعمارية الرئيسية (Main Operational Function)
@@ -767,14 +605,13 @@ async def handle_photo_cover(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main():
     token = os.getenv("BOT_TOKEN")
     if not token:
-        logger.critical("🚨 خطأ فادح: لم يتم العثور على توكن البوت BOT_TOKEN في متغيرات البيئة!")
+        logger.critical("🚨 لم يتم العثور على توكن البوت BOT_TOKEN!")
         return
 
     persistence = PicklePersistence(filepath="bot_permanent_data.pickle")
     
     global app
     app = Application.builder().token(token).persistence(persistence).post_init(init_db).build()
-
     app.add_error_handler(error_handler)
 
     try:
@@ -782,21 +619,20 @@ def main():
         register_admin_handlers(app, start)
         logger.info("✅ تم دمج وتكامل معالجات لوحة تحكم المسؤولين والأدمن بنجاح.")
     except Exception as e:
-        logger.warning(f"⚠️ تحذير: لم يتم العثور على حزمة admin_panel أو تعذر تحميلها: {e}")
+        logger.warning(f"⚠️ تحذير: لم يتم العثور على حزمة admin_panel: {e}")
 
-    # تسجيل الحواضن والمعالجات الأساسية للبوت
+    # تسجيل الحواضن والمعالجات الأساسية للبوت بترتيب منطقي يمنع الحجب
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    
-    # فلاتر معالجة النصوص والصور لضمان استلام طلبات البحث العادية دون تجميد
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, handle_photo_cover))
+    
+    # التقاط الرسائل النصية المباشرة في الخاص وتوجيهها للمحرك فوراً
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    logger.info("🚀 نظام مكتبة الكتب الرقمية الشاملة يعمل الآن بكامل طاقته المعمارية وبدأ في استقبال طلبات المستخدمين الفورية...")
-    
+    logger.info("🚀 نظام مكتبة الكتب الرقمية الشاملة يعمل الآن بكامل طاقته...")
     app.run_polling()
 
 if __name__ == "__main__":
