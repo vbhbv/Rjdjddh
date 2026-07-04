@@ -2,7 +2,3 @@ python-telegram-bot
 asyncpg
 python-dotenv
 pypdf
-opencv-python-headless
-easyocr
-rapidfuzz
-numpy
