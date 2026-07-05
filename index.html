@@ -3,432 +3,560 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>مكتبة المعرفة الذكية</title>
+    <title>منصة المعرفة الرقمية - النسخة الإنتاجية المستقرة</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --bg-color: #0b0f19;
-            --card-bg: rgba(22, 30, 49, 0.75);
-            --text-color: #f1f5f9;
-            --hint-color: #64748b;
-            --primary-gradient: linear-gradient(135deg, #0ea5e9, #2563eb);
-            --accent-gradient: linear-gradient(135deg, #f59e0b, #d97706);
-            --border-color: rgba(255, 255, 255, 0.06);
+            --bg-main: #0d1117;
+            --bg-card: #161b22;
+            --bg-input: #21262d;
+            --border-color: #30363d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #2ea44f;
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            -webkit-tap-highlight-color: transparent;
-        }
-
+        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
         body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            padding: 16px;
-            min-height: 100vh;
-            overflow-x: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-main); color: var(--text-main); padding: 16px; min-height: 100vh;
         }
 
-        /* خلفية نيون زجاجية خفيفة علوية */
-        body::before {
-            content: '';
-            position: fixed;
-            top: -10%;
-            left: -20%;
-            width: 60%;
-            height: 50%;
-            background: radial-gradient(circle, rgba(14, 165, 233, 0.15) 0%, transparent 70%);
-            z-index: -1;
-            pointer-events: none;
-        }
+        .app-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
+        .app-header i { font-size: 24px; color: var(--accent-blue); }
+        .app-header h1 { font-size: 18px; font-weight: 700; color: #f0f6fc; }
 
-        /* هيدر المنظومة الزجاجي الفاخر */
-        .glass-header {
-            background: var(--card-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--border-color);
-            padding: 22px;
-            border-radius: 24px;
-            text-align: center;
-            margin-bottom: 20px;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+        .search-box { position: relative; margin-bottom: 20px; }
+        .search-input {
+            width: 100%; padding: 14px 44px 14px 16px; background-color: var(--bg-input);
+            border: 1px solid var(--border-color); border-radius: 10px; color: #f0f6fc; font-size: 14.5px; outline: none;
         }
+        .search-input:focus { border-color: var(--accent-blue); }
+        .search-box i { position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--text-muted); }
 
-        .glass-header h1 {
-            font-size: 24px;
-            font-weight: 800;
-            background: linear-gradient(to left, #38bdf8, #fbbf24);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 6px;
-            letter-spacing: -0.5px;
+        .chips-container { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 24px; }
+        .chips-container::-webkit-scrollbar { display: none; }
+        .category-chip {
+            background-color: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-main);
+            padding: 6px 14px; border-radius: 20px; font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer;
         }
+        .category-chip.active { background-color: var(--accent-blue); border-color: var(--accent-blue); color: #0d1117; }
 
-        .glass-header p {
-            color: var(--hint-color);
-            font-size: 13px;
-            font-weight: 500;
-        }
+        .section-wrapper { margin-bottom: 28px; }
+        .section-header { font-size: 14px; font-weight: 600; color: #f0f6fc; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
 
-        /* شريط البحث الذكي */
-        .search-wrapper {
-            position: relative;
-            margin-bottom: 20px;
-        }
-
-        .search-bar {
-            width: 100%;
-            padding: 16px 48px 16px 16px;
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 18px;
-            color: #fff;
-            font-size: 15px;
-            font-weight: 500;
-            outline: none;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-        }
-
-        .search-bar:focus {
-            border-color: #0ea5e9;
-            box-shadow: 0 0 20px rgba(14, 165, 233, 0.25);
-            background: rgba(22, 30, 49, 0.9);
-        }
-
-        .search-wrapper i {
-            position: absolute;
-            top: 50%;
-            right: 18px;
-            transform: translateY(-50%);
-            color: var(--hint-color);
-            font-size: 18px;
-            transition: color 0.3s;
-        }
-
-        .search-bar:focus + i {
-            color: #0ea5e9;
-        }
-
-        /* العناوين الجانبية للأقسام */
-        .section-title {
-            font-size: 15px;
-            font-weight: 700;
-            margin: 16px 4px 12px 0;
-            color: #38bdf8;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            letter-spacing: -0.2px;
-        }
-
-        /* شبكة الفهارس التفاعلية للبوت */
-        .features-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-
-        .feature-item {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 18px;
-            padding: 16px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-
-        .feature-item:active {
-            transform: scale(0.96);
-            background: rgba(30, 41, 59, 0.5);
-        }
-
-        .feature-item span {
-            font-size: 13px;
-            font-weight: 600;
-        }
-
-        .feature-item i { font-size: 22px; }
-        .feature-item.blue i { color: #38bdf8; }
-        .feature-item.purple i { color: #c084fc; }
-        .feature-item.red i { color: #f87171; }
-        .feature-item.gold { border-color: rgba(245, 158, 11, 0.3); }
-        .feature-item.gold i { color: #fbbf24; }
-
-        /* منطقة النتائج والبطاقات */
-        .results-container {
-            min-height: 120px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .book-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            padding: 14px 16px;
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            animation: cardAppear 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-
-        .book-meta {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            overflow: hidden;
-            flex-grow: 1;
-        }
-
-        .book-meta i {
-            color: #ef4444;
-            font-size: 20px;
-            flex-shrink: 0;
-        }
-
-        .book-title {
-            font-size: 13.5px;
-            font-weight: 600;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            line-height: 1.4;
-        }
+        .books-list { display: flex; flex-direction: column; gap: 10px; }
         
-        .action-btn {
-            background: var(--primary-gradient);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 700;
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: all 0.2s ease;
-            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
+        .book-card {
+            background-color: var(--bg-card); border: 1px solid var(--border-color);
+            padding: 12px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            height: 72px;
+        }
+        .book-info-block { display: flex; align-items: center; gap: 12px; overflow: hidden; flex-grow: 1; }
+        .book-cover-placeholder {
+            width: 42px; height: 56px; background-color: var(--bg-input); border: 1px solid var(--border-color);
+            border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .book-text { display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+        .book-title { font-size: 13.5px; font-weight: 600; color: #f0f6fc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .book-meta-data { font-size: 11.5px; color: var(--text-muted); }
+
+        .btn-action {
+            background-color: var(--bg-input); color: var(--accent-blue); border: 1px solid var(--border-color);
+            padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+        }
+        .btn-action.loading { opacity: 0.6; cursor: not-allowed; }
+        .btn-action.success { background-color: var(--accent-green) !important; border-color: var(--accent-green) !important; color: #ffffff !important; }
+
+        .skeleton-row {
+            background-color: var(--bg-card); border: 1px solid var(--border-color); height: 72px; border-radius: 12px;
+            animation: shimmer 1.5s infinite linear; background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-input) 50%, var(--bg-card) 75%); background-size: 200% 100%;
         }
 
-        .action-btn:disabled {
-            opacity: 0.7;
-            cursor: not-allowed;
-        }
+        .empty-state { display: none; text-align: center; padding: 40px 16px; color: var(--text-muted); }
+        .clear-search-btn { background: none; border: 1px solid var(--border-color); color: var(--text-main); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-top: 8px; }
+        .offline-badge { background-color: #7a2e2e; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-size: 11px; display: none; margin-right: auto; }
 
-        /* شاشة جاري التحميل المتحركة */
-        .loader {
-            display: none;
-            text-align: center;
-            padding: 30px 10px;
-            color: var(--hint-color);
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        .loader i {
-            margin-bottom: 8px;
-            font-size: 20px;
-            color: #38bdf8;
-        }
-
-        @keyframes cardAppear {
-            from { opacity: 0; transform: translateY(12px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     </style>
 </head>
 <body>
 
-    <div class="glass-header">
-        <h1>مكتبة المعرفة الذكية</h1>
-        <p>البحث الفوري الشامل في 1.5 مليون كتاب ومصدر رقمي</p>
+    <div class="app-header">
+        <i class="fa-solid fa-book-bookmark" aria-hidden="true"></i>
+        <h1>منصة المعرفة الرقمية</h1>
+        <span id="offlineBadge" class="offline-badge">وضع أوفلاين (بيانات مؤرشفة)</span>
     </div>
 
-    <div class="search-wrapper">
-        <input type="text" id="dbSearch" class="search-bar" placeholder="اكتب اسم الكتاب أو جزءاً منه هنا..." oninput="liveSearch()">
-        <i class="fa-solid fa-magnifying-glass"></i>
+    <div class="search-box">
+        <input type="text" id="dbSearch" class="search-input" placeholder="ابحث في 1.5 مليون كتاب ومصدر رقمي..." aria-label="مربع البحث عن الكتب">
+        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
     </div>
 
-    <div class="section-title"><i class="fa-solid fa-compass"></i> فهارس وتصنيفات المكتبة</div>
-    <div class="features-grid">
-        <div class="feature-item blue" onclick="triggerBotMenu('show_index')">
-            <i class="fa-solid fa-book"></i>
-            <span>المكتبة العربية</span>
-        </div>
-        <div class="feature-item purple" onclick="triggerBotMenu('show_english_index')">
-            <i class="fa-solid fa-language"></i>
-            <span>English Books</span>
-        </div>
-        <div class="feature-item red" onclick="loadTrendingDynamic()">
-            <i class="fa-solid fa-fire"></i>
-            <span>الأكثر تحميلاً</span>
-        </div>
-        <div class="feature-item gold" onclick="triggerBotMenu('buy_premium')">
-            <i class="fa-solid fa-crown"></i>
-            <span>عضوية البريميوم</span>
-        </div>
+    <div class="chips-container" id="categoriesContainer" role="tablist" aria-label="التصنيفات المتاحة">
+        <div class="category-chip active" data-category="all" role="tab" aria-selected="true" tabindex="0">اكتشف الإضافات</div>
     </div>
 
-    <div class="section-title" id="boxTitle"><i class="fa-solid fa-star"></i> الإصدارات الرائجة المقترحة</div>
-    
-    <div class="loader" id="searchLoader">
-        <i class="fa-solid fa-circle-notch fa-spin"></i>
-        <div>جاري فحص الرفوف الرقمية...</div>
+    <div class="section-wrapper" id="recommendationSection" style="display: none;">
+        <div class="section-header"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> مقترحات مخصصة لاهتمامك الفكري</div>
+        <div class="books-list" id="recommendationArea"></div>
     </div>
-    
-    <div class="results-container" id="displayArea">
+
+    <div class="section-wrapper" id="mainSection">
+        <div class="section-header" id="sectionTitle">الإصدارات الأكثر رواجاً هذا الأسبوع</div>
+        
+        <div id="skeletonLoader" style="display: none; flex-direction: column; gap: 10px;">
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
         </div>
+
+        <div class="empty-state" id="emptyStateView" role="alert">
+            <i class="fa-solid fa-box-open" aria-hidden="true"></i>
+            <p>لم نجد نتائج مطابقة لعنوان بحثك الفوري.</p>
+            <button class="clear-search-btn" id="clearSearchBtn">مسح مرشح البحث</button>
+        </div>
+        
+        <div class="books-list" id="displayArea"></div>
+        <div id="infiniteScrollSentinel" style="height: 10px;"></div>
+    </div>
+
+    <div class="section-wrapper" id="historySection" style="display: none;">
+        <div class="section-header"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> آخر التنزيلات الرقمية المتزامنة</div>
+        <div class="books-list" id="historyArea"></div>
+    </div>
 
     <script>
-        const tg = window.Telegram.WebApp;
-        tg.ready();
-        tg.expand();
-
-        // جلب الكتب الرائجة فور فتح الواجهة تلقائياً
-        window.onload = function() {
-            loadTrendingDynamic();
-        };
-
-        // دالة جلب التريندات الأسبوعية من السيرفر
-        async function loadTrendingDynamic() {
-            document.getElementById("boxTitle").innerHTML = `<i class="fa-solid fa-fire" style="color: #f87171;"></i> الكتب الأكثر تحميلاً هذا الأسبوع`;
-            const area = document.getElementById("displayArea");
-            const loader = document.getElementById("searchLoader");
-            
-            area.innerHTML = "";
-            loader.style.display = "block";
-
-            try {
-                const response = await fetch('/api/trending');
-                const data = await response.json();
-                loader.style.display = "none";
-
-                if (data.success && data.results.length > 0) {
-                    data.results.forEach(book => {
-                        area.innerHTML += createBookCard(book.file_name, book.file_id);
-                    });
-                } else {
-                    area.innerHTML = "<p style='text-align:center; padding:20px; color:var(--hint-color); font-size:13px;'>لا توجد ملفات رائجة حالياً.</p>";
-                }
-            } catch (error) {
-                loader.style.display = "none";
-                area.innerHTML = "<p style='text-align:center; padding:20px; color:#f87171; font-size:13px;'>فشل الاتصال بمحرك البحث السريع.</p>";
+        // =========================================================================
+        // 1. طبقة الـ Telemetry & Trace Context المتقدمة
+        // =========================================================================
+        class TraceContext {
+            constructor(userId = "0") {
+                this.userId = userId;
+                this.traceId = `tr-${Math.random().toString(36).substr(2, 9)}`;
+                this.sessionId = `ss-${Math.random().toString(36).substr(2, 9)}`;
+            }
+            createChildContext(requestId) {
+                return { userId: this.userId, traceId: this.traceId, sessionId: this.sessionId, requestId };
             }
         }
 
-        // البحث الفوري التفاعلي
-        let debounceTimer;
-        function liveSearch() {
-            clearTimeout(debounceTimer);
-            const query = document.getElementById("dbSearch").value.trim();
-            
-            if (query.length < 2) {
-                if (query.length === 0) loadTrendingDynamic();
-                return;
+        class ConsoleTelemetry {
+            logError(context, error, traceCtx = null) {
+                console.error(`[TELEMETRY][ERROR][${context}]`, { msg: error.message, traceCtx });
+            }
+            logMetric(name, durationMs, metadata = {}, traceCtx = null) {
+                console.log(`[TELEMETRY][METRIC] ${name} -> ${durationMs.toFixed(2)}ms`, { metadata, traceCtx });
+            }
+        }
+        const telemetry = new ConsoleTelemetry();
+        const globalTrace = new TraceContext();
+
+        // =========================================================================
+        // 2. طبقة الـ HttpClient المجرّدة (The Core Network Engine)
+        // =========================================================================
+        class CircuitBreaker {
+            constructor(threshold = 3, cooldown = 10000) {
+                this.threshold = threshold; this.cooldown = cooldown;
+                this.state = 'CLOSED'; this.failures = 0; this.nextAttempt = 0;
+            }
+            canExecute() {
+                if (this.state === 'OPEN' && Date.now() > this.nextAttempt) { this.state = 'HALF-OPEN'; return true; }
+                return this.state !== 'OPEN';
+            }
+            success() { this.failures = 0; this.state = 'CLOSED'; }
+            failure() {
+                this.failures++;
+                if (this.failures >= this.threshold) {
+                    this.state = 'OPEN'; this.nextAttempt = Date.now() + this.cooldown;
+                }
+            }
+        }
+
+        class HttpClient {
+            constructor() {
+                this.breakers = new Map(); // Per-Endpoint Circuit Breakers
             }
 
-            debounceTimer = setTimeout(async () => {
-                document.getElementById("boxTitle").innerHTML = `<i class="fa-solid fa-magnifying-glass"></i> نتائج البحث المطابقة`;
-                const area = document.getElementById("displayArea");
-                const loader = document.getElementById("searchLoader");
-                
-                area.innerHTML = "";
-                loader.style.display = "block";
+            getBreaker(endpoint) {
+                const urlPath = new URL(endpoint, window.location.origin).pathname;
+                if (!this.breakers.has(urlPath)) this.breakers.set(urlPath, new CircuitBreaker());
+                return this.breakers.get(urlPath);
+            }
+
+            async request(url, options = {}, retries = 3, delay = 200) {
+                const breaker = this.getBreaker(url);
+                if (!breaker.canExecute()) throw new Error(`CircuitBreaker is OPEN for ${url}`);
+
+                for (let i = 0; i < retries; i++) {
+                    const timeoutCtrl = new AbortController();
+                    let signal = timeoutCtrl.signal;
+                    if (options.signal) {
+                        if (typeof AbortSignal.any === 'function') signal = AbortSignal.any([options.signal, timeoutCtrl.signal]);
+                        else options.signal.addEventListener('abort', () => timeoutCtrl.abort());
+                    }
+
+                    const timerId = setTimeout(() => timeoutCtrl.abort(), 8000);
+
+                    try {
+                        const response = await fetch(url, { ...options, signal });
+                        if (!response.ok) {
+                            if (response.status === 429) {
+                                const retryAfter = response.headers.get("Retry-After");
+                                if (retryAfter) {
+                                    const waitSec = parseInt(retryAfter, 10) * 1000;
+                                    await new Promise(r => setTimeout(r, waitSec));
+                                    continue;
+                                }
+                            }
+                            if ([400, 401, 403, 404, 422].includes(response.status)) throw new Error(`ClientError:${response.status}`);
+                            throw new Error(`ServerError:${response.status}`);
+                        }
+                        const data = await response.json();
+                        breaker.success();
+                        return data;
+                    } catch (err) {
+                        const isAbort = err.name === 'AbortError' || options.signal?.aborted;
+                        const isClient = err.message.includes("ClientError");
+                        if (isAbort || isClient || (i === retries - 1)) {
+                            if (!isAbort) breaker.failure();
+                            throw err;
+                        }
+                        await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
+                    } finally {
+                        clearTimeout(timerId);
+                    }
+                }
+            }
+        }
+
+        // =========================================================================
+        // 3. طبقة الجدولة المتقدمة للطلبات حسب الأهمية (Priority Scheduler)
+        // =========================================================================
+        class RequestScheduler {
+            constructor(client) {
+                this.client = client;
+                this.queue = [];
+                this.running = 0;
+                this.maxConcurrent = 3;
+            }
+
+            schedule(url, options = {}, priority = 1) {
+                return new Promise((resolve, reject) => {
+                    this.queue.push({ url, options, priority, resolve, reject });
+                    this.queue.sort((a, b) => b.priority - a.priority); // الأولوية الأعلى أولاً
+                    this.processQueue();
+                });
+            }
+
+            async processQueue() {
+                if (this.running >= this.maxConcurrent || this.queue.length === 0) return;
+                this.running++;
+                const item = this.queue.shift();
 
                 try {
-                    const response = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
-                    const data = await response.json();
-                    loader.style.display = "none";
-
-                    if (data.success && data.results.length > 0) {
-                        data.results.forEach(book => {
-                            area.innerHTML += createBookCard(book.file_name, book.file_id);
-                        });
-                    } else {
-                        area.innerHTML = "<p style='text-align:center; padding:20px; color:var(--hint-color); font-size:13px;'>لم نجد نتائج مطابقة، جرب كتابة اسم آخر.</p>";
-                    }
-                } catch (error) {
-                    loader.style.display = "none";
-                    area.innerHTML = "<p style='text-align:center; padding:20px; color:#f87171; font-size:13px;'>خطأ في الاتصال بالخادم الافتراضي.</p>";
+                    const data = await this.client.request(item.url, item.options);
+                    item.resolve(data);
+                } catch (err) {
+                    item.reject(err);
+                } finally {
+                    this.running--;
+                    this.processQueue();
                 }
-            }, 300);
+            }
         }
 
-        // توليد بطاقات الكتب الرسومية
-        function createBookCard(name, fileId) {
-            const cleanName = name.replace(".pdf", "").replace(".PDF", "");
-            return `
-                <div class="book-card">
-                    <div class="book-meta">
-                        <i class="fa-solid fa-file-pdf"></i>
-                        <div class="book-title" title="${cleanName}">${cleanName}</div>
-                    </div>
-                    <button class="action-btn" onclick="downloadBookDirect('${fileId}')">تحميل 📥</button>
-                </div>
-            `;
-        }
+        const httpClient = new HttpClient();
+        const scheduler = new RequestScheduler(httpClient);
 
-        // دالة التحميل المباشر الآمنة دون إغلاق الواجهة أو الخروج
-        async function downloadBookDirect(fileId) {
-            const userId = tg.initDataUnsafe?.user?.id;
+        // =========================================================================
+        // 4. طبقة الـ Repositories (Pure Architectural Repositories)
+        // =========================================================================
+        class BookRepository {
+            constructor(sched) { this.sched = sched; }
+
+            async getTrending(trace) { return this.sched.schedule('/api/trending', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+            async getRecommendations(userId, trace) { return this.sched.schedule(`/api/recommendations?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+            async getCategories(trace) { return this.sched.schedule('/api/categories', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+            async getHistory(userId, trace) { return this.sched.schedule(`/api/history?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
             
-            if (!userId) {
-                alert("عذراً، تعذر التحقق من هوية حسابك الحالي داخل تيليجرام.");
-                return;
+            async search(query, cursor, limit, filters, signal, trace) {
+                // منع التصادم المعماري عبر تجميع كافة المعايير الحركية في بناء مفتاح التوحيد
+                const filterKey = btoa(JSON.stringify(filters || {}));
+                const url = `/api/search?query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}&limit=${limit}&filters=${filterKey}`;
+                return this.sched.schedule(url, { signal, headers: { 'X-Trace-Id': trace.traceId } }, 2); // البحث أولوية أعلى
             }
 
-            // قفل الزر مؤقتاً لتفادي تكرار الضغط
-            const btn = event.target;
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> جاري إرساله...`;
+            async download(fileId, userId, trace) {
+                return this.sched.schedule(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${userId}`, {}, 3); // أولوية قصوى للتنزيل
+            }
+        }
 
-            try {
-                const response = await fetch(`/api/download?file_id=${fileId}&user_id=${userId}`);
-                const data = await response.json();
+        const bookRepo = new BookRepository(scheduler);
 
-                if (data.success) {
-                    // إظهار نافذة منبثقة من تيليجرام لتأكيد نجاح العملية دون مغادرة الواجهة
-                    tg.showPopup({
-                        title: "🚀 تم الإرسال بنجاح",
-                        message: "تم إرسال نسخة الـ PDF إلى محادثتك الشخصية مع البوت بنجاح! يمكنك الاستمرار في تصفح وتحميل المزيد من الكتب الآن.",
-                        buttons: [{type: "ok", text: "رائع"}]
-                    });
-                    btn.innerHTML = `تم الإرسال ✓`;
-                    btn.style.background = "linear-gradient(135deg, #10b981, #059669)";
-                } else {
-                    alert(data.message);
-                    btn.disabled = false;
-                    btn.innerHTML = originalText;
+        // =========================================================================
+        // 5. طبقة الخدمات المفككة والمستقلة (Decoupled Micro-Services)
+        // =========================================================================
+        class HomeService {
+            constructor(repo) {
+                this.repo = repo; this.cache = null; this.stampedePromise = null; this.ttl = 5 * 60 * 1000; this.timestamp = 0;
+            }
+            async getDashboardData(userId, trace) {
+                if (this.cache && (Date.now() - this.timestamp < this.ttl)) return { fromCache: true, results: this.cache };
+                if (this.stampedePromise) return this.stampedePromise;
+
+                this.stampedePromise = (async () => {
+                    try {
+                        const results = await Promise.allSettled([
+                            this.repo.getTrending(trace), this.repo.getRecommendations(userId, trace), this.repo.getHistory(userId, trace), this.repo.getCategories(trace)
+                        ]);
+                        this.cache = {
+                            trending: results[0].status === 'fulfilled' ? results[0].value.results : [],
+                            recommendations: results[1].status === 'fulfilled' ? results[1].value.results : [],
+                            history: results[2].status === 'fulfilled' ? results[2].value.results : [],
+                            categories: results[3].status === 'fulfilled' ? results[3].value.categories : []
+                        };
+                        this.timestamp = Date.now();
+                        // حفظ لسيناريو الأوفلاين الطارئ لتوفير مرونة الصمود
+                        localStorage.setItem("offline_home_cache", JSON.stringify(this.cache));
+                        return { fromCache: false, results: this.cache };
+                    } finally {
+                        this.stampedePromise = null; // تأمين تصفير قفل حماية الـ Stampede داخل كتلة الـ finally معصومة الخطأ
+                    }
+                })();
+                return this.stampedePromise;
+            }
+            getOfflineFallback() {
+                const raw = localStorage.getItem("offline_home_cache");
+                return raw ? JSON.parse(raw) : null;
+            }
+        }
+
+        class SearchService {
+            constructor(repo) { this.repo = repo; this.abortCtrl = null; this.activePromise = null; }
+            
+            async executeSearch(query, cursor = "", filters = {}, trace) {
+                if (this.abortCtrl) this.abortCtrl.abort();
+                this.abortCtrl = new AbortController();
+                
+                // Backpressure Handling: إسقاط وإلغاء الطلب المعلق الجاري واستبداله بـ Promise الجديد الأحدث
+                this.activePromise = this.repo.search(query, cursor, 20, filters, this.abortCtrl.signal, trace);
+                return this.activePromise;
+            }
+        }
+
+        const homeService = new HomeService(bookRepo);
+        const searchService = new SearchService(bookRepo);
+
+        // =========================================================================
+        // 6. محرك العرض وتقليم الـ DOM الذكي المتوازن (DOM Pruning View Layer)
+        // =========================================================================
+        class UIRenderer {
+            constructor(homeServ, searchServ, tg) {
+                this.homeServ = homeServ; this.searchServ = searchServ; this.tg = tg;
+                this.nextCursor = null; this.query = ""; this.isLoadedAll = false; this.isPageLoading = false;
+                this.searchDebounce = null;
+                
+                this.domElements();
+                this.bindAbsoluteEvents();
+                this.initScrollBoundaryScanner();
+            }
+
+            domElements() {
+                this.dom = {
+                    input: document.getElementById("dbSearch"),
+                    display: document.getElementById("displayArea"),
+                    recArea: document.getElementById("recommendationArea"),
+                    histArea: document.getElementById("historyArea"),
+                    histSection: document.getElementById("historySection"),
+                    loader: document.getElementById("skeletonLoader"),
+                    empty: document.getElementById("emptyStateView"),
+                    title: document.getElementById("sectionTitle"),
+                    clear: document.getElementById("clearSearchBtn"),
+                    cats: document.getElementById("categoriesContainer"),
+                    badge: document.getElementById("offlineBadge")
+                };
+            }
+
+            bindAbsoluteEvents() {
+                this.dom.input.addEventListener("input", () => this.triggerDebouncedSearch());
+                this.dom.clear.addEventListener("click", () => this.clearSearch());
+                
+                // تفويض كامل لـ Body لإلغاء الـ Listeners تماماً وحظر تسريب المستمعين
+                document.body.addEventListener("click", (e) => {
+                    const btn = e.target.closest('.btn-action');
+                    if (btn) this.fireDownload(btn);
+                    const chip = e.target.closest('.category-chip');
+                    if (chip) this.selectCategory(chip);
+                });
+            }
+
+            initScrollBoundaryScanner() {
+                // استبدال الـ Virtual Scroll المضلل بفحص حافة التمرير الاعتيادية المستقرة مع كرسر التصفح
+                window.addEventListener("scroll", () => {
+                    if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 200) {
+                        if (this.query && !this.isLoadedAll && !this.isPageLoading && this.nextCursor) {
+                            this.fetchNextSearchBatch();
+                        }
+                    }
+                });
+            }
+
+            createCard(book, tag) {
+                const node = document.createElement("div");
+                node.className = "book-card";
+                node.dataset.fileId = book.file_id; // معرف مخصص لتقليم الـ DOM لاحقاً
+                node.innerHTML = `
+                    <div class="book-info-block">
+                        <div class="book-cover-placeholder"><i class="fa-solid fa-file-pdf"></i></div>
+                        <div class="book-text">
+                            <div class="book-title" title="${book.title || book.file_name}">${book.title || book.file_name}</div>
+                            <div class="book-meta-data">امتداد: ${book.extension || 'PDF'} | تصنيف: ${tag}</div>
+                        </div>
+                    </div>
+                    <button class="btn-action" data-file-id="${book.file_id}">إرسال للشات</button>
+                `;
+                return node;
+            }
+
+            async renderDashboard() {
+                this.dom.loader.style.display = "flex";
+                const userId = this.tg.initDataUnsafe?.user?.id || 0;
+                const startTime = performance.now();
+
+                try {
+                    const data = await this.homeServ.getDashboardData(userId, globalTrace);
+                    this.dom.loader.style.display = "none";
+                    this.dom.badge.style.display = "none";
+                    this.populateHome(data.results);
+                    telemetry.logMetric("DashboardRenderTime", performance.now() - startTime, {}, globalTrace);
+                } catch (err) {
+                    this.dom.loader.style.display = "none";
+                    telemetry.logError("DashboardLoad", err, globalTrace);
+                    
+                    // استدعاء الاستراتيجية الـ Offline في حال انهيار الاتصال بالكامل
+                    const offlineData = this.homeServ.getOfflineFallback();
+                    if (offlineData) {
+                        this.dom.badge.style.display = "inline-block";
+                        this.populateHome(offlineData);
+                    }
                 }
-            } catch (error) {
-                alert("تعذر الاتصال بالخادم السحابي لإرسال الملف.");
-                btn.disabled = false;
-                btn.innerHTML = originalText;
+            }
+
+            populateHome(data) {
+                this.dom.display.replaceChildren();
+                data.trending.forEach(b => this.dom.display.appendChild(this.createCard(b, "مصلحة عامة")));
+                if (data.recommendations.length > 0) {
+                    document.getElementById("recommendationSection").style.display = "block";
+                    this.dom.recArea.replaceChildren();
+                    data.recommendations.forEach(b => this.dom.recArea.appendChild(this.createCard(b, "مقترح لك")));
+                }
+                if (data.history.length > 0) {
+                    this.dom.histSection.style.display = "block";
+                    this.dom.histArea.replaceChildren();
+                    data.history.forEach(b => this.dom.histArea.appendChild(this.createCard(b, "سجل سابق")));
+                }
+                if (this.dom.cats.children.length <= 1) {
+                    data.categories.forEach(c => {
+                        const chip = document.createElement("div");
+                        chip.className = "category-chip"; chip.textContent = c; chip.dataset.category = c;
+                        this.dom.cats.appendChild(chip);
+                    });
+                }
+            }
+
+            triggerDebouncedSearch() {
+                clearTimeout(this.searchDebounce);
+                this.query = this.dom.input.value.trim();
+                if (this.query.length < 2) { if (this.query.length === 0) this.clearSearch(); return; }
+                this.searchDebounce = setTimeout(() => this.executeSearchPipeline(), 250);
+            }
+
+            async executeSearchPipeline() {
+                this.dom.title.textContent = "نتائج الفحص الفوري والمطابقة";
+                this.dom.empty.style.display = "none";
+                this.dom.loader.style.display = "flex";
+                this.dom.display.replaceChildren();
+
+                try {
+                    const res = await this.searchServ.executeSearch(this.query, "", {}, globalTrace);
+                    this.dom.loader.style.display = "none";
+                    if (res.success && res.results.length > 0) {
+                        this.nextCursor = res.next_cursor;
+                        this.isLoadedAll = !res.next_cursor;
+                        res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
+                    } else {
+                        this.dom.empty.style.display = "block";
+                    }
+                } catch (err) {
+                    if (err.name !== "AbortError") this.dom.loader.style.display = "none";
+                }
+            }
+
+            async fetchNextSearchBatch() {
+                this.isPageLoading = true;
+                const row = document.createElement("div"); row.className = "skeleton-row";
+                this.dom.display.appendChild(row);
+
+                try {
+                    const res = await this.searchServ.executeSearch(this.query, this.nextCursor, {}, globalTrace);
+                    row.remove();
+                    if (res.success && res.results.length > 0) {
+                        this.nextCursor = res.next_cursor;
+                        this.isLoadedAll = !res.next_cursor;
+                        res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
+                        
+                        // DOM Pruning Algorithm (المعيار الهندسي للأنظمة الإنتاجية الكبرى)
+                        // عند تجاوز عناصر القائمة لـ 60 بطاقة، قم بتقليم وحذف أول 20 عنصرًا للحفاظ على ذاكرة الهاتف ثابتة
+                        if (this.dom.display.children.length > 60) {
+                            for (let i = 0; i < 20; i++) {
+                                this.dom.display.removeChild(this.dom.display.firstChild);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    row.remove();
+                } finally {
+                    this.isPageLoading = false;
+                }
+            }
+
+            async fireDownload(btn) {
+                if (btn.classList.contains("loading")) return;
+                btn.classList.add("loading"); btn.disabled = true; btn.textContent = "جاري الحجز...";
+                
+                try {
+                    const res = await bookRepo.download(btn.dataset.fileId, this.tg.initDataUnsafe?.user?.id || 0, globalTrace);
+                    if (res.success) {
+                        btn.className = "btn-action success"; btn.textContent = "تم الإرسال";
+                    } else {
+                        this.resetBtn(btn);
+                    }
+                } catch (err) {
+                    this.resetBtn(btn);
+                    telemetry.logError("DownloadAction", err, globalTrace);
+                }
+            }
+
+            resetBtn(btn) { btn.className = "btn-action"; btn.disabled = false; btn.textContent = "إرسال للشات"; }
+            selectCategory(chip) {
+                document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active'); this.dom.input.value = chip.dataset.category;
+                this.triggerDebouncedSearch();
+            }
+            clearSearch() {
+                this.dom.input.value = ""; this.query = ""; this.nextCursor = null; this.isLoadedAll = false;
+                this.dom.title.textContent = "الإصدارات الأكثر رواجاً هذا الأسبوع";
+                this.renderDashboard();
             }
         }
 
-        // إرسال أوامر القوائم الأخرى للبوت وإغلاق التطبيق
-        function triggerBotMenu(menuAction) {
-            tg.sendData(menuAction);
-            tg.close();
-        }
+        // =========================================================================
+        // 7. إقلاع النظام الشامل المغلق (System Bootstrap)
+        // =========================================================================
+        const app = new UIRenderer(homeService, searchService, window.Telegram.WebApp);
+        app.renderDashboard();
     </script>
 </body>
 </html>
