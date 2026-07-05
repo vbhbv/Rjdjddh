@@ -3,19 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>مكتبة الكتب الرقمية</title>
+    <title>مكتبة المعرفة الذكية</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --bg-color: var(--tg-theme-bg-color, #f5f7fb);
-            --text-color: var(--tg-theme-text-color, #2c3e50);
-            --hint-color: var(--tg-theme-hint-color, #7f8c8d);
-            --primary-color: var(--tg-theme-button-color, #1a5f7a);
-            --btn-text: var(--tg-theme-button-text-color, #ffffff);
-            --card-bg: var(--tg-theme-secondary-bg-color, #ffffff);
-            --accent-color: #e74c3c;
-            --gold-color: #f1c40f;
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 30, 49, 0.75);
+            --text-color: #f1f5f9;
+            --hint-color: #64748b;
+            --primary-gradient: linear-gradient(135deg, #0ea5e9, #2563eb);
+            --accent-gradient: linear-gradient(135deg, #f59e0b, #d97706);
+            --border-color: rgba(255, 255, 255, 0.06);
         }
 
         * {
@@ -26,327 +25,374 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background-color: var(--bg-color);
             color: var(--text-color);
-            padding: 15px;
-            direction: rtl;
+            padding: 16px;
+            min-height: 100vh;
             overflow-x: hidden;
         }
 
-        /* رأس الصفحة الفاخر */
-        .header {
+        /* تأثير اللمعان الزجاجي الخلفي الراق */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -10%;
+            left: -20%;
+            width: 60%;
+            height: 50%;
+            background: radial-gradient(circle, rgba(14, 165, 233, 0.15) 0%, transparent 70%);
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        /* الهيدر الزجاجي الفخم */
+        .glass-header {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            padding: 22px;
+            border-radius: 24px;
             text-align: center;
-            margin-bottom: 25px;
-            padding: 10px 0;
+            margin-bottom: 20px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
         }
 
-        .header h1 {
+        .glass-header h1 {
             font-size: 24px;
-            font-weight: 700;
-            color: var(--primary-color);
-            margin-bottom: 5px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
+            font-weight: 800;
+            background: linear-gradient(to left, #38bdf8, #fbbf24);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
         }
 
-        .header p {
+        .glass-header p {
+            color: var(--hint-color);
             font-size: 13px;
-            color: var(--hint-color);
-        }
-
-        /* صندوق البحث الذكي */
-        .search-container {
-            position: relative;
-            margin-bottom: 25px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-            border-radius: 12px;
-            overflow: hidden;
-        }
-
-        .search-input {
-            width: 100%;
-            padding: 16px 45px 16px 16px;
-            border: 2px solid transparent;
-            background-color: var(--card-bg);
-            color: var(--text-color);
-            font-size: 15px;
-            border-radius: 12px;
-            outline: none;
-            transition: all 0.3s ease;
-        }
-
-        .search-input:focus {
-            border-color: var(--primary-color);
-        }
-
-        .search-icon {
-            position: absolute;
-            top: 50%;
-            right: 15px;
-            transform: translateY(-50%);
-            color: var(--hint-color);
-            font-size: 18px;
-        }
-
-        /* العناوين والأقسام الرئيسيّة */
-        .section-title {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 15px;
-            color: var(--text-color);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            border-right: 3px solid var(--primary-color);
-            padding-right: 8px;
-        }
-
-        /* شبكة الأقسام السريعة */
-        .categories-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            margin-bottom: 25px;
-        }
-
-        .cat-card {
-            background-color: var(--card-bg);
-            padding: 15px;
-            border-radius: 12px;
-            text-align: center;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            border: 1px solid rgba(0,0,0,0.02);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-        }
-
-        .cat-card:active {
-            transform: scale(0.97);
-        }
-
-        .cat-card i {
-            font-size: 24px;
-            color: var(--primary-color);
-            margin-bottom: 8px;
-        }
-
-        .cat-card span {
-            display: block;
-            font-size: 14px;
             font-weight: 500;
         }
 
-        /* قسم الميزات الخاصة (الرادار والبريميوم) */
-        .features-container {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-bottom: 25px;
-        }
-
-        .feature-banner {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: linear-gradient(135deg, var(--primary-color), #2c3e50);
-            color: #ffffff;
-            padding: 15px 20px;
-            border-radius: 14px;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-
-        .feature-banner.premium {
-            background: linear-gradient(135deg, #d4af37, #aa7c11);
-        }
-
-        .feature-content {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-
-        .feature-content i {
-            font-size: 22px;
-        }
-
-        .feature-text h3 {
-            font-size: 15px;
-            font-weight: 600;
-            margin-bottom: 2px;
-        }
-
-        .feature-text p {
-            font-size: 11px;
-            opacity: 0.8;
-        }
-
-        /* قائمة المصادر المقترحة / الرائجة */
-        .books-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+        /* شريط البحث النيون التفاعلي */
+        .search-wrapper {
+            position: relative;
             margin-bottom: 20px;
         }
 
-        .book-item {
+        .search-bar {
+            width: 100%;
+            padding: 16px 48px 16px 16px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 18px;
+            color: #fff;
+            font-size: 15px;
+            font-weight: 500;
+            outline: none;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .search-bar:focus {
+            border-color: #0ea5e9;
+            box-shadow: 0 0 20px rgba(14, 165, 233, 0.25);
+            background: rgba(22, 30, 49, 0.9);
+        }
+
+        .search-wrapper i {
+            position: absolute;
+            top: 50%;
+            right: 18px;
+            transform: translateY(-50%);
+            color: var(--hint-color);
+            font-size: 18px;
+            transition: color 0.3s;
+        }
+
+        .search-bar:focus + i {
+            color: #0ea5e9;
+        }
+
+        /* العناوين الجانبية */
+        .section-title {
+            font-size: 15px;
+            font-weight: 700;
+            margin: 16px 4px 12px 0;
+            color: #38bdf8;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            letter-spacing: -0.2px;
+        }
+
+        /* أزرار الفهارس والأقسام */
+        .features-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .feature-item {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 18px;
+            padding: 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .feature-item:active {
+            transform: scale(0.96);
+            background: rgba(30, 41, 59, 0.5);
+        }
+
+        .feature-item span {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .feature-item i { font-size: 22px; }
+        .feature-item.blue i { color: #38bdf8; }
+        .feature-item.purple i { color: #c084fc; }
+        .feature-item.red i { color: #f87171; }
+        .feature-item.gold { border-color: rgba(245, 158, 11, 0.3); }
+        .feature-item.gold i { color: #fbbf24; }
+
+        /* منطقة النتائج والبطاقات */
+        .results-container {
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .book-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 14px 16px;
+            border-radius: 16px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            background-color: var(--card-bg);
-            padding: 12px 15px;
-            border-radius: 12px;
-            cursor: pointer;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.01);
+            gap: 12px;
+            animation: cardAppear 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         }
 
-        .book-info {
+        .book-meta {
             display: flex;
             align-items: center;
             gap: 12px;
+            overflow: hidden;
+            flex-grow: 1;
         }
 
-        .book-icon {
-            width: 40px;
-            height: 40px;
-            background-color: rgba(26, 95, 122, 0.1);
-            color: var(--primary-color);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
+        .book-meta i {
+            color: #ef4444;
+            font-size: 20px;
+            flex-shrink: 0;
         }
 
-        .book-details h4 {
-            font-size: 14px;
+        .book-title {
+            font-size: 13.5px;
             font-weight: 600;
-            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.4;
         }
-
-        .book-details p {
-            font-size: 11px;
-            color: var(--hint-color);
-        }
-
-        .download-btn {
-            background-color: var(--primary-color);
-            color: var(--btn-text);
+        
+        .action-btn {
+            background: var(--primary-gradient);
+            color: white;
             border: none;
-            padding: 8px 12px;
-            border-radius: 6px;
+            padding: 8px 16px;
+            border-radius: 12px;
             font-size: 12px;
-            font-weight: 500;
+            font-weight: 700;
             cursor: pointer;
+            flex-shrink: 0;
+            transition: opacity 0.15s;
+            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
+        }
+
+        .action-btn:active {
+            opacity: 0.85;
+        }
+
+        /* شاشة جاري التحميل المتحركة */
+        .loader {
+            display: none;
+            text-align: center;
+            padding: 30px 10px;
+            color: var(--hint-color);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .loader i {
+            margin-bottom: 8px;
+            font-size: 20px;
+            color: #38bdf8;
+        }
+
+        @keyframes cardAppear {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
         }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <h1><i class="fa-solid fa-book-open-reader"></i> مكتبة المعرفة</h1>
-        <p>البوابة الأكاديمية الأضخم للكتب والبحوث الرقمية</p>
+    <div class="glass-header">
+        <h1>مكتبة المعرفة الذكية</h1>
+        <p>البحث الفوري الشامل في 1.5 مليون كتاب ومصدر رقمي</p>
     </div>
 
-    <div class="search-container">
-        <i class="fa-solid fa-magnifying-glass search-icon"></i>
-        <input type="text" id="searchInput" class="search-input" placeholder="اكتب اسم الكتاب، المؤلف أو الكلمة المفتاحية..." onkeydown="handleSearch(event)">
+    <div class="search-wrapper">
+        <input type="text" id="dbSearch" class="search-bar" placeholder="اكتب اسم الكتاب أو جزءاً منه هنا..." oninput="liveSearch()">
+        <i class="fa-solid fa-magnifying-glass"></i>
     </div>
 
-    <div class="features-container">
-        <div class="feature-banner" onclick="sendAction('radar_menu')">
-            <div class="feature-content">
-                <i class="fa-solid fa-compass-drafting" style="color: var(--gold-color);"></i>
-                <div class="feature-text">
-                    <h3>المستشار القرائي (الرادار المعرفي)</h3>
-                    <p>دع الذكاء الاصطناعي يقترح كتابك القادم حسب مستواك</p>
-                </div>
-            </div>
-            <i class="fa-solid fa-chevron-left"></i>
-        </div>
-
-        <div class="feature-banner premium" onclick="sendAction('buy_premium')">
-            <div class="feature-content">
-                <i class="fa-solid fa-crown"></i>
-                <div class="feature-text">
-                    <h3>عضوية البريميوم الملكية</h3>
-                    <p>تحميل غير محدود، سرعة مضاعفة وبدون قنوات إجبارية</p>
-                </div>
-            </div>
-            <i class="fa-solid fa-chevron-left"></i>
-        </div>
-    </div>
-
-    <h2 class="section-title"><i class="fa-solid fa-layer-group"></i> فهارس الأقسام الرئيسية</h2>
-    <div class="categories-grid">
-        <div class="cat-card" onclick="sendAction('show_index')">
-            <i class="fa-solid fa-book-atlas"></i>
+    <div class="section-title"><i class="fa-solid fa-compass"></i> فهارس وتصنيفات المكتبة</div>
+    <div class="features-grid">
+        <div class="feature-item blue" onclick="triggerBotMenu('show_index')">
+            <i class="fa-solid fa-book"></i>
             <span>المكتبة العربية</span>
         </div>
-        <div class="cat-card" onclick="sendAction('show_english_index')">
+        <div class="feature-item purple" onclick="triggerBotMenu('show_english_index')">
             <i class="fa-solid fa-language"></i>
-            <span>English Library</span>
+            <span>English Books</span>
         </div>
-        <div class="cat-card" onclick="sendAction('idx:academic')">
-            <i class="fa-solid fa-graduation-cap"></i>
-            <span>الملفات الأكاديمية</span>
-        </div>
-        <div class="cat-card" onclick="sendAction('show_trending')">
-            <i class="fa-solid fa-fire" style="color: var(--accent-color);"></i>
+        <div class="feature-item red" onclick="loadTrendingDynamic()">
+            <i class="fa-solid fa-fire"></i>
             <span>الأكثر تحميلاً</span>
         </div>
-    </div>
-
-    <h2 class="section-title"><i class="fa-solid fa-star"></i> روائع المقترحات الحالية</h2>
-    <div class="books-list">
-        <div class="book-item" onclick="sendAction('مقدمة ابن خلدون')">
-            <div class="book-info">
-                <div class="book-icon"><i class="fa-solid fa-book"></i></div>
-                <div class="book-details">
-                    <h4>مقدمة ابن خلدون</h4>
-                    <p>علم الاجتماع والفلسفة التاريخية</p>
-                </div>
-            </div>
-            <button class="download-btn">جلب <i class="fa-solid fa-arrow-down-long"></i></button>
-        </div>
-
-        <div class="book-item" onclick="sendAction('مهزلة العقل البشري علي الوردي')">
-            <div class="book-info">
-                <div class="book-icon"><i class="fa-solid fa-book"></i></div>
-                <div class="book-details">
-                    <h4>مهزلة العقل البشري</h4>
-                    <p>الدكتور علي الوردي • تحليل اجتماعي</p>
-                </div>
-            </div>
-            <button class="download-btn">جلب <i class="fa-solid fa-arrow-down-long"></i></button>
+        <div class="feature-item gold" onclick="triggerBotMenu('buy_premium')">
+            <i class="fa-solid fa-crown"></i>
+            <span>عضوية البريميوم</span>
         </div>
     </div>
+
+    <div class="section-title" id="boxTitle"><i class="fa-solid fa-star"></i> الإصدارات الرائجة المقترحة</div>
+    
+    <div class="loader" id="searchLoader">
+        <i class="fa-solid fa-circle-notch fa-spin"></i>
+        <div>جاري فحص الرفوف الرقمية...</div>
+    </div>
+    
+    <div class="results-container" id="displayArea">
+        </div>
 
     <script>
-        // تهيئة الـ WebApp وتوسيعه لملء الشاشة بالكامل داخل تيليجرام
         const tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
 
-        // دالة إرسال الأوامر النصية أو الـ Callbacks للبوت وإغلاق الواجهة
-        function sendAction(value) {
-            if (value && value.trim().length > 0) {
-                tg.sendData(value.trim());
-                tg.close();
+        // جلب الكتب الرائجة فور فتح التطبيق
+        window.onload = function() {
+            loadTrendingDynamic();
+        };
+
+        // دالة جلب الكتب الأكثر تحميلاً ديناميكياً من السيرفر المستقل
+        async function loadTrendingDynamic() {
+            document.getElementById("boxTitle").innerHTML = `<i class="fa-solid fa-fire" style="color: #f87171;"></i> الكتب الأكثر تحميلاً هذا الأسبوع`;
+            const area = document.getElementById("displayArea");
+            const loader = document.getElementById("searchLoader");
+            
+            area.innerHTML = "";
+            loader.style.display = "block";
+
+            try {
+                const response = await fetch('/api/trending');
+                const data = await response.json();
+                loader.style.display = "none";
+
+                if (data.success && data.results.length > 0) {
+                    data.results.forEach(book => {
+                        area.innerHTML += createBookCard(book.file_name, book.file_id);
+                    });
+                } else {
+                    area.innerHTML = "<p style='text-align:center; padding:20px; color:var(--hint-color); font-size:13px;'>لا توجد ملفات رائجة حالياً.</p>";
+                }
+            } catch (error) {
+                loader.style.display = "none";
+                area.innerHTML = "<p style='text-align:center; padding:20px; color:#f87171; font-size:13px;'>فشل الاتصال بمحرك البحث السريع.</p>";
             }
         }
 
-        // دالة معالجة البحث عند الضغط على Enter في الكيبورد
-        function handleSearch(event) {
-            if (event.key === "Enter") {
-                const query = document.getElementById("searchInput").value.trim();
-                if (query.length > 0) {
-                    sendAction(query);
-                }
+        // محرك البحث الحي الفوري (Debounce لعدم الضغط على السيرفر)
+        let debounceTimer;
+        function liveSearch() {
+            clearTimeout(debounceTimer);
+            const query = document.getElementById("dbSearch").value.trim();
+            
+            if (query.length < 2) {
+                if (query.length === 0) loadTrendingDynamic();
+                return;
             }
+
+            debounceTimer = setTimeout(async () => {
+                document.getElementById("boxTitle").innerHTML = `<i class="fa-solid fa-magnifying-glass"></i> نتائج البحث المطابقة`;
+                const area = document.getElementById("displayArea");
+                const loader = document.getElementById("searchLoader");
+                
+                area.innerHTML = "";
+                loader.style.display = "block";
+
+                try {
+                    const response = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
+                    const data = await response.json();
+                    loader.style.display = "none";
+
+                    if (data.success && data.results.length > 0) {
+                        data.results.forEach(book => {
+                            area.innerHTML += createBookCard(book.file_name, book.file_id);
+                        });
+                    } else {
+                        area.innerHTML = "<p style='text-align:center; padding:20px; color:var(--hint-color); font-size:13px;'>لم نجد نتائج مطابقة، جرب كتابة اسم آخر.</p>";
+                    }
+                } catch (error) {
+                    loader.style.display = "none";
+                    area.innerHTML = "<p style='text-align:center; padding:20px; color:#f87171; font-size:13px;'>خطأ في الاتصال بالخادم الافتراضي.</p>";
+                }
+            }, 300);
+        }
+
+        // صياغة قالب بطاقة الكتاب
+        function createBookCard(name, fileId) {
+            const cleanName = name.replace(".pdf", "").replace(".PDF", "");
+            return `
+                <div class="book-card">
+                    <div class="book-meta">
+                        <i class="fa-solid fa-file-pdf"></i>
+                        <div class="book-title" title="${cleanName}">${cleanName}</div>
+                    </div>
+                    <button class="action-btn" onclick="downloadBookDirect('${fileId}')">تحميل 📥</button>
+                </div>
+            `;
+        }
+
+        // إرسال معرف الملف الحقيقي للبوت لإرساله فوراً في الشات وإغلاق التطبيق
+        function downloadBookDirect(fileId) {
+            tg.sendData("file:" + fileId);
+            tg.close();
+        }
+
+        // تفعيل استدعاء قوائم البوت والتحويل التفاعلي للشات
+        function triggerBotMenu(menuAction) {
+            tg.sendData(menuAction);
+            tg.close();
         }
     </script>
 </body>
