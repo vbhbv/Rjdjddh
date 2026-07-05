@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>مكتبة الكتب الرقمية</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #f5f7fb);
+            --text-color: var(--tg-theme-text-color, #2c3e50);
+            --hint-color: var(--tg-theme-hint-color, #7f8c8d);
+            --primary-color: var(--tg-theme-button-color, #1a5f7a);
+            --btn-text: var(--tg-theme-button-text-color, #ffffff);
+            --card-bg: var(--tg-theme-secondary-bg-color, #ffffff);
+            --accent-color: #e74c3c;
+            --gold-color: #f1c40f;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding: 15px;
+            direction: rtl;
+            overflow-x: hidden;
+        }
+
+        /* رأس الصفحة الفاخر */
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+            padding: 10px 0;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .header p {
+            font-size: 13px;
+            color: var(--hint-color);
+        }
+
+        /* صندوق البحث الذكي */
+        .search-container {
+            position: relative;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 16px 45px 16px 16px;
+            border: 2px solid transparent;
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            font-size: 15px;
+            border-radius: 12px;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .search-input:focus {
+            border-color: var(--primary-color);
+        }
+
+        .search-icon {
+            position: absolute;
+            top: 50%;
+            right: 15px;
+            transform: translateY(-50%);
+            color: var(--hint-color);
+            font-size: 18px;
+        }
+
+        /* العناوين والأقسام الرئيسيّة */
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-right: 3px solid var(--primary-color);
+            padding-right: 8px;
+        }
+
+        /* شبكة الأقسام السريعة */
+        .categories-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        .cat-card {
+            background-color: var(--card-bg);
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 1px solid rgba(0,0,0,0.02);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+        }
+
+        .cat-card:active {
+            transform: scale(0.97);
+        }
+
+        .cat-card i {
+            font-size: 24px;
+            color: var(--primary-color);
+            margin-bottom: 8px;
+        }
+
+        .cat-card span {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* قسم الميزات الخاصة (الرادار والبريميوم) */
+        .features-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        .feature-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: linear-gradient(135deg, var(--primary-color), #2c3e50);
+            color: #ffffff;
+            padding: 15px 20px;
+            border-radius: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .feature-banner.premium {
+            background: linear-gradient(135deg, #d4af37, #aa7c11);
+        }
+
+        .feature-content {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .feature-content i {
+            font-size: 22px;
+        }
+
+        .feature-text h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .feature-text p {
+            font-size: 11px;
+            opacity: 0.8;
+        }
+
+        /* قائمة المصادر المقترحة / الرائجة */
+        .books-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .book-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: var(--card-bg);
+            padding: 12px 15px;
+            border-radius: 12px;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.01);
+        }
+
+        .book-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .book-icon {
+            width: 40px;
+            height: 40px;
+            background-color: rgba(26, 95, 122, 0.1);
+            color: var(--primary-color);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .book-details h4 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .book-details p {
+            font-size: 11px;
+            color: var(--hint-color);
+        }
+
+        .download-btn {
+            background-color: var(--primary-color);
+            color: var(--btn-text);
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1><i class="fa-solid ba-book-open-reader"></i> مكتبة المعرفة</h1>
+        <p>البوابة الأكاديمية الأضخم للكتب والبحوث الرقمية</p>
+    </div>
+
+    <div class="search-container">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" id="searchInput" class="search-input" placeholder="اكتب اسم الكتاب، المؤلف أو الكلمة المفتاحية..." onkeydown="handleSearch(event)">
+    </div>
+
+    <div class="features-container">
+        <div class="feature-banner" onclick="sendAction('radar_menu')">
+            <div class="feature-content">
+                <i class="fa-solid fa-compass-drafting" style="color: var(--gold-color);"></i>
+                <div class="feature-text">
+                    <h3>المستشار القرائي (الرادار المعرفي)</h3>
+                    <p>دع الذكاء الاصطناعي يقترح كتابك القادم حسب مستواك</p>
+                </div>
+            </div>
+            <i class="fa-solid fa-chevron-left"></i>
+        </div>
+
+        <div class="feature-banner premium" onclick="sendAction('buy_premium')">
+            <div class="feature-content">
+                <i class="fa-solid fa-crown"></i>
+                <div class="feature-text">
+                    <h3>عضوية البريميوم الملكية</h3>
+                    <p>تحميل غير محدود، سرعة مضاعفة وبدون قنوات إجبارية</p>
+                </div>
+            </div>
+            <i class="fa-solid fa-chevron-left"></i>
+        </div>
+    </div>
+
+    <h2 class="section-title"><i class="fa-solid fa-layer-group"></i> فهارس الأقسام الرئيسية</h2>
+    <div class="categories-grid">
+        <div class="cat-card" onclick="sendAction('idx:arabic')">
+            <i class="fa-solid fa-gandalf"></i>
+            <span>المكتبة العربية</span>
+        </div>
+        <div class="cat-card" onclick="sendAction('idx:english')">
+            <i class="fa-solid fa-language"></i>
+            <span>English Library</span>
+        </div>
+        <div class="cat-card" onclick="sendAction('idx:academic')">
+            <i class="fa-solid fa-graduation-cap"></i>
+            <span>الملفات الأكاديمية</span>
+        </div>
+        <div class="cat-card" onclick="sendAction('show_trending')">
+            <i class="fa-solid fa-fire" style="color: var(--accent-color);"></i>
+            <span>الأكثر تحميلاً</span>
+        </div>
+    </div>
+
+    <h2 class="section-title"><i class="fa-solid fa-star"></i> روائع المقترحات الحالية</h2>
+    <div class="books-list">
+        <div class="book-item" onclick="sendAction('مقدمة ابن خلدون')">
+            <div class="book-info">
+                <div class="book-icon"><i class="fa-solid fa-book"></i></div>
+                <div class="book-details">
+                    <h4>مقدمة ابن خلدون</h4>
+                    <p>علم الاجتماع والفلسفة التاريخية</p>
+                </div>
+            </div>
+            <button class="download-btn">جلب <i class="fa-solid fa-arrow-down-long"></i></button>
+        </div>
+
+        <div class="book-item" onclick="sendAction('مهزلة العقل البشري علي الوردي')">
+            <div class="book-info">
+                <div class="book-icon"><i class="fa-solid fa-book"></i></div>
+                <div class="book-details">
+                    <h4>مهزلة العقل البشري</h4>
+                    <p>الدكتور علي الوردي • تحليل اجتماعي</p>
+                </div>
+            </div>
+            <button class="download-btn">جلب <i class="fa-solid fa-arrow-down-long"></i></button>
+        </div>
+    </div>
+
+    <script>
+        // تهيئة الـ WebApp وتوسيعه لملء الشاشة بالكامل
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        // دالة إرسال الأوامر النصية أو الـ Callbacks للبوت وإغلاق الواجهة
+        def sendAction(value) {
+            tg.sendData(value);
+            tg.close();
+        }
+
+        // دالة معالجة البحث عند الضغط على Enter في الكيبورد
+        function handleSearch(event) {
+            if (event.key === "Enter") {
+                const query = document.getElementById("searchInput").value.trim();
+                if (query.length > 0) {
+                    sendAction(query);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
