@@ -10,11 +10,9 @@ from telegram.ext import (
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
 )
 
-# 🛠 استيراد الدالة المخصصة لتمرير الأوامر النصية من الـ WebApp مباشرة إلى محرك البحث
-from search_handler import search_books, handle_callbacks
 # 🛠 استيراد الدوال من الملفات الملحقة ببرمجية البوت
 from admin_panel import register_admin_handlers  
-
+from search_handler import search_books, handle_callbacks
 # استيراد دوال الرادار من الملف المستقل لضمان الربط الكامل
 from radar_handler import (
     start_radar_flow, process_radar_category, 
@@ -372,7 +370,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "back_to_main" or query.data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
-            # دمج الرابط المباشر للتطبيق المصغر في القائمة التفاعلية الأساسية للبوت
             webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
@@ -461,7 +458,6 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # دمج الرابط المباشر للتطبيق المصغر في القائمة التفاعلية الأساسية للبوت عند كتابة أمر البدء
     webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
@@ -510,10 +506,8 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # معالجة استقبال البيانات القادمة من الـ WebApp المصغر وتحويلها لمحرك البحث السريع
     if update.message and update.message.web_app_data:
         raw_data = update.message.web_app_data.data
-        # التحقق مما إذا كانت القيمة عبارة عن فلتر أو أمر فهرس فرعي لتوجيهه بدقة
         if raw_data.startswith("idx:") or raw_data.startswith("eng_idx:") or raw_data in ["radar_menu", "buy_premium", "show_trending"]:
             class MockCallbackQuery:
                 def __init__(self, message, data, from_user):
@@ -527,7 +521,6 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
             await handle_start_callbacks(mock_update, context)
             return
         else:
-            # محاكاة إدخال نصي عادي إذا كانت القيمة الممررة اسم كتاب
             update.message.text = raw_data
 
     await search_books(update, context)
@@ -538,6 +531,15 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
 async def run_combined_app(application: Application):
     """دالة لتشغيل البوت بالتوازي مع uvicorn بشكل غير متزامن وآمن"""
     await application.initialize()
+    
+    # محاكاة كائن سياق لتخزين البيانات داخل البوت بأمان تام قبل فتح السيرفر
+    class MockContext:
+        def __init__(self, app_obj):
+            self.bot_data = app_obj.bot_data
+            
+    logger.info("⏳ جاري تهيئة قواعد البيانات والاتصال بـ PostgreSQL أولاً وبأولوية مطلقة...")
+    await init_db(MockContext(application))
+    
     await application.start()
     await application.updater.start_polling(allowed_updates=["message", "callback_query", "channel_post", "chat_member", "my_chat_member"])
     
@@ -566,27 +568,4 @@ def main():
     global app
     app = (
         Application.builder()
-        .token(token)
-        .persistence(persistence)
-        .post_init(init_db)
-        .build()
-    )
-
-    register_admin_handlers(app, start)
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_books_with_subscription))
-    app.add_handler(CallbackQueryHandler(handle_start_callbacks))
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    # تعديل الفلتر ليلتقط النصوص العادية والبيانات القادمة من الـ WebApp معاً
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.StatusUpdate.WEB_APP_DATA) & ~filters.COMMAND, search_books_with_subscription))
-    app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
-
-    logger.info("🚀 The cultural book library bot web server is launching and fully operational...")
-    
-    # استخدام حلقة الأحداث (Event Loop) لتشغيل المنظومتين معاً دون تداخل
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run_combined_app(app))
-
-if __name__ == "__main__":
-    main()
+        .token(
