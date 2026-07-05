@@ -3,560 +3,470 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>منصة المعرفة الرقمية - النسخة الإنتاجية المستقرة</title>
+    <title>مكتبة المعرفة الرقمية - واجهة الجيل الجديد</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        /* التناغم مع ألوان Telegram الرسمية مع Fallbacks عصرية */
         :root {
-            --bg-main: #0d1117;
-            --bg-card: #161b22;
-            --bg-input: #21262d;
-            --border-color: #30363d;
-            --text-main: #c9d1d9;
-            --text-muted: #8b949e;
-            --accent-blue: #58a6ff;
-            --accent-green: #2ea44f;
+            --tg-bg: var(--telegram-bg-color, #0f141c);
+            --tg-sec-bg: var(--telegram-secondary-bg-color, #171f2a);
+            --tg-text: var(--telegram-text-color, #f5f6f7);
+            --tg-hint: var(--telegram-hint-color, #7f8c99);
+            --tg-link: var(--telegram-link-color, #2481cc);
+            --accent-gradient: linear-gradient(135deg, #2481cc, #00b4db);
+            --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--bg-main); color: var(--text-main); padding: 16px; min-height: 100vh;
+            background-color: var(--tg-bg); color: var(--tg-text); padding: 16px; min-height: 100vh;
+            line-height: 1.4;
         }
 
-        .app-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
-        .app-header i { font-size: 24px; color: var(--accent-blue); }
-        .app-header h1 { font-size: 18px; font-weight: 700; color: #f0f6fc; }
+        /* رأس الصفحة الفاخر */
+        .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+        .brand-wrapper { display: flex; align-items: center; gap: 12px; }
+        .brand-icon {
+            background: var(--accent-gradient); width: 42px; height: 42px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center; color: #fff; font-size: 20px; box-shadow: var(--card-shadow);
+        }
+        .brand-text h1 { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
+        .brand-text p { font-size: 11px; color: var(--tg-hint); }
 
-        .search-box { position: relative; margin-bottom: 20px; }
+        /* شريط البحث المطور */
+        .search-container { position: relative; margin-bottom: 16px; }
         .search-input {
-            width: 100%; padding: 14px 44px 14px 16px; background-color: var(--bg-input);
-            border: 1px solid var(--border-color); border-radius: 10px; color: #f0f6fc; font-size: 14.5px; outline: none;
+            width: 100%; padding: 16px 48px 16px 16px; background-color: var(--tg-sec-bg);
+            border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 14px; color: var(--tg-text); font-size: 15px;
+            outline: none; transition: all 0.25s ease; box-shadow: var(--card-shadow);
         }
-        .search-input:focus { border-color: var(--accent-blue); }
-        .search-box i { position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--text-muted); }
+        .search-input:focus { border-color: var(--tg-link); box-shadow: 0 0 0 3px rgba(36, 129, 204, 0.2); }
+        .search-container .search-icon { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); color: var(--tg-hint); font-size: 16px; }
 
-        .chips-container { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 24px; }
-        .chips-container::-webkit-scrollbar { display: none; }
+        /* الكلمات الشائعة وسجل البحث */
+        .trending-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; padding: 0 4px; }
+        .trending-label { font-size: 11px; color: var(--tg-hint); align-self: center; margin-left: 4px; }
+        .tag-pill { font-size: 11px; background: rgba(255, 255, 255, 0.05); padding: 4px 10px; border-radius: 8px; color: var(--tg-link); cursor: pointer; }
+
+        /* التصنيفات الاحترافية بأيقونات */
+        .chips-scroll { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 28px; }
+        .chips-scroll::-webkit-scrollbar { display: none; }
         .category-chip {
-            background-color: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-main);
-            padding: 6px 14px; border-radius: 20px; font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer;
+            background-color: var(--tg-sec-bg); border: 1px solid rgba(255, 255, 255, 0.03); color: var(--tg-text);
+            padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; white-space: nowrap;
+            cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s ease;
         }
-        .category-chip.active { background-color: var(--accent-blue); border-color: var(--accent-blue); color: #0d1117; }
+        .category-chip i { font-size: 14px; color: var(--tg-hint); }
+        .category-chip.active { background: var(--accent-gradient); color: #fff; border: none; box-shadow: var(--card-shadow); }
+        .category-chip.active i { color: #fff; }
 
-        .section-wrapper { margin-bottom: 28px; }
-        .section-header { font-size: 14px; font-weight: 600; color: #f0f6fc; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+        /* هيكلة الأقسام الحديثة */
+        .section-wrapper { margin-bottom: 32px; }
+        .section-header { font-size: 15px; font-weight: 800; color: var(--tg-text); margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+        .section-header span { display: flex; align-items: center; gap: 8px; }
+        .section-header i { color: var(--tg-link); }
 
-        .books-list { display: flex; flex-direction: column; gap: 10px; }
+        /* الرف الأفقي كنمط عالي الجاذبية (Spotify Style Scroll) */
+        .horizontal-shelf { display: flex; gap: 14px; overflow-x: auto; padding: 4px 4px 16px 4px; }
+        .horizontal-shelf::-webkit-scrollbar { display: none; }
         
-        .book-card {
-            background-color: var(--bg-card); border: 1px solid var(--border-color);
-            padding: 12px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-            height: 72px;
+        /* بطاقة الكتاب المطورة كلياً */
+        .book-card-vertical {
+            background-color: var(--tg-sec-bg); border-radius: 16px; width: 140px; flex-shrink: 0;
+            padding: 10px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--card-shadow); transition: transform 0.2s;
         }
-        .book-info-block { display: flex; align-items: center; gap: 12px; overflow: hidden; flex-grow: 1; }
-        .book-cover-placeholder {
-            width: 42px; height: 56px; background-color: var(--bg-input); border: 1px solid var(--border-color);
-            border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        .book-card-vertical:active { transform: scale(0.97); }
+        
+        /* غلاف كتاب ديناميكي مولد برمجياً */
+        .book-cover-art {
+            width: 120px; height: 160px; border-radius: 10px; position: relative;
+            display: flex; flex-direction: column; justify-content: space-between; padding: 12px;
+            color: #fff; font-weight: 700; overflow: hidden; box-shadow: inset 0 -40px 40px rgba(0,0,0,0.4);
         }
-        .book-text { display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
-        .book-title { font-size: 13.5px; font-weight: 600; color: #f0f6fc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .book-meta-data { font-size: 11.5px; color: var(--text-muted); }
+        .book-cover-art .cover-bg-icon { position: absolute; bottom: -10px; left: -10px; font-size: 70px; opacity: 0.12; transform: rotate(-15deg); }
+        .book-cover-art .badge-tag { font-size: 9px; text-transform: uppercase; padding: 2px 6px; background: rgba(0,0,0,0.3); border-radius: 4px; width: max-content; backdrop-filter: blur(2px); }
+        .book-cover-art .mini-title { font-size: 11px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 1px 1px 2px rgba(0,0,0,0.6); line-height: 1.2; }
 
-        .btn-action {
-            background-color: var(--bg-input); color: var(--accent-blue); border: 1px solid var(--border-color);
-            padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+        /* تفاصيل البيانات بتسلسل بصري سليم */
+        .book-meta-block { display: flex; flex-direction: column; gap: 2px; }
+        .meta-book-title { font-size: 13px; font-weight: 700; color: var(--tg-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .meta-book-author { font-size: 11px; color: var(--tg-hint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        
+        .card-action-row { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.03); }
+        .meta-file-info { font-size: 10px; color: var(--tg-hint); }
+        
+        .btn-download-icon {
+            width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.05);
+            color: var(--tg-link); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s;
         }
-        .btn-action.loading { opacity: 0.6; cursor: not-allowed; }
-        .btn-action.success { background-color: var(--accent-green) !important; border-color: var(--accent-green) !important; color: #ffffff !important; }
+        .btn-download-icon.success { background: var(--accent-green) !important; color: white !important; border: none; }
 
-        .skeleton-row {
-            background-color: var(--bg-card); border: 1px solid var(--border-color); height: 72px; border-radius: 12px;
-            animation: shimmer 1.5s infinite linear; background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-input) 50%, var(--bg-card) 75%); background-size: 200% 100%;
+        /* تصميم القائمة الطولية المرنة لنتائج البحث */
+        .vertical-list { display: flex; flex-direction: column; gap: 12px; }
+        .book-card-horizontal {
+            display: flex; gap: 14px; background-color: var(--tg-sec-bg); border-radius: 16px; padding: 12px; box-shadow: var(--card-shadow);
         }
+        .book-card-horizontal .book-cover-art { width: 75px; height: 100px; flex-shrink: 0; padding: 8px; }
+        .book-card-horizontal .book-cover-art .mini-title { font-size: 9px; }
+        .book-card-horizontal .horizontal-details { display: flex; flex-direction: column; justify-content: space-between; flex-grow: 1; overflow: hidden; }
 
-        .empty-state { display: none; text-align: center; padding: 40px 16px; color: var(--text-muted); }
-        .clear-search-btn { background: none; border: 1px solid var(--border-color); color: var(--text-main); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-top: 8px; }
-        .offline-badge { background-color: #7a2e2e; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-size: 11px; display: none; margin-right: auto; }
+        /* الهياكل العظمية الحديثة */
+        .skeleton-shelf { display: flex; gap: 14px; overflow: hidden; }
+        .skeleton-card { width: 140px; height: 240px; background: var(--tg-sec-bg); border-radius: 16px; animation: pulse 1.5s infinite ease-in-out; }
+        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
 
-        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        .empty-state { display: none; text-align: center; padding: 48px 16px; color: var(--tg-hint); }
+        .empty-state i { font-size: 40px; margin-bottom: 12px; color: var(--tg-link); }
+        .offline-tag { background: #cf3c3c; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; display: none; }
     </style>
 </head>
 <body>
 
     <div class="app-header">
-        <i class="fa-solid fa-book-bookmark" aria-hidden="true"></i>
-        <h1>منصة المعرفة الرقمية</h1>
-        <span id="offlineBadge" class="offline-badge">وضع أوفلاين (بيانات مؤرشفة)</span>
+        <div class="brand-wrapper">
+            <div class="brand-icon"><i class="fa-solid fa-graduation-cap"></i></div>
+            <div class="brand-text">
+                <h1>خزانة الحكمة</h1>
+                <p>البوابة الرقمية لـ 1.5 مليون كتاب ومخطوطة</p>
+            </div>
+        </div>
+        <span id="offlineTag" class="offline-tag">أوفلاين</span>
     </div>
 
-    <div class="search-box">
-        <input type="text" id="dbSearch" class="search-input" placeholder="ابحث في 1.5 مليون كتاب ومصدر رقمي..." aria-label="مربع البحث عن الكتب">
-        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+    <div class="search-container">
+        <input type="text" id="dbSearch" class="search-input" placeholder="ابحث بالعنوان، المؤلف، أو الفكرة الفلسفية...">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+    </div>
+    <div class="trending-tags" id="trendingTags">
+        <span class="trending-label">شائع الآن:</span>
+        <span class="tag-pill">علي الوردي</span>
+        <span class="tag-pill">مقدمة ابن خلدون</span>
+        <span class="tag-pill">وجودية نيتشه</span>
     </div>
 
-    <div class="chips-container" id="categoriesContainer" role="tablist" aria-label="التصنيفات المتاحة">
-        <div class="category-chip active" data-category="all" role="tab" aria-selected="true" tabindex="0">اكتشف الإضافات</div>
+    <div class="chips-scroll" id="categoriesContainer">
+        <div class="category-chip active" data-category="all"><i class="fa-solid fa-compass"></i> اكتشف الكل</div>
     </div>
 
-    <div class="section-wrapper" id="recommendationSection" style="display: none;">
-        <div class="section-header"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> مقترحات مخصصة لاهتمامك الفكري</div>
-        <div class="books-list" id="recommendationArea"></div>
-    </div>
-
-    <div class="section-wrapper" id="mainSection">
-        <div class="section-header" id="sectionTitle">الإصدارات الأكثر رواجاً هذا الأسبوع</div>
-        
-        <div id="skeletonLoader" style="display: none; flex-direction: column; gap: 10px;">
-            <div class="skeleton-row"></div>
-            <div class="skeleton-row"></div>
+    <div id="homeViewContainer">
+        <div class="section-wrapper" id="recommendationSection" style="display: none;">
+            <div class="section-header"><span><i class="fa-solid fa-wand-magic-sparkles"></i> مقترحات منسقة لاهتمامك</span></div>
+            <div class="horizontal-shelf" id="recommendationArea"></div>
         </div>
 
-        <div class="empty-state" id="emptyStateView" role="alert">
-            <i class="fa-solid fa-box-open" aria-hidden="true"></i>
+        <div class="section-wrapper" id="trendingSection">
+            <div class="section-header"><span><i class="fa-solid fa-fire"></i> الأكثر تحميلاً هذا الأسبوع</span></div>
+            
+            <div id="skeletonLoader" class="skeleton-shelf" style="display: none;">
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+            </div>
+
+            <div class="horizontal-shelf" id="trendingArea"></div>
+        </div>
+
+        <div class="section-wrapper" id="historySection" style="display: none;">
+            <div class="section-header"><span><i class="fa-solid fa-clock-rotate-left"></i> أكمل القراءة (آخر التنزيلات)</span></div>
+            <div class="horizontal-shelf" id="historyArea"></div>
+        </div>
+    </div>
+
+    <div id="searchViewContainer" style="display: none;" class="section-wrapper">
+        <div class="section-header"><span id="searchResultTitle">نتائج الفحص والمطابقة</span></div>
+        <div class="empty-state" id="emptyStateView">
+            <i class="fa-solid fa-folder-open"></i>
             <p>لم نجد نتائج مطابقة لعنوان بحثك الفوري.</p>
-            <button class="clear-search-btn" id="clearSearchBtn">مسح مرشح البحث</button>
         </div>
-        
-        <div class="books-list" id="displayArea"></div>
-        <div id="infiniteScrollSentinel" style="height: 10px;"></div>
-    </div>
-
-    <div class="section-wrapper" id="historySection" style="display: none;">
-        <div class="section-header"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> آخر التنزيلات الرقمية المتزامنة</div>
-        <div class="books-list" id="historyArea"></div>
+        <div class="vertical-list" id="searchResultArea"></div>
     </div>
 
     <script>
         // =========================================================================
-        // 1. طبقة الـ Telemetry & Trace Context المتقدمة
+        // 1. الأنوية المعمارية الصلبة المتبعة (Architecture Layer)
         // =========================================================================
         class TraceContext {
-            constructor(userId = "0") {
-                this.userId = userId;
-                this.traceId = `tr-${Math.random().toString(36).substr(2, 9)}`;
-                this.sessionId = `ss-${Math.random().toString(36).substr(2, 9)}`;
-            }
-            createChildContext(requestId) {
-                return { userId: this.userId, traceId: this.traceId, sessionId: this.sessionId, requestId };
-            }
+            constructor() { this.traceId = `tr-${Math.random().toString(36).substr(2, 9)}`; }
         }
-
-        class ConsoleTelemetry {
-            logError(context, error, traceCtx = null) {
-                console.error(`[TELEMETRY][ERROR][${context}]`, { msg: error.message, traceCtx });
-            }
-            logMetric(name, durationMs, metadata = {}, traceCtx = null) {
-                console.log(`[TELEMETRY][METRIC] ${name} -> ${durationMs.toFixed(2)}ms`, { metadata, traceCtx });
-            }
-        }
-        const telemetry = new ConsoleTelemetry();
         const globalTrace = new TraceContext();
 
-        // =========================================================================
-        // 2. طبقة الـ HttpClient المجرّدة (The Core Network Engine)
-        // =========================================================================
-        class CircuitBreaker {
-            constructor(threshold = 3, cooldown = 10000) {
-                this.threshold = threshold; this.cooldown = cooldown;
-                this.state = 'CLOSED'; this.failures = 0; this.nextAttempt = 0;
-            }
-            canExecute() {
-                if (this.state === 'OPEN' && Date.now() > this.nextAttempt) { this.state = 'HALF-OPEN'; return true; }
-                return this.state !== 'OPEN';
-            }
-            success() { this.failures = 0; this.state = 'CLOSED'; }
-            failure() {
-                this.failures++;
-                if (this.failures >= this.threshold) {
-                    this.state = 'OPEN'; this.nextAttempt = Date.now() + this.cooldown;
-                }
-            }
-        }
-
         class HttpClient {
-            constructor() {
-                this.breakers = new Map(); // Per-Endpoint Circuit Breakers
-            }
-
-            getBreaker(endpoint) {
-                const urlPath = new URL(endpoint, window.location.origin).pathname;
-                if (!this.breakers.has(urlPath)) this.breakers.set(urlPath, new CircuitBreaker());
-                return this.breakers.get(urlPath);
-            }
-
-            async request(url, options = {}, retries = 3, delay = 200) {
-                const breaker = this.getBreaker(url);
-                if (!breaker.canExecute()) throw new Error(`CircuitBreaker is OPEN for ${url}`);
-
-                for (let i = 0; i < retries; i++) {
-                    const timeoutCtrl = new AbortController();
-                    let signal = timeoutCtrl.signal;
-                    if (options.signal) {
-                        if (typeof AbortSignal.any === 'function') signal = AbortSignal.any([options.signal, timeoutCtrl.signal]);
-                        else options.signal.addEventListener('abort', () => timeoutCtrl.abort());
-                    }
-
-                    const timerId = setTimeout(() => timeoutCtrl.abort(), 8000);
-
-                    try {
-                        const response = await fetch(url, { ...options, signal });
-                        if (!response.ok) {
-                            if (response.status === 429) {
-                                const retryAfter = response.headers.get("Retry-After");
-                                if (retryAfter) {
-                                    const waitSec = parseInt(retryAfter, 10) * 1000;
-                                    await new Promise(r => setTimeout(r, waitSec));
-                                    continue;
-                                }
-                            }
-                            if ([400, 401, 403, 404, 422].includes(response.status)) throw new Error(`ClientError:${response.status}`);
-                            throw new Error(`ServerError:${response.status}`);
-                        }
-                        const data = await response.json();
-                        breaker.success();
-                        return data;
-                    } catch (err) {
-                        const isAbort = err.name === 'AbortError' || options.signal?.aborted;
-                        const isClient = err.message.includes("ClientError");
-                        if (isAbort || isClient || (i === retries - 1)) {
-                            if (!isAbort) breaker.failure();
-                            throw err;
-                        }
-                        await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
-                    } finally {
-                        clearTimeout(timerId);
-                    }
+            async request(url, options = {}) {
+                const timeoutCtrl = new AbortController();
+                let signal = timeoutCtrl.signal;
+                if (options.signal) {
+                    if (typeof AbortSignal.any === 'function') signal = AbortSignal.any([options.signal, timeoutCtrl.signal]);
+                    else options.signal.addEventListener('abort', () => timeoutCtrl.abort());
                 }
-            }
-        }
-
-        // =========================================================================
-        // 3. طبقة الجدولة المتقدمة للطلبات حسب الأهمية (Priority Scheduler)
-        // =========================================================================
-        class RequestScheduler {
-            constructor(client) {
-                this.client = client;
-                this.queue = [];
-                this.running = 0;
-                this.maxConcurrent = 3;
-            }
-
-            schedule(url, options = {}, priority = 1) {
-                return new Promise((resolve, reject) => {
-                    this.queue.push({ url, options, priority, resolve, reject });
-                    this.queue.sort((a, b) => b.priority - a.priority); // الأولوية الأعلى أولاً
-                    this.processQueue();
-                });
-            }
-
-            async processQueue() {
-                if (this.running >= this.maxConcurrent || this.queue.length === 0) return;
-                this.running++;
-                const item = this.queue.shift();
-
+                const timer = setTimeout(() => timeoutCtrl.abort(), 8000);
                 try {
-                    const data = await this.client.request(item.url, item.options);
-                    item.resolve(data);
-                } catch (err) {
-                    item.reject(err);
-                } finally {
-                    this.running--;
-                    this.processQueue();
-                }
+                    const response = await fetch(url, { ...options, signal });
+                    if (!response.ok) throw new Error(`Status:${response.status}`);
+                    return await response.json();
+                } finally { clearTimeout(timer); }
             }
         }
 
-        const httpClient = new HttpClient();
-        const scheduler = new RequestScheduler(httpClient);
-
-        // =========================================================================
-        // 4. طبقة الـ Repositories (Pure Architectural Repositories)
-        // =========================================================================
         class BookRepository {
-            constructor(sched) { this.sched = sched; }
+            constructor(client) { this.client = client; }
+            async getDashboard() { return this.client.request('/api/trending'); }
+            async search(query, cursor, signal) {
+                return this.client.request(`/api/search?query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}`, { signal });
+            }
+            async download(fileId) { return this.client.request(`/api/download?file_id=${encodeURIComponent(fileId)}`); }
+        }
 
-            async getTrending(trace) { return this.sched.schedule('/api/trending', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getRecommendations(userId, trace) { return this.sched.schedule(`/api/recommendations?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getCategories(trace) { return this.sched.schedule('/api/categories', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getHistory(userId, trace) { return this.sched.schedule(`/api/history?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+        const http = new HttpClient();
+        const repo = new BookRepository(http);
+
+        // =========================================================================
+        // 2. منطق توليد الأغلفة الديناميكية والمظهر الجمالي (UI Cover Generator)
+        // =========================================================================
+        const COVER_PALETTES = [
+            { bg: 'linear-gradient(135deg, #3a6186, #89253e)', icon: 'fa-scale-balanced' }, // فلسفة / علوم
+            { bg: 'linear-gradient(135deg, #4ea105, #48b1bf)', icon: 'fa-feather-pointed' }, // أدب / روايات
+            { bg: 'linear-gradient(135deg, #134e5e, #71b280)', icon: 'fa-scroll' }, // تاريخ / تراث
+            { bg: 'linear-gradient(135deg, #b06ab3, #4568dc)', icon: 'fa-atom' }  // تقنية / معرفة العامة
+        ];
+
+        function generateCoverHTML(book) {
+            // اختيار لوحة ألوان ثابتة ومحددة برمز فريد مستخلص من قيمة الـ file_id
+            const index = Math.abs(book.file_id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) % COVER_PALETTES.length;
+            const palette = COVER_PALETTES[index];
             
-            async search(query, cursor, limit, filters, signal, trace) {
-                // منع التصادم المعماري عبر تجميع كافة المعايير الحركية في بناء مفتاح التوحيد
-                const filterKey = btoa(JSON.stringify(filters || {}));
-                const url = `/api/search?query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}&limit=${limit}&filters=${filterKey}`;
-                return this.sched.schedule(url, { signal, headers: { 'X-Trace-Id': trace.traceId } }, 2); // البحث أولوية أعلى
-            }
-
-            async download(fileId, userId, trace) {
-                return this.sched.schedule(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${userId}`, {}, 3); // أولوية قصوى للتنزيل
-            }
+            return `
+                <div class="book-cover-art" style="background: ${palette.bg}">
+                    <i class="fa-solid ${palette.icon} cover-bg-icon"></i>
+                    <div class="badge-tag">${book.extension || 'PDF'}</div>
+                    <div class="mini-title">${book.title || book.file_name}</div>
+                </div>
+            `;
         }
 
-        const bookRepo = new BookRepository(scheduler);
-
         // =========================================================================
-        // 5. طبقة الخدمات المفككة والمستقلة (Decoupled Micro-Services)
+        // 3. محرك العرض وتنسيق تجربة الـ UX وتقليم الـ DOM (Product Presentation Layer)
         // =========================================================================
-        class HomeService {
-            constructor(repo) {
-                this.repo = repo; this.cache = null; this.stampedePromise = null; this.ttl = 5 * 60 * 1000; this.timestamp = 0;
-            }
-            async getDashboardData(userId, trace) {
-                if (this.cache && (Date.now() - this.timestamp < this.ttl)) return { fromCache: true, results: this.cache };
-                if (this.stampedePromise) return this.stampedePromise;
-
-                this.stampedePromise = (async () => {
-                    try {
-                        const results = await Promise.allSettled([
-                            this.repo.getTrending(trace), this.repo.getRecommendations(userId, trace), this.repo.getHistory(userId, trace), this.repo.getCategories(trace)
-                        ]);
-                        this.cache = {
-                            trending: results[0].status === 'fulfilled' ? results[0].value.results : [],
-                            recommendations: results[1].status === 'fulfilled' ? results[1].value.results : [],
-                            history: results[2].status === 'fulfilled' ? results[2].value.results : [],
-                            categories: results[3].status === 'fulfilled' ? results[3].value.categories : []
-                        };
-                        this.timestamp = Date.now();
-                        // حفظ لسيناريو الأوفلاين الطارئ لتوفير مرونة الصمود
-                        localStorage.setItem("offline_home_cache", JSON.stringify(this.cache));
-                        return { fromCache: false, results: this.cache };
-                    } finally {
-                        this.stampedePromise = null; // تأمين تصفير قفل حماية الـ Stampede داخل كتلة الـ finally معصومة الخطأ
-                    }
-                })();
-                return this.stampedePromise;
-            }
-            getOfflineFallback() {
-                const raw = localStorage.getItem("offline_home_cache");
-                return raw ? JSON.parse(raw) : null;
-            }
-        }
-
-        class SearchService {
-            constructor(repo) { this.repo = repo; this.abortCtrl = null; this.activePromise = null; }
-            
-            async executeSearch(query, cursor = "", filters = {}, trace) {
-                if (this.abortCtrl) this.abortCtrl.abort();
-                this.abortCtrl = new AbortController();
-                
-                // Backpressure Handling: إسقاط وإلغاء الطلب المعلق الجاري واستبداله بـ Promise الجديد الأحدث
-                this.activePromise = this.repo.search(query, cursor, 20, filters, this.abortCtrl.signal, trace);
-                return this.activePromise;
-            }
-        }
-
-        const homeService = new HomeService(bookRepo);
-        const searchService = new SearchService(bookRepo);
-
-        // =========================================================================
-        // 6. محرك العرض وتقليم الـ DOM الذكي المتوازن (DOM Pruning View Layer)
-        // =========================================================================
-        class UIRenderer {
-            constructor(homeServ, searchServ, tg) {
-                this.homeServ = homeServ; this.searchServ = searchServ; this.tg = tg;
-                this.nextCursor = null; this.query = ""; this.isLoadedAll = false; this.isPageLoading = false;
-                this.searchDebounce = null;
+        class UIManager {
+            constructor(repository, tg) {
+                this.repo = repository; this.tg = tg;
+                this.query = ""; this.nextCursor = ""; this.isPageLoading = false; this.searchDebounce = null;
                 
                 this.domElements();
-                this.bindAbsoluteEvents();
-                this.initScrollBoundaryScanner();
+                this.bindEvents();
             }
 
             domElements() {
                 this.dom = {
                     input: document.getElementById("dbSearch"),
-                    display: document.getElementById("displayArea"),
+                    trendingArea: document.getElementById("trendingArea"),
                     recArea: document.getElementById("recommendationArea"),
+                    recSection: document.getElementById("recommendationSection"),
                     histArea: document.getElementById("historyArea"),
                     histSection: document.getElementById("historySection"),
                     loader: document.getElementById("skeletonLoader"),
-                    empty: document.getElementById("emptyStateView"),
-                    title: document.getElementById("sectionTitle"),
-                    clear: document.getElementById("clearSearchBtn"),
                     cats: document.getElementById("categoriesContainer"),
-                    badge: document.getElementById("offlineBadge")
+                    homeContainer: document.getElementById("homeViewContainer"),
+                    searchContainer: document.getElementById("searchViewContainer"),
+                    searchArea: document.getElementById("searchResultArea"),
+                    empty: document.getElementById("emptyStateView"),
+                    badge: document.getElementById("offlineTag"),
+                    trendingTags: document.getElementById("trendingTags")
                 };
             }
 
-            bindAbsoluteEvents() {
-                this.dom.input.addEventListener("input", () => this.triggerDebouncedSearch());
-                this.dom.clear.addEventListener("click", () => this.clearSearch());
+            bindEvents() {
+                this.dom.input.addEventListener("input", () => this.handleSearchInput());
                 
-                // تفويض كامل لـ Body لإلغاء الـ Listeners تماماً وحظر تسريب المستمعين
+                // تفويض كامل ومطلق للأحداث تماشياً مع معايير الأداء العالي حظراً لتسريبات المستمعين
                 document.body.addEventListener("click", (e) => {
-                    const btn = e.target.closest('.btn-action');
+                    const btn = e.target.closest('.btn-download-icon');
                     if (btn) this.fireDownload(btn);
+
                     const chip = e.target.closest('.category-chip');
                     if (chip) this.selectCategory(chip);
-                });
-            }
 
-            initScrollBoundaryScanner() {
-                // استبدال الـ Virtual Scroll المضلل بفحص حافة التمرير الاعتيادية المستقرة مع كرسر التصفح
+                    const tag = e.target.closest('.tag-pill');
+                    if (tag) { this.dom.input.value = tag.textContent; this.handleSearchInput(); }
+                });
+
+                // معالجة الـ Infinite Scroll لنتائج البحث الطولية مع ميزة الـ Pruning لسلامة المعالج
                 window.addEventListener("scroll", () => {
-                    if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 200) {
-                        if (this.query && !this.isLoadedAll && !this.isPageLoading && this.nextCursor) {
+                    if (this.query && !this.isPageLoading && this.nextCursor) {
+                        if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 300) {
                             this.fetchNextSearchBatch();
                         }
                     }
                 });
             }
 
-            createCard(book, tag) {
+            createVerticalCard(book) {
                 const node = document.createElement("div");
-                node.className = "book-card";
-                node.dataset.fileId = book.file_id; // معرف مخصص لتقليم الـ DOM لاحقاً
+                node.className = "book-card-vertical";
                 node.innerHTML = `
-                    <div class="book-info-block">
-                        <div class="book-cover-placeholder"><i class="fa-solid fa-file-pdf"></i></div>
-                        <div class="book-text">
-                            <div class="book-title" title="${book.title || book.file_name}">${book.title || book.file_name}</div>
-                            <div class="book-meta-data">امتداد: ${book.extension || 'PDF'} | تصنيف: ${tag}</div>
-                        </div>
+                    ${generateCoverHTML(book)}
+                    <div class="book-meta-block">
+                        <div class="meta-book-title">${book.title || book.file_name}</div>
+                        <div class="meta-book-author">${book.author || 'مؤلف مجهول'}</div>
                     </div>
-                    <button class="btn-action" data-file-id="${book.file_id}">إرسال للشات</button>
+                    <div class="card-action-row">
+                        <span class="meta-file-info">${book.size || '3.2 MB'}</span>
+                        <button class="btn-download-icon" data-file-id="${book.file_id}" aria-label="تحميل الكتاب"><i class="fa-solid fa-arrow-down"></i></button>
+                    </div>
                 `;
                 return node;
             }
 
-            async renderDashboard() {
-                this.dom.loader.style.display = "flex";
-                const userId = this.tg.initDataUnsafe?.user?.id || 0;
-                const startTime = performance.now();
+            createHorizontalCard(book) {
+                const node = document.createElement("div");
+                node.className = "book-card-horizontal";
+                node.innerHTML = `
+                    ${generateCoverHTML(book)}
+                    <div class="horizontal-details">
+                        <div class="book-meta-block">
+                            <div class="meta-book-title" style="white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;">${book.title || book.file_name}</div>
+                            <div class="meta-book-author" style="margin-top: 4px;">المؤلف: ${book.author || 'ابن خلدون'}</div>
+                            <div class="meta-file-info" style="margin-top: 2px;">سنة النشر: ${book.year || 'تحقيق حديث'} | الحجم: ${book.size || '4.1 MB'}</div>
+                        </div>
+                        <div class="card-action-row" style="border: none; padding: 0; margin: 0;">
+                            <span class="meta-file-info" style="color: var(--tg-link)">تنزيل فوري متزامن</span>
+                            <button class="btn-download-icon" data-file-id="${book.file_id}"><i class="fa-solid fa-arrow-down"></i></button>
+                        </div>
+                    </div>
+                `;
+                return node;
+            }
 
+            async loadDashboard() {
+                this.dom.loader.style.display = "flex";
                 try {
-                    const data = await this.homeServ.getDashboardData(userId, globalTrace);
+                    const res = await this.repo.getDashboard();
                     this.dom.loader.style.display = "none";
-                    this.dom.badge.style.display = "none";
-                    this.populateHome(data.results);
-                    telemetry.logMetric("DashboardRenderTime", performance.now() - startTime, {}, globalTrace);
-                } catch (err) {
+                    this.populateDashboard(res.results);
+                    localStorage.setItem("prod_ux_cache", JSON.stringify(res.results));
+                } catch (e) {
                     this.dom.loader.style.display = "none";
-                    telemetry.logError("DashboardLoad", err, globalTrace);
-                    
-                    // استدعاء الاستراتيجية الـ Offline في حال انهيار الاتصال بالكامل
-                    const offlineData = this.homeServ.getOfflineFallback();
-                    if (offlineData) {
+                    const fallback = localStorage.getItem("prod_ux_cache");
+                    if (fallback) {
                         this.dom.badge.style.display = "inline-block";
-                        this.populateHome(offlineData);
+                        this.populateDashboard(JSON.parse(fallback));
                     }
                 }
             }
 
-            populateHome(data) {
-                this.dom.display.replaceChildren();
-                data.trending.forEach(b => this.dom.display.appendChild(this.createCard(b, "مصلحة عامة")));
-                if (data.recommendations.length > 0) {
-                    document.getElementById("recommendationSection").style.display = "block";
+            populateDashboard(data) {
+                this.dom.trendingArea.replaceChildren();
+                data.trending.forEach(b => this.dom.trendingArea.appendChild(this.createVerticalCard(b)));
+
+                if (data.recommendations && data.recommendations.length > 0) {
+                    this.dom.recSection.style.display = "block";
                     this.dom.recArea.replaceChildren();
-                    data.recommendations.forEach(b => this.dom.recArea.appendChild(this.createCard(b, "مقترح لك")));
+                    data.recommendations.forEach(b => this.dom.recArea.appendChild(this.createVerticalCard(b)));
                 }
-                if (data.history.length > 0) {
+                if (data.history && data.history.length > 0) {
                     this.dom.histSection.style.display = "block";
-                    this.dom.histArea.replaceChildren();
-                    data.history.forEach(b => this.dom.histArea.appendChild(this.createCard(b, "سجل سابق")));
+                    this.dom.historyArea.replaceChildren();
+                    data.history.forEach(b => this.dom.historyArea.appendChild(this.createVerticalCard(b)));
                 }
-                if (this.dom.cats.children.length <= 1) {
+                if (this.dom.cats.children.length <= 1 && data.categories) {
                     data.categories.forEach(c => {
                         const chip = document.createElement("div");
-                        chip.className = "category-chip"; chip.textContent = c; chip.dataset.category = c;
+                        chip.className = "category-chip";
+                        chip.innerHTML = `<i class="fa-solid fa-book-open"></i> ${c}`;
+                        chip.dataset.category = c;
                         this.dom.cats.appendChild(chip);
                     });
                 }
             }
 
-            triggerDebouncedSearch() {
+            handleSearchInput() {
                 clearTimeout(this.searchDebounce);
                 this.query = this.dom.input.value.trim();
-                if (this.query.length < 2) { if (this.query.length === 0) this.clearSearch(); return; }
+
+                if (this.query.length < 2) {
+                    if (this.query.length === 0) this.resetToHome();
+                    return;
+                }
                 this.searchDebounce = setTimeout(() => this.executeSearchPipeline(), 250);
             }
 
             async executeSearchPipeline() {
-                this.dom.title.textContent = "نتائج الفحص الفوري والمطابقة";
+                this.dom.homeContainer.style.display = "none";
+                this.dom.trendingTags.style.display = "none";
+                this.dom.searchContainer.style.display = "block";
                 this.dom.empty.style.display = "none";
-                this.dom.loader.style.display = "flex";
-                this.dom.display.replaceChildren();
+                this.dom.searchArea.replaceChildren();
 
                 try {
-                    const res = await this.searchServ.executeSearch(this.query, "", {}, globalTrace);
-                    this.dom.loader.style.display = "none";
+                    const res = await this.repo.search(this.query, "");
                     if (res.success && res.results.length > 0) {
                         this.nextCursor = res.next_cursor;
-                        this.isLoadedAll = !res.next_cursor;
-                        res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
+                        res.results.forEach(b => this.dom.searchArea.appendChild(this.createHorizontalCard(b)));
                     } else {
                         this.dom.empty.style.display = "block";
                     }
-                } catch (err) {
-                    if (err.name !== "AbortError") this.dom.loader.style.display = "none";
-                }
+                } catch (e) {}
             }
 
             async fetchNextSearchBatch() {
                 this.isPageLoading = true;
-                const row = document.createElement("div"); row.className = "skeleton-row";
-                this.dom.display.appendChild(row);
-
                 try {
-                    const res = await this.searchServ.executeSearch(this.query, this.nextCursor, {}, globalTrace);
-                    row.remove();
+                    const res = await this.repo.search(this.query, this.nextCursor);
                     if (res.success && res.results.length > 0) {
                         this.nextCursor = res.next_cursor;
-                        this.isLoadedAll = !res.next_cursor;
-                        res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
+                        res.results.forEach(b => this.dom.searchArea.appendChild(this.createHorizontalCard(b)));
                         
-                        // DOM Pruning Algorithm (المعيار الهندسي للأنظمة الإنتاجية الكبرى)
-                        // عند تجاوز عناصر القائمة لـ 60 بطاقة، قم بتقليم وحذف أول 20 عنصرًا للحفاظ على ذاكرة الهاتف ثابتة
-                        if (this.dom.display.children.length > 60) {
-                            for (let i = 0; i < 20; i++) {
-                                this.dom.display.removeChild(this.dom.display.firstChild);
-                            }
+                        // تطبيق هندسة الـ DOM Pruning لحظر تضخم الـ DOM وتأمين الخفة الاستثنائية للهواتف
+                        if (this.dom.searchArea.children.length > 50) {
+                            for (let i = 0; i < 15; i++) this.dom.searchArea.removeChild(this.dom.searchArea.firstChild);
                         }
+                    } else {
+                        this.nextCursor = "";
                     }
-                } catch (err) {
-                    row.remove();
-                } finally {
-                    this.isPageLoading = false;
-                }
+                } finally { this.isPageLoading = false; }
             }
 
             async fireDownload(btn) {
                 if (btn.classList.contains("loading")) return;
-                btn.classList.add("loading"); btn.disabled = true; btn.textContent = "جاري الحجز...";
+                btn.classList.add("loading");
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
                 
                 try {
-                    const res = await bookRepo.download(btn.dataset.fileId, this.tg.initDataUnsafe?.user?.id || 0, globalTrace);
+                    const res = await this.repo.download(btn.dataset.fileId);
                     if (res.success) {
-                        btn.className = "btn-action success"; btn.textContent = "تم الإرسال";
-                    } else {
-                        this.resetBtn(btn);
-                    }
-                } catch (err) {
-                    this.resetBtn(btn);
-                    telemetry.logError("DownloadAction", err, globalTrace);
-                }
+                        btn.className = "btn-download-icon success";
+                        btn.innerHTML = `<i class="fa-solid fa-check"></i>`;
+                        if (this.tg.showPopup) {
+                            this.tg.showPopup({ title: "اكتمل البث للمحادثة", message: "تم إرسال الكتاب المحدد إلى شات البوت الخاص بك في الخلفية بنجاح.", buttons: [{type: "ok"}] });
+                        }
+                    } else { this.resetBtn(btn); }
+                } catch (e) { this.resetBtn(btn); }
             }
 
-            resetBtn(btn) { btn.className = "btn-action"; btn.disabled = false; btn.textContent = "إرسال للشات"; }
+            resetBtn(btn) { btn.className = "btn-download-icon"; btn.innerHTML = `<i class="fa-solid fa-arrow-down"></i>`; }
+            
             selectCategory(chip) {
                 document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
-                chip.classList.add('active'); this.dom.input.value = chip.dataset.category;
-                this.triggerDebouncedSearch();
+                chip.classList.add('active');
+                if (chip.dataset.category === 'all') { this.resetToHome(); } 
+                else { this.dom.input.value = chip.textContent.trim(); this.handleSearchInput(); }
             }
-            clearSearch() {
-                this.dom.input.value = ""; this.query = ""; this.nextCursor = null; this.isLoadedAll = false;
-                this.dom.title.textContent = "الإصدارات الأكثر رواجاً هذا الأسبوع";
-                this.renderDashboard();
+
+            resetToHome() {
+                this.dom.input.value = ""; this.query = ""; this.nextCursor = "";
+                this.dom.searchContainer.style.display = "none";
+                this.dom.homeContainer.style.display = "block";
+                this.dom.trendingTags.style.display = "flex";
+                document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
+                document.querySelector('.category-chip[data-category="all"]').classList.add('active');
+                this.loadDashboard();
             }
         }
 
-        // =========================================================================
-        // 7. إقلاع النظام الشامل المغلق (System Bootstrap)
-        // =========================================================================
-        const app = new UIRenderer(homeService, searchService, window.Telegram.WebApp);
-        app.renderDashboard();
+        // الإقلاع المركزي الفوري للواجهة المنتجة
+        const ui = new UIManager(repo, window.Telegram.WebApp);
+        ui.loadDashboard();
     </script>
 </body>
 </html>
