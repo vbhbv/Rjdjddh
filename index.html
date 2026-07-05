@@ -247,7 +247,7 @@
 <body>
 
     <div class="header">
-        <h1><i class="fa-solid ba-book-open-reader"></i> مكتبة المعرفة</h1>
+        <h1><i class="fa-solid fa-book-open-reader"></i> مكتبة المعرفة</h1>
         <p>البوابة الأكاديمية الأضخم للكتب والبحوث الرقمية</p>
     </div>
 
@@ -282,11 +282,11 @@
 
     <h2 class="section-title"><i class="fa-solid fa-layer-group"></i> فهارس الأقسام الرئيسية</h2>
     <div class="categories-grid">
-        <div class="cat-card" onclick="sendAction('idx:arabic')">
-            <i class="fa-solid fa-gandalf"></i>
+        <div class="cat-card" onclick="sendAction('show_index')">
+            <i class="fa-solid fa-book-atlas"></i>
             <span>المكتبة العربية</span>
         </div>
-        <div class="cat-card" onclick="sendAction('idx:english')">
+        <div class="cat-card" onclick="sendAction('show_english_index')">
             <i class="fa-solid fa-language"></i>
             <span>English Library</span>
         </div>
@@ -326,15 +326,17 @@
     </div>
 
     <script>
-        // تهيئة الـ WebApp وتوسيعه لملء الشاشة بالكامل
+        // تهيئة الـ WebApp وتوسيعه لملء الشاشة بالكامل داخل تيليجرام
         const tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
 
         // دالة إرسال الأوامر النصية أو الـ Callbacks للبوت وإغلاق الواجهة
-        def sendAction(value) {
-            tg.sendData(value);
-            tg.close();
+        function sendAction(value) {
+            if (value && value.trim().length > 0) {
+                tg.sendData(value.trim());
+                tg.close();
+            }
         }
 
         // دالة معالجة البحث عند الضغط على Enter في الكيبورد
