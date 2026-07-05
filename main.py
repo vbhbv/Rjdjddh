@@ -22,9 +22,8 @@ from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
 
-# 🌐 استيراد مكتبات خادم الويب لتشغيل التطبيق المصغر (Web App)
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+# 🌐 استيراد خادم الويب المطور ودالة الربط من الملف الخارجي الجديد
+from web_server import web_app, init_web_server
 import uvicorn
 
 # ===============================================
@@ -35,20 +34,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# ===============================================
-# إعداد خادم الويب FastAPI
-# ===============================================
-web_app = FastAPI()
-
-@web_app.get("/miniapp", response_class=HTMLResponse)
-async def get_miniapp():
-    """بث واجهة الويب المكتبية الفاخرة index.html عند طلبها من قبل تيليجرام"""
-    file_path = os.path.join(os.path.dirname(__file__), "index.html")
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as file:
-            return file.read()
-    return "<h3>عذراً، لم يتم العثور على ملف الواجهة index.html في خادم ريلواي!</h3>"
 
 # ===============================================
 # إعداد قاعدة البيانات
@@ -437,7 +422,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             "⭐ **باقات العضوية المميزة (Premium)**\n\n"
             "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
-            "📅 **الخطط المتاحة:**\n"
+            "📅 **الخططة المتاحة:**\n"
             "• الاشتراك الشهري: **5$** شهرياً.\n"
             "• الاشتراك نصف السنوي: **25$** (توفير بقيمة شهر).\n"
             "• الاشتراك السنوي الكلي: **45$** (العرض الأقوى).\n\n"
@@ -532,10 +517,21 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     if not await check_subscription(update.effective_user.id, context.bot):
         return
 
-    # معالجة إشارات القادمة من الـ Web App التفاعلي إن وجدت وتحويلها لـ Callbacks آمنة
+    # معالجة إشارات القادمة من الـ Web App التفاعلي إن وجدت وتحويلها لـ Callbacks آمنة أو ملفات مباشرة
     if update.message and update.message.web_app_data:
         raw_data = update.message.web_app_data.data
-        if raw_data.startswith("idx:") or raw_data.startswith("eng_idx:") or raw_data in ["radar_menu", "buy_premium", "show_trending"]:
+        if raw_data.startswith("file:"):
+            file_id = raw_data.replace("file:", "")
+            try:
+                await context.bot.send_document(chat_id=update.effective_user.id, document=file_id, caption="📖 تم جلب كتابك بنجاح من مكتبة المعرفة.")
+                pool = context.bot_data.get("db_conn")
+                if pool:
+                    async with pool.acquire() as conn:
+                        await conn.execute("INSERT INTO download_stats(file_id) VALUES($1)", file_id)
+            except Exception as e:
+                await update.message.reply_text(f"❌ عذراً، فشل جلب الملف: {e}")
+            return
+        elif raw_data.startswith("idx:") or raw_data.startswith("eng_idx:") or raw_data in ["radar_menu", "buy_premium", "show_trending"]:
             class MockCallbackQuery:
                 def __init__(self, message, data, from_user):
                     self.message = message
@@ -553,19 +549,21 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     await search_books(update, context)
 
 # ===============================================
-# دالة تشغيل البوت بالتوازي مع خادم الويب FastAPI
+# دالة تشغيل البوت بالتوازي مع خادم الويب الخارجي
 # ===============================================
 async def run_combined_app(application: Application):
     """دالة لتشغيل البوت بالتوازي مع uvicorn بشكل غير متزامن وآمن"""
     await application.initialize()
     
-    # محاكاة كائن سياق لتخزين البيانات والاتصال المباشر بقواعد البيانات قبل تشغيل السيرفر
     class MockContext:
         def __init__(self, app_obj):
             self.bot_data = app_obj.bot_data
             
     logger.info("⏳ جاري تهيئة قواعد البيانات والاتصال بـ PostgreSQL أولاً وبأولوية مطلقة...")
     await init_db(MockContext(application))
+    
+    # 🔥 ربط كائن الـ application بملف الـ web_server المنفصل ديناميكياً لتفعيل الـ APIs الحية
+    init_web_server(application)
     
     await application.start()
     await application.updater.start_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
@@ -593,7 +591,6 @@ def main():
     persistence = PicklePersistence(filepath="bot_data.pickle")
     
     global app
-    # تم تجميع وإغلاق القوس في سطر واحد لمنع الـ SyntaxError المزعج نهائياً
     app = Application.builder().token(token).persistence(persistence).build()
 
     app.add_handler(CommandHandler("start", start))
