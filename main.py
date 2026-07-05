@@ -2,7 +2,8 @@ import os
 import re
 import asyncpg
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import asyncio
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
@@ -21,6 +22,11 @@ from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
 
+# 🌐 استيراد مكتبات خادم الويب لتشغيل التطبيق المصغر (Web App)
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import uvicorn
+
 # ===============================================
 # إعداد اللوج
 # ===============================================
@@ -29,6 +35,20 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ===============================================
+# إعداد خادم الويب FastAPI
+# ===============================================
+web_app = FastAPI()
+
+@web_app.get("/miniapp", response_class=HTMLResponse)
+async def get_miniapp():
+    """بث واجهة الويب المكتبية الفاخرة index.html عند طلبها من قبل تيليجرام"""
+    file_path = os.path.join(os.path.dirname(__file__), "index.html")
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as file:
+            return file.read()
+    return "<h3>عذراً، لم يتم العثور على ملف الواجهة index.html في خادم ريلواي!</h3>"
 
 # ===============================================
 # إعداد قاعدة البيانات
@@ -371,9 +391,11 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "back_to_main" or query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
-
-            # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
+            
+            webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
+            # 📋 ترتيب رأسي منظم للأزرار مع إضافة زر التطبيق المصغر في المقدمة
             keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
@@ -461,8 +483,10 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
+    webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start مع ميزة الـ WebApp
     keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
@@ -473,7 +497,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         text=(
-            "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
+            "🌟 *مرحبًا بك في بوت مكتبة الكتب الذكي*\n\n"
             "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
             "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
             "🧭 *تعليمات البحث الصحيحة:*\n"
@@ -508,28 +532,69 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
     if not await check_subscription(update.effective_user.id, context.bot):
         return
 
+    # معالجة إشارات القادمة من الـ Web App التفاعلي إن وجدت وتحويلها لـ Callbacks آمنة
+    if update.message and update.message.web_app_data:
+        raw_data = update.message.web_app_data.data
+        if raw_data.startswith("idx:") or raw_data.startswith("eng_idx:") or raw_data in ["radar_menu", "buy_premium", "show_trending"]:
+            class MockCallbackQuery:
+                def __init__(self, message, data, from_user):
+                    self.message = message
+                    self.data = data
+                    self.from_user = from_user
+                async def answer(self, text=None, show_alert=False): pass
+            
+            mock_update = update
+            mock_update.callback_query = MockCallbackQuery(update.message, raw_data, update.effective_user)
+            await handle_start_callbacks(mock_update, context)
+            return
+        else:
+            update.message.text = raw_data
+
     await search_books(update, context)
 
 # ===============================================
-# تشغيل البوت
+# دالة تشغيل البوت بالتوازي مع خادم الويب FastAPI
 # ===============================================
-def run_bot():
+async def run_combined_app(application: Application):
+    """دالة لتشغيل البوت بالتوازي مع uvicorn بشكل غير متزامن وآمن"""
+    await application.initialize()
+    
+    # محاكاة كائن سياق لتخزين البيانات والاتصال المباشر بقواعد البيانات قبل تشغيل السيرفر
+    class MockContext:
+        def __init__(self, app_obj):
+            self.bot_data = app_obj.bot_data
+            
+    logger.info("⏳ جاري تهيئة قواعد البيانات والاتصال بـ PostgreSQL أولاً وبأولوية مطلقة...")
+    await init_db(MockContext(application))
+    
+    await application.start()
+    await application.updater.start_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
+    
+    port = int(os.environ.get("PORT", 8080))
+    config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="info")
+    server = uvicorn.Server(config)
+    
+    try:
+        await server.serve()
+    finally:
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
+# ===============================================
+# دالة التشغيل والانطلاق الرئيسية والتثبيت المستدام (Main)
+# ===============================================
+def main():
     token = os.getenv("BOT_TOKEN")
-
     if not token:
         logger.error("🚨 BOT_TOKEN not found.")
         return
 
+    persistence = PicklePersistence(filepath="bot_data.pickle")
+    
     global app
-    app = (
-        Application.builder()
-        .token(token)
-        .post_init(init_db)
-        .post_shutdown(close_db)
-        .persistence(PicklePersistence(filepath="bot_data.pickle"))
-        .build()
-    )
+    # تم تجميع وإغلاق القوس في سطر واحد لمنع الـ SyntaxError المزعج نهائياً
+    app = Application.builder().token(token).persistence(persistence).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
@@ -551,9 +616,10 @@ def run_bot():
 
     register_admin_handlers(app, start)
 
-    logger.info("✅ Bot is running successfully...")
+    logger.info("🚀 The cultural book library bot web server is launching and fully operational...")
     
-    app.run_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run_combined_app(app))
 
 if __name__ == "__main__":
-    run_bot()
+    main()
