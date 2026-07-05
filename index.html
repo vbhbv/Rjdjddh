@@ -33,7 +33,7 @@
             overflow-x: hidden;
         }
 
-        /* تأثير اللمعان الزجاجي الخلفي الراق */
+        /* خلفية نيون زجاجية خفيفة علوية */
         body::before {
             content: '';
             position: fixed;
@@ -46,7 +46,7 @@
             pointer-events: none;
         }
 
-        /* الهيدر الزجاجي الفخم */
+        /* هيدر المنظومة الزجاجي الفاخر */
         .glass-header {
             background: var(--card-bg);
             backdrop-filter: blur(20px);
@@ -75,7 +75,7 @@
             font-weight: 500;
         }
 
-        /* شريط البحث النيون التفاعلي */
+        /* شريط البحث الذكي */
         .search-wrapper {
             position: relative;
             margin-bottom: 20px;
@@ -116,7 +116,7 @@
             color: #0ea5e9;
         }
 
-        /* العناوين الجانبية */
+        /* العناوين الجانبية للأقسام */
         .section-title {
             font-size: 15px;
             font-weight: 700;
@@ -128,7 +128,7 @@
             letter-spacing: -0.2px;
         }
 
-        /* أزرار الفهارس والأقسام */
+        /* شبكة الفهارس التفاعلية للبوت */
         .features-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -222,12 +222,13 @@
             font-weight: 700;
             cursor: pointer;
             flex-shrink: 0;
-            transition: opacity 0.15s;
+            transition: all 0.2s ease;
             box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
         }
 
-        .action-btn:active {
-            opacity: 0.85;
+        .action-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
         }
 
         /* شاشة جاري التحميل المتحركة */
@@ -299,12 +300,12 @@
         tg.ready();
         tg.expand();
 
-        // جلب الكتب الرائجة فور فتح التطبيق
+        // جلب الكتب الرائجة فور فتح الواجهة تلقائياً
         window.onload = function() {
             loadTrendingDynamic();
         };
 
-        // دالة جلب الكتب الأكثر تحميلاً ديناميكياً من السيرفر المستقل
+        // دالة جلب التريندات الأسبوعية من السيرفر
         async function loadTrendingDynamic() {
             document.getElementById("boxTitle").innerHTML = `<i class="fa-solid fa-fire" style="color: #f87171;"></i> الكتب الأكثر تحميلاً هذا الأسبوع`;
             const area = document.getElementById("displayArea");
@@ -331,7 +332,7 @@
             }
         }
 
-        // محرك البحث الحي الفوري (Debounce لعدم الضغط على السيرفر)
+        // البحث الفوري التفاعلي
         let debounceTimer;
         function liveSearch() {
             clearTimeout(debounceTimer);
@@ -369,7 +370,7 @@
             }, 300);
         }
 
-        // صياغة قالب بطاقة الكتاب
+        // توليد بطاقات الكتب الرسومية
         function createBookCard(name, fileId) {
             const cleanName = name.replace(".pdf", "").replace(".PDF", "");
             return `
@@ -383,13 +384,47 @@
             `;
         }
 
-        // إرسال معرف الملف الحقيقي للبوت لإرساله فوراً في الشات وإغلاق التطبيق
-        function downloadBookDirect(fileId) {
-            tg.sendData("file:" + fileId);
-            tg.close();
+        // دالة التحميل المباشر الآمنة دون إغلاق الواجهة أو الخروج
+        async function downloadBookDirect(fileId) {
+            const userId = tg.initDataUnsafe?.user?.id;
+            
+            if (!userId) {
+                alert("عذراً، تعذر التحقق من هوية حسابك الحالي داخل تيليجرام.");
+                return;
+            }
+
+            // قفل الزر مؤقتاً لتفادي تكرار الضغط
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> جاري إرساله...`;
+
+            try {
+                const response = await fetch(`/api/download?file_id=${fileId}&user_id=${userId}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    // إظهار نافذة منبثقة من تيليجرام لتأكيد نجاح العملية دون مغادرة الواجهة
+                    tg.showPopup({
+                        title: "🚀 تم الإرسال بنجاح",
+                        message: "تم إرسال نسخة الـ PDF إلى محادثتك الشخصية مع البوت بنجاح! يمكنك الاستمرار في تصفح وتحميل المزيد من الكتب الآن.",
+                        buttons: [{type: "ok", text: "رائع"}]
+                    });
+                    btn.innerHTML = `تم الإرسال ✓`;
+                    btn.style.background = "linear-gradient(135deg, #10b981, #059669)";
+                } else {
+                    alert(data.message);
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+            } catch (error) {
+                alert("تعذر الاتصال بالخادم السحابي لإرسال الملف.");
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
         }
 
-        // تفعيل استدعاء قوائم البوت والتحويل التفاعلي للشات
+        // إرسال أوامر القوائم الأخرى للبوت وإغلاق التطبيق
         function triggerBotMenu(menuAction) {
             tg.sendData(menuAction);
             tg.close();
