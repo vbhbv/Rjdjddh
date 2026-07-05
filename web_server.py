@@ -1,15 +1,14 @@
 import os
 import logging
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
+
+# استيراد كائن الـ FastAPI الرئيسي من الملف الأساسي لضمان العمل على نفس المنفذ (Port)
+from main import web_app
 
 logger = logging.getLogger(__name__)
 
-# إنشاء تطبيق FastAPI
-web_app = FastAPI(title="Knowledge Library Dynamic API")
-
-# تفعيل الـ CORS للسماح بالاتصال الآمن بين الواجهة والسيرفر
+# تفعيل الـ CORS للسماح بالاتصال الآمن والمباشر بين واجهة الـ HTML والسيرفر الخلفي
 web_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,57 +17,60 @@ web_app.add_middleware(
     allow_headers=["*"],
 )
 
-# مرجع ديناميكي لـ Application الخاص بـ تيليجرام لنتفادى الـ Circular Import
+# مرجع ديناميكي لكائن الـ Application الخاص بـ تيليجرام لتبادل البيانات ومنع الـ Circular Import
 bot_application = None
 
 def init_web_server(app):
-    """ربط كائن البوت الرئيسي بخادم الويب عند الإقلاع"""
+    """ربط كائن البوت الرئيسي بخادم الويب عند الإقلاع للوصول لقاعدة البيانات"""
     global bot_application
     bot_application = app
+    logger.info("📡 تم ربط خادم الويب بمحرك البوت بنجاح.")
 
 # ===============================================
-# مسارات الـ API للواجهة المكتبية
+# مسارات الـ API والواجهة المكتبية الذكية
 # ===============================================
-@web_app.get("/miniapp", response_class=HTMLResponse)
+
+@web_app.get("/miniapp")
 async def get_miniapp():
-    """بث واجهة الويب الفاخرة index.html"""
+    """بث واجهة الويب الفاخرة المحدثة index.html"""
     file_path = os.path.join(os.path.dirname(__file__), "index.html")
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8") as file:
-            return file.read()
-    return "<h3>عذراً، لم يتم العثور على ملف الواجهة index.html</h3>"
+            import fastapi.responses
+            return fastapi.responses.HTMLResponse(content=file.read())
+    return fastapi.responses.HTMLResponse(content="<h3>عذراً، لم يتم العثور على ملف الواجهة index.html في مجلد المشروع!</h3>", status_code=404)
 
 
 @web_app.get("/api/search")
 async def api_search(query: str = Query(..., min_length=2)):
-    """محرك البحث الحي المرتبط مباشرة بقاعدة بيانات البوت دون إغلاق الواجهة"""
+    """محرك بحث حي فوري يستعلم من قاعدة البيانات ويعيد النتيجة للواجهة مباشرة"""
     if bot_application is None:
-        return {"success": False, "message": "Server initializing..."}
+        return {"success": False, "message": "السيرفر قيد التهيئة، يرجى الانتظار..."}
         
     pool = bot_application.bot_data.get("db_conn")
     if not pool:
-        return {"success": False, "message": "Database pool not ready"}
+        return {"success": False, "message": "قاعدة البيانات غير متصلة حالياً"}
     
     try:
         async with pool.acquire() as conn:
-            # استخدام عنونة ILIKE السريعة المتوافقة مع فهارس الـ Trgm لديك
+            # استخدام نفس منطق الفهارس الثلاثية (Trgm) لضمان السرعة الفائقة
             rows = await conn.fetch("""
                 SELECT file_id, file_name 
                 FROM books 
                 WHERE file_name ILIKE $1 
-                LIMIT 20;
+                LIMIT 25;
             """, f"%{query}%")
             
             results = [{"file_id": r["file_id"], "file_name": r["file_name"]} for r in rows]
             return {"success": True, "results": results}
     except Exception as e:
-        logger.error(f"API Live Search Error: {e}")
-        return {"success": False, "message": str(e)}
+        logger.error(f"⚠️ خطأ في البحث عبر الـ API: {e}")
+        return {"success": False, "message": "حدث خطأ أثناء فحص الرفوف الرقمية"}
 
 
 @web_app.get("/api/trending")
 async def api_trending():
-    """جلب الكتب الأكثر تحميلاً ديناميكياً للواجهة"""
+    """جلب الكتب الأكثر تحميلاً بناءً على جدول الإحصائيات الأسبوعي"""
     if bot_application is None:
         return {"success": False, "results": []}
         
@@ -84,11 +86,13 @@ async def api_trending():
                 JOIN download_stats s ON b.file_id = s.file_id
                 WHERE s.downloaded_at > NOW() - INTERVAL '7 days'
                 GROUP BY b.file_id, b.file_name
-                ORDER BY downloads DESC LIMIT 10;
+                ORDER BY downloads DESC LIMIT 15;
             """)
+            # خطة بديلة عرض 15 كتاب عشوائي إذا كانت الإحصائيات الأسبوعية فارغة في البداية
             if not rows:
-                rows = await conn.fetch("SELECT file_id, file_name FROM books LIMIT 10;")
+                rows = await conn.fetch("SELECT file_id, file_name FROM books LIMIT 15;")
             
             return {"success": True, "results": [{"file_id": r["file_id"], "file_name": r["file_name"]} for r in rows]}
-    except:
+    except Exception as e:
+        logger.error(f"⚠️ خطأ في جلب الملفات الأكثر تحميلاً: {e}")
         return {"success": False, "results": []}
