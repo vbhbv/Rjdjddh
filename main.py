@@ -2,16 +2,19 @@ import os
 import re
 import asyncpg
 import logging
+import asyncio
 from datetime import datetime
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
 )
 
+# 🛠 استيراد الدالة المخصصة لتمرير الأوامر النصية من الـ WebApp مباشرة إلى محرك البحث
+from search_handler import search_books, handle_callbacks
 # 🛠 استيراد الدوال من الملفات الملحقة ببرمجية البوت
 from admin_panel import register_admin_handlers  
-from search_handler import search_books, handle_callbacks
+
 # استيراد دوال الرادار من الملف المستقل لضمان الربط الكامل
 from radar_handler import (
     start_radar_flow, process_radar_category, 
@@ -22,6 +25,11 @@ from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
 
+# 🌐 استيراد مكتبات خادم الويب لتشغيل التطبيق المصغر (Web App)
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import uvicorn
+
 # ===============================================
 # إعداد اللوج والمراقبة
 # ===============================================
@@ -30,6 +38,20 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ===============================================
+# إعداد خادم الويب FastAPI
+# ===============================================
+web_app = FastAPI()
+
+@web_app.get("/miniapp", response_class=HTMLResponse)
+async def get_miniapp():
+    """بث واجهة الويب المكتبية الفاخرة index.html عند طلبها من قبل تيليجرام"""
+    file_path = os.path.join(os.path.dirname(__file__), "index.html")
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as file:
+            return file.read()
+    return "<h3>عذراً، لم يتم العثور على ملف الواجهة index.html في خادم ريلواي!</h3>"
 
 # ===============================================
 # إعداد وتجهيز قاعدة البيانات (PostgreSQL)
@@ -350,7 +372,10 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "back_to_main" or query.data == "check_subscription":
         if await check_subscription(query.from_user.id, context.bot):
+            # دمج الرابط المباشر للتطبيق المصغر في القائمة التفاعلية الأساسية للبوت
+            webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
             keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي (الرادار)", callback_data="radar_menu")],
@@ -436,7 +461,10 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # دمج الرابط المباشر للتطبيق المصغر في القائمة التفاعلية الأساسية للبوت عند كتابة أمر البدء
+    webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
     keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي (الرادار)", callback_data="radar_menu")],
@@ -482,7 +510,47 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         )
         return
 
+    # معالجة استقبال البيانات القادمة من الـ WebApp المصغر وتحويلها لمحرك البحث السريع
+    if update.message and update.message.web_app_data:
+        raw_data = update.message.web_app_data.data
+        # التحقق مما إذا كانت القيمة عبارة عن فلتر أو أمر فهرس فرعي لتوجيهه بدقة
+        if raw_data.startswith("idx:") or raw_data.startswith("eng_idx:") or raw_data in ["radar_menu", "buy_premium", "show_trending"]:
+            class MockCallbackQuery:
+                def __init__(self, message, data, from_user):
+                    self.message = message
+                    self.data = data
+                    self.from_user = from_user
+                async def answer(self, text=None, show_alert=False): pass
+            
+            mock_update = update
+            mock_update.callback_query = MockCallbackQuery(update.message, raw_data, update.effective_user)
+            await handle_start_callbacks(mock_update, context)
+            return
+        else:
+            # محاكاة إدخال نصي عادي إذا كانت القيمة الممررة اسم كتاب
+            update.message.text = raw_data
+
     await search_books(update, context)
+
+# ===============================================
+# دالة تشغيل البوت بالتوازي مع خادم الويب FastAPI
+# ===============================================
+async def run_combined_app(application: Application):
+    """دالة لتشغيل البوت بالتوازي مع uvicorn بشكل غير متزامن وآمن"""
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(allowed_updates=["message", "callback_query", "channel_post", "chat_member", "my_chat_member"])
+    
+    port = int(os.environ.get("PORT", 8080))
+    config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="info")
+    server = uvicorn.Server(config)
+    
+    try:
+        await server.serve()
+    finally:
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
 # ===============================================
 # دالة التشغيل والانطلاق الرئيسية والتثبيت المستدام (Main)
@@ -510,11 +578,15 @@ def main():
     app.add_handler(CommandHandler("search", search_books_with_subscription))
     app.add_handler(CallbackQueryHandler(handle_start_callbacks))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, search_books_with_subscription))
+    # تعديل الفلتر ليلتقط النصوص العادية والبيانات القادمة من الـ WebApp معاً
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.StatusUpdate.WEB_APP_DATA) & ~filters.COMMAND, search_books_with_subscription))
     app.add_handler(ChatMemberHandler(welcome_bot_in_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    logger.info("🚀 The cultural book library bot is polling and fully operational...")
-    app.run_polling()
+    logger.info("🚀 The cultural book library bot web server is launching and fully operational...")
+    
+    # استخدام حلقة الأحداث (Event Loop) لتشغيل المنظومتين معاً دون تداخل
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run_combined_app(app))
 
 if __name__ == "__main__":
     main()
