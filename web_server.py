@@ -1,11 +1,11 @@
 import os
 import logging
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger(__name__)
 
-# إنشاء كائن الـ FastAPI هنا بشكل مستقل تماماً لكسر حلقة الاستيراد الدائري
+# إنشاء كائن الـ FastAPI بشكل مستقل تماماً لكسر حلقة الاستيراد الدائري
 web_app = FastAPI(title="Knowledge Library Live API Engine")
 
 # تفعيل الـ CORS للسماح بالاتصال الآمن والمباشر بين واجهة الـ HTML والسيرفر الخلفي
@@ -53,7 +53,6 @@ async def api_search(query: str = Query(..., min_length=2)):
     
     try:
         async with pool.acquire() as conn:
-            # استخدام نفس منطق الفهارس الثلاثية (Trgm) لضمان السرعة الفائقة
             rows = await conn.fetch("""
                 SELECT file_id, file_name 
                 FROM books 
@@ -88,7 +87,6 @@ async def api_trending():
                 GROUP BY b.file_id, b.file_name
                 ORDER BY downloads DESC LIMIT 15;
             """)
-            # خطة بديلة: عرض 15 كتاباً إذا كانت الإحصائيات الأسبوعية فارغة في البداية
             if not rows:
                 rows = await conn.fetch("SELECT file_id, file_name FROM books LIMIT 15;")
             
@@ -100,15 +98,16 @@ async def api_trending():
 
 @web_app.get("/api/download")
 async def api_download(file_id: str, user_id: int):
-    """إرسال ملف الكتاب مباشرة إلى شات المستخدم عبر البوت بعد التحقق من شروط الملف الرئيسي"""
+    """إرسال ملف الكتاب مباشرة إلى شات المستخدم بعد فرض قيود الاشتراك والإحالات بصرامة"""
     if bot_application is None:
-        return {"success": False, "message": "السيرفر قيد التهيئة وتمرير البيانات..."}
+        raise HTTPException(status_code=503, detail="السيرفر قيد التهيئة وتمرير البيانات...")
         
-    # استدعاء فلاتر الفحص المبرمجة مسبقاً في ملفك الرئيسي (الاشتراك، الإحالات، الـ 10 محاولات)
+    # [تأمين صارم] استدعاء فحص القيود الفعلي من ملفك الرئيسي وإجبار السيرفر على الحظر فوراً
     if hasattr(bot_application, "check_user_limits"):
         allowed, reason = await bot_application.check_user_limits(user_id=user_id)
         if not allowed:
-            return {"success": False, "message": reason}
+            # إرجاع استجابة حظر صريحة (403) لتلتقطها واجهة الـ Mini App وتظهر شاشة القفل
+            raise HTTPException(status_code=403, detail=reason)
             
     pool = bot_application.bot_data.get("db_conn")
     
@@ -117,10 +116,10 @@ async def api_download(file_id: str, user_id: int):
         await bot_application.bot.send_document(
             chat_id=user_id,
             document=file_id,
-            caption="📖 تم جلب كتابك بنجاح من واجهة مكتبة المعرفة الذكية."
+            caption=" تم جلب كتابك بواسطة @boooksfree1bot."
         )
         
-        # تسجيل عملية التحميل في جدول الإحصائيات الأسبوعية لدعم خوارزمية التريند
+        # تسجيل عملية التحميل لدعم خوارزمية التريند
         if pool:
             async with pool.acquire() as conn:
                 await conn.execute("INSERT INTO download_stats(file_id) VALUES($1)", file_id)
@@ -129,7 +128,7 @@ async def api_download(file_id: str, user_id: int):
     except Exception as e:
         error_msg = str(e)
         if "forbidden" in error_msg.lower() or "chat not found" in error_msg.lower():
-            return {"success": False, "message": "⚠️ عذراً، يجب عليك تفعيل البوت والاشتراك في القناة أولاً لتفادي شروط قيود التحميل."}
+            raise HTTPException(status_code=403, detail="⚠️ عذراً، يجب عليك تفعيل البوت والاشتراك في القناة أولاً لتفادي شروط قيود التحميل.")
             
         logger.error(f"⚠️ خطأ أثناء إرسال الملف المستقل عبر الـ API: {e}")
-        return {"success": False, "message": "فشل إرسال الملف. تأكد من أنك قمت بعمل /start للبوت وتحدثت معه مسبقاً."}
+        raise HTTPException(status_code=500, detail="فشل إرسال الملف. تأكد من أنك قمت بعمل /start للبوت مسبقاً.")
