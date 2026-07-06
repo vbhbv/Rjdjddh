@@ -688,10 +688,9 @@ def main():
     global app
     app = Application.builder().token(token).persistence(persistence).build()
 
-    # 🛠 الإصلاح الجوهري: ربط دالة check_user_limits الفعلية بكائن التطبيق،
-    # لأن web_server.py يعتمد على hasattr(bot_application, "check_user_limits")
-    # وكانت هذه الدالة غائبة تماماً، ما جعل فحص الاشتراك وحد البحث معطلين بصمت.
-    app.check_user_limits = check_user_limits
+    # 🛠 الإصلاح الجوهري: Application يستخدم __slots__ ولا يقبل إضافة خصائص جديدة مباشرة،
+    # لذلك نخزّن الدالة داخل bot_data (وهو dict عادي قابل للتعديل) بدل تعليقها على الكائن نفسه.
+    app.bot_data["check_user_limits"] = check_user_limits
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
