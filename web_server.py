@@ -100,10 +100,16 @@ async def api_trending():
 
 @web_app.get("/api/download")
 async def api_download(file_id: str, user_id: int):
-    """إرسال ملف الكتاب مباشرة إلى شات المستخدم عبر البوت دون الحاجة لإغلاق الواجهة"""
+    """إرسال ملف الكتاب مباشرة إلى شات المستخدم عبر البوت بعد التحقق من شروط الملف الرئيسي"""
     if bot_application is None:
         return {"success": False, "message": "السيرفر قيد التهيئة وتمرير البيانات..."}
         
+    # استدعاء فلاتر الفحص المبرمجة مسبقاً في ملفك الرئيسي (الاشتراك، الإحالات، الـ 10 محاولات)
+    if hasattr(bot_application, "check_user_limits"):
+        allowed, reason = await bot_application.check_user_limits(user_id=user_id)
+        if not allowed:
+            return {"success": False, "message": reason}
+            
     pool = bot_application.bot_data.get("db_conn")
     
     try:
@@ -121,5 +127,9 @@ async def api_download(file_id: str, user_id: int):
                 
         return {"success": True, "message": "تم إرسال الكتاب إلى حسابك بنجاح!"}
     except Exception as e:
+        error_msg = str(e)
+        if "forbidden" in error_msg.lower() or "chat not found" in error_msg.lower():
+            return {"success": False, "message": "⚠️ عذراً، يجب عليك تفعيل البوت والاشتراك في القناة أولاً لتفادي شروط قيود التحميل."}
+            
         logger.error(f"⚠️ خطأ أثناء إرسال الملف المستقل عبر الـ API: {e}")
         return {"success": False, "message": "فشل إرسال الملف. تأكد من أنك قمت بعمل /start للبوت وتحدثت معه مسبقاً."}
