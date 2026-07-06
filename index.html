@@ -104,7 +104,7 @@
             <i class="fa-solid fa-triangle-exclamation" id="lockIcon"></i>
             <h2 id="lockTitle">يجب الاشتراك في القناة أولاً</h2>
             <p id="lockMessage">عذراً، لم يتم تفعيل الاشتراك الإجباري أو أنك تجاوزت حد الـ 10 محاولات المتاحة لك قبل دعوة الأصدقاء عبر نظام الإحالات.</p>
-            <a href="#" id="lockActionButton" class="btn-lock-action" target="_blank">
+            <a href="https://t.me/iiollr" id="lockActionButton" class="btn-lock-action" target="_blank">
                 <i class="fa-solid fa-arrow-up-right-from-square"></i> <span id="lockButtonText">اشترك الآن ليعمل التطبيق</span>
             </a>
             <button class="btn-lock-retry" onclick="window.location.reload();">لقد اشتركت، تحديث الحساب 🔄</button>
@@ -164,9 +164,6 @@
                 this.traceId = `tr-${Math.random().toString(36).substr(2, 9)}`;
                 this.sessionId = `ss-${Math.random().toString(36).substr(2, 9)}`;
             }
-            createChildContext(requestId) {
-                return { userId: this.userId, traceId: this.traceId, sessionId: this.sessionId, requestId };
-            }
         }
 
         class ConsoleTelemetry {
@@ -181,167 +178,61 @@
         const globalTrace = new TraceContext();
 
         // =========================================================================
-        // 2. طبقة الـ HttpClient المجرّدة (The Core Network Engine)
+        // 2. طبقة الـ HttpClient المجرّدة
         // =========================================================================
-        class CircuitBreaker {
-            constructor(threshold = 3, cooldown = 10000) {
-                this.threshold = threshold; this.cooldown = cooldown;
-                this.state = 'CLOSED'; this.failures = 0; this.nextAttempt = 0;
-            }
-            canExecute() {
-                if (this.state === 'OPEN' && Date.now() > this.nextAttempt) { this.state = 'HALF-OPEN'; return true; }
-                return this.state !== 'OPEN';
-            }
-            success() { this.failures = 0; this.state = 'CLOSED'; }
-            failure() {
-                this.failures++;
-                if (this.failures >= this.threshold) {
-                    this.state = 'OPEN'; this.nextAttempt = Date.now() + this.cooldown;
-                }
-            }
-        }
-
         class HttpClient {
-            constructor() {
-                this.breakers = new Map();
-            }
-
-            getBreaker(endpoint) {
-                const urlPath = new URL(endpoint, window.location.origin).pathname;
-                if (!this.breakers.has(urlPath)) this.breakers.set(urlPath, new CircuitBreaker());
-                return this.breakers.get(urlPath);
-            }
-
-            async request(url, options = {}, retries = 3, delay = 200) {
-                const breaker = this.getBreaker(url);
-                if (!breaker.canExecute()) throw new Error(`CircuitBreaker is OPEN for ${url}`);
-
-                for (let i = 0; i < retries; i++) {
-                    const timeoutCtrl = new AbortController();
-                    let signal = timeoutCtrl.signal;
-                    if (options.signal) {
-                        if (typeof AbortSignal.any === 'function') signal = AbortSignal.any([options.signal, timeoutCtrl.signal]);
-                        else options.signal.addEventListener('abort', () => timeoutCtrl.abort());
-                    }
-
-                    const timerId = setTimeout(() => timeoutCtrl.abort(), 8000);
-
-                    try {
-                        const response = await fetch(url, { ...options, signal });
-                        if (!response.ok) {
-                            if (response.status === 429) {
-                                const retryAfter = response.headers.get("Retry-After");
-                                if (retryAfter) {
-                                    const waitSec = parseInt(retryAfter, 10) * 1000;
-                                    await new Promise(r => setTimeout(r, waitSec));
-                                    continue;
-                                }
-                            }
-                            if ([400, 401, 403, 404, 422].includes(response.status)) {
-                                // تمرير رمز الخطأ 403 متضمناً تفاصيل الـ Backend المرجعة لفك الحظر
-                                const errorPayload = await response.json().catch(() => ({}));
-                                const err = new Error(errorPayload.detail || `ClientError:${response.status}`);
-                                err.status = response.status;
-                                throw err;
-                            }
-                            throw new Error(`ServerError:${response.status}`);
-                        }
-                        const data = await response.json();
-                        breaker.success();
-                        return data;
-                    } catch (err) {
-                        if (err.status === 403) throw err; // منع إهدار المحاولات عند الحظر الصريح
-                        const isAbort = err.name === 'AbortError' || options.signal?.aborted;
-                        const isClient = err.message.includes("ClientError");
-                        if (isAbort || isClient || (i === retries - 1)) {
-                            if (!isAbort) breaker.failure();
-                            throw err;
-                        }
-                        await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
-                    } finally {
-                        clearTimeout(timerId);
-                    }
+            async request(url, options = {}) {
+                const response = await fetch(url, options);
+                if (!response.ok) {
+                    const errorPayload = await response.json().catch(() => ({}));
+                    const err = new Error(errorPayload.detail?.message || errorPayload.detail || "Error");
+                    err.status = response.status;
+                    err.backendData = errorPayload.detail;
+                    throw err;
                 }
+                return await response.json();
             }
         }
 
         const httpClient = new HttpClient();
 
         // =========================================================================
-        // 4. طبقة الـ Repositories (Pure Architectural Repositories)
+        // 4. طبقة الـ Repositories
         // =========================================================================
         class BookRepository {
             constructor(client) { this.client = client; }
 
-            // نظام الفحص الاستباقي الصارم قبل أي حركة في التطبيق المصغر
             async checkAccess(userId) {
-                return this.client.request(`/api/check-access?user_id=${userId}`, {}, 1, 0);
+                return this.client.request(`/api/check-access?user_id=${userId}`);
             }
-
-            async getTrending(trace) { return this.client.request('/api/trending', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getRecommendations(userId, trace) { return this.client.request(`/api/recommendations?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getCategories(trace) { return this.client.request('/api/categories', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getHistory(userId, trace) { return this.client.request(`/api/history?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            
+            async getTrending(trace) { return this.client.request('/api/trending'); }
+            async getRecommendations(userId, trace) { return this.client.request(`/api/recommendations?user_id=${userId}`); }
+            async getCategories(trace) { return this.client.request('/api/categories'); }
+            async getHistory(userId, trace) { return this.client.request(`/api/history?user_id=${userId}`); }
             async search(query, cursor, limit, filters, userId, signal, trace) {
-                const filterKey = btoa(JSON.stringify(filters || {}));
-                const url = `/api/search?user_id=${userId}&query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}&limit=${limit}&filters=${filterKey}`;
-                return this.client.request(url, { signal, headers: { 'X-Trace-Id': trace.traceId } }, 1, 0);
+                return this.client.request(`/api/search?user_id=${userId}&query=${encodeURIComponent(query)}`, { signal });
             }
-
             async download(fileId, userId, trace) {
-                return this.client.request(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${userId}`, {}, 1, 0);
+                return this.client.request(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${userId}`);
             }
         }
 
         const bookRepo = new BookRepository(httpClient);
 
-        // =========================================================================
-        // 5. طبقة الخدمات المفككة والمستقلة (Decoupled Micro-Services)
-        // =========================================================================
         class HomeService {
-            constructor(repo) {
-                this.repo = repo; this.cache = null; this.stampedePromise = null; this.ttl = 5 * 60 * 1000; this.timestamp = 0;
-            }
+            constructor(repo) { this.repo = repo; }
             async getDashboardData(userId, trace) {
-                if (this.cache && (Date.now() - this.timestamp < this.ttl)) return { fromCache: true, results: this.cache };
-                if (this.stampedePromise) return this.stampedePromise;
-
-                this.stampedePromise = (async () => {
-                    try {
-                        const results = await Promise.allSettled([
-                            this.repo.getTrending(trace), this.repo.getRecommendations(userId, trace), this.repo.getHistory(userId, trace), this.repo.getCategories(trace)
-                        ]);
-                        this.cache = {
-                            trending: results[0].status === 'fulfilled' ? results[0].value.results : [],
-                            recommendations: results[1].status === 'fulfilled' ? results[1].value.results : [],
-                            history: results[2].status === 'fulfilled' ? results[2].value.results : [],
-                            categories: results[3].status === 'fulfilled' ? results[3].value.categories : []
-                        };
-                        this.timestamp = Date.now();
-                        localStorage.setItem("offline_home_cache", JSON.stringify(this.cache));
-                        return { fromCache: false, results: this.cache };
-                    } finally {
-                        this.stampedePromise = null;
-                    }
-                })();
-                return this.stampedePromise;
-            }
-            getOfflineFallback() {
-                const raw = localStorage.getItem("offline_home_cache");
-                return raw ? JSON.parse(raw) : null;
+                const trendingData = await this.repo.getTrending(trace).catch(() => ({ results: [] }));
+                return { fromCache: false, results: { trending: trendingData.results || [], recommendations: [], history: [], categories: [] } };
             }
         }
 
         class SearchService {
-            constructor(repo) { this.repo = repo; this.abortCtrl = null; this.activePromise = null; }
-            
-            async executeSearch(query, cursor = "", filters = {}, userId, trace) {
+            constructor(repo) { this.repo = repo; this.abortCtrl = null; }
+            async executeSearch(query, userId, trace) {
                 if (this.abortCtrl) this.abortCtrl.abort();
                 this.abortCtrl = new AbortController();
-                
-                this.activePromise = this.repo.search(query, cursor, 20, filters, userId, this.abortCtrl.signal, trace);
-                return this.activePromise;
+                return this.repo.search(query, "", 25, {}, userId, this.abortCtrl.signal, trace);
             }
         }
 
@@ -349,19 +240,17 @@
         const searchService = new SearchService(bookRepo);
 
         // =========================================================================
-        // 6. محرك العرض وتقليم الـ DOM الذكي المتوازن (DOM Pruning View Layer)
+        // 6. محرك العرض والربط الديناميكي مع الماين
         // =========================================================================
         class UIRenderer {
             constructor(homeServ, searchServ, tg) {
                 this.homeServ = homeServ; this.searchServ = searchServ; this.tg = tg;
-                this.nextCursor = null; this.query = ""; this.isLoadedAll = false; this.isPageLoading = false;
-                this.searchDebounce = null;
-                
+                this.query = "";
                 this.searchCounter = parseInt(localStorage.getItem("local_search_limit_count") || "0", 10);
+                this.serverChannelUrl = "https://t.me/iiollr"; // الرابط الأساسي والاحتياطي المباشر
                 
                 this.domElements();
                 this.bindAbsoluteEvents();
-                this.initScrollBoundaryScanner();
                 this.checkInitialTelegramContext();
             }
 
@@ -369,9 +258,6 @@
                 this.dom = {
                     input: document.getElementById("dbSearch"),
                     display: document.getElementById("displayArea"),
-                    recArea: document.getElementById("recommendationArea"),
-                    histArea: document.getElementById("historyArea"),
-                    histSection: document.getElementById("historySection"),
                     loader: document.getElementById("skeletonLoader"),
                     empty: document.getElementById("emptyStateView"),
                     title: document.getElementById("sectionTitle"),
@@ -390,29 +276,15 @@
             bindAbsoluteEvents() {
                 this.dom.input.addEventListener("input", () => this.triggerDebouncedSearch());
                 this.dom.clear.addEventListener("click", () => this.clearSearch());
-                
                 document.body.addEventListener("click", (e) => {
                     const btn = e.target.closest('.btn-action');
                     if (btn) this.fireDownload(btn);
-                    const chip = e.target.closest('.category-chip');
-                    if (chip) this.selectCategory(chip);
-                });
-            }
-
-            initScrollBoundaryScanner() {
-                window.addEventListener("scroll", () => {
-                    if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 200) {
-                        if (this.query && !this.isLoadedAll && !this.isPageLoading && this.nextCursor) {
-                            this.fetchNextSearchBatch();
-                        }
-                    }
                 });
             }
 
             checkInitialTelegramContext() {
                 if (this.tg) {
-                    this.tg.ready();
-                    this.tg.expand();
+                    this.tg.ready(); this.tg.expand();
                     this.userId = this.tg.initDataUnsafe?.user?.id || 138980074;
                     const botUsername = this.tg.initDataUnsafe?.receiver?.username || "KnowledgeLibraryBot"; 
                     this.botInviteLink = `https://t.me/${botUsername}?start=ref_${this.userId}`;
@@ -422,22 +294,24 @@
                 }
             }
 
-            // نظام الفحص الاستباقي المركزي لحجب الواجهة بالكامل
             async checkStrictPreflightAccess() {
                 if (this.searchCounter >= 10) {
                     this.triggerLockScreen("search_limit");
                     return false;
                 }
                 try {
-                    await bookRepo.checkAccess(this.userId);
+                    const res = await bookRepo.checkAccess(this.userId);
+                    if (res.channel_url) this.serverChannelUrl = res.channel_url;
                     this.dom.lockOverlay.style.display = "none";
                     return true;
                 } catch (err) {
                     if (err.status === 403) {
-                        this.triggerLockScreen("subscription", err.message);
+                        const msg = err.backendData?.message || err.message;
+                        if (err.backendData?.channel_url) this.serverChannelUrl = err.backendData.channel_url;
+                        this.triggerLockScreen("subscription", msg);
                         return false;
                     }
-                    return true; // تجاوز أخطاء الشبكة المؤقتة لضمان استمرارية التشغيل
+                    return true;
                 }
             }
 
@@ -446,27 +320,28 @@
                 if (type === "search_limit") {
                     this.dom.lockIcon.className = "fa-solid fa-circle-nodes";
                     this.dom.lockTitle.textContent = "تنبيه: تم الوصول للحد الأقصى للبحث مجاناً";
-                    this.dom.lockMessage.textContent = "لقد استهلكت 10 عمليات بحث متاحة لك. لفتح قفل التطبيق ومتابعة القراءة والاستفادة، يرجى مشاركة رابط الإحالة الخاص بك مع الأصدقاء لتفعيل الحساب.";
-                    this.dom.lockBtnText.textContent = "نسخ رابط الإحالة الخاص بك وتفعيل البوت";
+                    this.dom.lockMessage.textContent = "لقد استهلكت 10 عمليات بحث متاحة لك. يرجى مشاركة رابط الإحالة الخاص بك لتفعيل الحساب.";
+                    this.dom.lockBtnText.textContent = "نسخ رابط الإحالة الخاص بك";
                     this.dom.lockBtn.href = this.botInviteLink;
                 } else {
                     this.dom.lockIcon.className = "fa-solid fa-triangle-exclamation";
                     this.dom.lockTitle.textContent = "يجب الاشتراك في القناة أولاً";
-                    this.dom.lockMessage.textContent = customReason || "عذراً، يجب عليك الاشتراك في قناة المكتبة أولاً وتفعيل البوت لتتمكن من تحميل الكتب والمخطوطات بحرية.";
+                    this.dom.lockMessage.textContent = customReason || "عذراً، يجب عليك الاشتراك في قناة المكتبة أولاً وتفعيل البوت.";
                     this.dom.lockBtnText.textContent = "اشترك الآن في القناة ليعمل التطبيق";
-                    this.dom.lockBtn.href = "https://t.me/YourChannelUsername"; // ضع رابط قناتك العام هنا
+                    
+                    // استخدام الرابط المستلم ديناميكياً أو العودة للرابط الافتراضي المستهدف مباشرة
+                    this.dom.lockBtn.href = this.serverChannelUrl || "https://t.me/iiollr";
                 }
             }
 
             createCard(book, tag) {
                 const node = document.createElement("div");
                 node.className = "book-card";
-                node.dataset.fileId = book.file_id;
                 node.innerHTML = `
                     <div class="book-info-block">
                         <div class="book-cover-placeholder"><i class="fa-solid fa-file-pdf"></i></div>
                         <div class="book-text">
-                            <div class="book-title" title="${book.title || book.file_name}">${book.title || book.file_name}</div>
+                            <div class="book-title">${book.file_name}</div>
                             <div class="book-meta-data">امتداد: PDF | تصنيف: ${tag}</div>
                         </div>
                     </div>
@@ -476,50 +351,17 @@
             }
 
             async renderDashboard() {
-                // تفعيل الفحص الاستباقي قبل عرض الصفحة الرئيسية
                 const hasAccess = await this.checkStrictPreflightAccess();
                 if (!hasAccess) return;
 
                 this.dom.loader.style.display = "flex";
-                const startTime = performance.now();
-
                 try {
                     const data = await this.homeServ.getDashboardData(this.userId, globalTrace);
                     this.dom.loader.style.display = "none";
-                    this.dom.badge.style.display = "none";
-                    this.populateHome(data.results);
-                    telemetry.logMetric("DashboardRenderTime", performance.now() - startTime, {}, globalTrace);
+                    this.dom.display.replaceChildren();
+                    data.results.trending.forEach(b => this.dom.display.appendChild(this.createCard(b, "مصلحة عامة")));
                 } catch (err) {
                     this.dom.loader.style.display = "none";
-                    telemetry.logError("DashboardLoad", err, globalTrace);
-                    
-                    const offlineData = this.homeServ.getOfflineFallback();
-                    if (offlineData) {
-                        this.dom.badge.style.display = "inline-block";
-                        this.populateHome(offlineData);
-                    }
-                }
-            }
-
-            populateHome(data) {
-                this.dom.display.replaceChildren();
-                if(data.trending) data.trending.forEach(b => this.dom.display.appendChild(this.createCard(b, "مصلحة عامة")));
-                if (data.recommendations && data.recommendations.length > 0) {
-                    document.getElementById("recommendationSection").style.display = "block";
-                    this.dom.recArea.replaceChildren();
-                    data.recommendations.forEach(b => this.dom.recArea.appendChild(this.createCard(b, "مقترح لك")));
-                }
-                if (data.history && data.history.length > 0) {
-                    this.dom.histSection.style.display = "block";
-                    this.dom.histArea.replaceChildren();
-                    data.history.forEach(b => this.dom.histArea.appendChild(this.createCard(b, "سجل سابق")));
-                }
-                if (this.dom.cats.children.length <= 1 && data.categories) {
-                    data.categories.forEach(c => {
-                        const chip = document.createElement("div");
-                        chip.className = "category-chip"; chip.textContent = c; chip.dataset.category = c;
-                        this.dom.cats.appendChild(chip);
-                    });
                 }
             }
 
@@ -527,7 +369,6 @@
                 clearTimeout(this.searchDebounce);
                 this.query = this.dom.input.value.trim();
                 if (this.query.length < 2) { if (this.query.length === 0) this.clearSearch(); return; }
-                
                 this.searchDebounce = setTimeout(() => this.executeSearchPipeline(), 250);
             }
 
@@ -535,98 +376,53 @@
                 const hasAccess = await this.checkStrictPreflightAccess();
                 if (!hasAccess) return;
 
-                this.dom.title.textContent = "نتائج الفحص الفوري والمطابقة";
                 this.dom.empty.style.display = "none";
                 this.dom.loader.style.display = "flex";
                 this.dom.display.replaceChildren();
 
                 try {
-                    const res = await this.searchServ.executeSearch(this.query, "", {}, this.userId, globalTrace);
+                    const res = await this.searchServ.executeSearch(this.query, this.userId, globalTrace);
                     this.dom.loader.style.display = "none";
                     if (res.success && res.results.length > 0) {
                         this.searchCounter++;
                         localStorage.setItem("local_search_limit_count", this.searchCounter.toString());
-                        
-                        this.nextCursor = res.next_cursor;
-                        this.isLoadedAll = !res.next_cursor;
                         res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
                     } else {
                         this.dom.empty.style.display = "block";
                     }
                 } catch (err) {
                     if (err.name !== "AbortError") this.dom.loader.style.display = "none";
-                    if (err.status === 403) this.triggerLockScreen("subscription", err.message);
-                }
-            }
-
-            async fetchNextSearchBatch() {
-                const hasAccess = await this.checkStrictPreflightAccess();
-                if (!hasAccess) return;
-                
-                this.isPageLoading = true;
-                const row = document.createElement("div"); row.className = "skeleton-row";
-                this.dom.display.appendChild(row);
-
-                try {
-                    const res = await this.searchServ.executeSearch(this.query, this.nextCursor, {}, this.userId, globalTrace);
-                    row.remove();
-                    if (res.success && res.results.length > 0) {
-                        this.nextCursor = res.next_cursor;
-                        this.isLoadedAll = !res.next_cursor;
-                        res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
+                    if (err.status === 403) {
+                        if (err.backendData?.channel_url) this.serverChannelUrl = err.backendData.channel_url;
+                        this.triggerLockScreen("subscription", err.message);
                     }
-                } catch (err) {
-                    row.remove();
-                    if (err.status === 403) this.triggerLockScreen("subscription", err.message);
-                } finally {
-                    this.isPageLoading = false;
                 }
             }
 
             async fireDownload(btn) {
                 if (btn.classList.contains("loading")) return;
-                
                 const hasAccess = await this.checkStrictPreflightAccess();
                 if (!hasAccess) return;
 
                 btn.classList.add("loading"); btn.disabled = true; btn.textContent = "جاري الحجز...";
-                
                 try {
                     const res = await bookRepo.download(btn.dataset.fileId, this.userId, globalTrace);
                     if (res.success) {
                         btn.className = "btn-action success"; btn.textContent = "تم الإرسال";
-                    } else {
-                        this.resetBtn(btn);
-                        this.triggerLockScreen("subscription", res.message);
                     }
                 } catch (err) {
                     this.resetBtn(btn);
-                    btn.className = "btn-action error"; btn.textContent = "خطأ بالحظر";
                     if (err.status === 403) {
+                        if (err.backendData?.channel_url) this.serverChannelUrl = err.backendData.channel_url;
                         this.triggerLockScreen("subscription", err.message);
                     }
-                    telemetry.logError("DownloadAction", err, globalTrace);
                 }
             }
 
             resetBtn(btn) { btn.className = "btn-action"; btn.disabled = false; btn.textContent = "إرسال للشات"; }
-            
-            selectCategory(chip) {
-                document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
-                chip.classList.add('active'); this.dom.input.value = chip.dataset.category;
-                this.triggerDebouncedSearch();
-            }
-            
-            clearSearch() {
-                this.dom.input.value = ""; this.query = ""; this.nextCursor = null; this.isLoadedAll = false;
-                this.dom.title.textContent = "الإصدارات الأكثر رواجاً هذا الأسبوع";
-                this.renderDashboard();
-            }
+            clearSearch() { this.dom.input.value = ""; this.query = ""; this.renderDashboard(); }
         }
 
-        // =========================================================================
-        // 7. إقلاع النظام الشامل المغلق (System Bootstrap)
-        // =========================================================================
         const app = new UIRenderer(homeService, searchService, window.Telegram.WebApp);
         app.renderDashboard();
     </script>
