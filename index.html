@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>خزانة الحكمة المعرفية - مصلح الفهارس</title>
+    <title>خزانة الحكمة المعرفية</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -228,15 +228,6 @@
                 });
             }
 
-            // استخراج الهوية بصيغة آمنة وموحدة لاستخدامها في كافة الطلبات
-            getTelegramUser() {
-                return this.tg?.initDataUnsafe?.user?.id || null;
-            }
-
-            getTelegramRawData() {
-                return this.tg?.initData || "";
-            }
-
             generateCoverHtml(book) {
                 const uniqueStr = String(book.file_id || "9");
                 const sum = uniqueStr.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
@@ -279,30 +270,15 @@
                 return el;
             }
 
+            // 🔧 العودة للمسار البسيط: جلب بيانات الواجهة الرئيسية دون تعقيدات CORS Preflight
             async syncDashboard() {
                 this.dom.loader.style.display = "flex";
-                const userId = this.getTelegramUser();
-                const rawInit = this.getTelegramRawData();
-
                 try {
-                    // 🔧 تمرير الهوية في الـ Headers والـ Query لضمان تخطي جدار الحماية والتحقق بالخادم
-                    const response = await this.api.fetchJson(`/api/trending?user_id=${encodeURIComponent(userId || '')}`, {
-                        headers: { 'X-Telegram-Init-Data': rawInit }
-                    });
+                    const response = await this.api.fetchJson('/api/trending');
                     this.dom.loader.style.display = "none";
                     this.renderDashboard(response.results ? response.results : response);
                 } catch (err) {
                     this.dom.loader.style.display = "none";
-                    
-                    // كشف صريح لسبب فشل جلب الكتب لئلا يختفي الخطأ بالخلفية
-                    if (this.tg && this.tg.showPopup) {
-                        this.tg.showPopup({ 
-                            title: "فشل تحديث الفهارس", 
-                            message: `السيرفر لم يرسل الكتب الموصى بها. السبب: ${err.message}`, 
-                            buttons: [{ type: "ok", text: "حسناً" }] 
-                        });
-                    }
-                    
                     const fallback = localStorage.getItem("lib_dashboard_cache");
                     if (fallback) this.renderDashboard(JSON.parse(fallback));
                 }
@@ -341,6 +317,7 @@
                 this.debounceTimer = setTimeout(() => this.runSearchPipeline(), 250);
             }
 
+            // 🔧 العودة للمسار البسيط: الاستعلام الفوري دون إرسال ترويسات أو معرفات تعطل الـ CORS
             async runSearchPipeline() {
                 this.dom.discoveryView.style.display = "none";
                 this.dom.quickTags.style.display = "none";
@@ -348,14 +325,8 @@
                 this.dom.viewNoData.style.display = "none";
                 this.dom.searchArea.replaceChildren();
 
-                const userId = this.getTelegramUser();
-                const rawInit = this.getTelegramRawData();
-
                 try {
-                    // 🔧 تأمين طلب البحث أيضاً بالمعاملات اللازمة لهوية المستخدم للفلترة الجوهرية
-                    const data = await this.api.fetchJson(`/api/search?query=${encodeURIComponent(this.currentQuery)}&user_id=${encodeURIComponent(userId || '')}`, {
-                        headers: { 'X-Telegram-Init-Data': rawInit }
-                    });
+                    const data = await this.api.fetchJson(`/api/search?query=${encodeURIComponent(this.currentQuery)}`);
                     const items = data.results || (Array.isArray(data) ? data : []);
                     if (items.length > 0) {
                         items.forEach((b, i) => this.dom.searchArea.appendChild(this.buildRowNode(b, i)));
@@ -365,10 +336,11 @@
                 }
             }
 
+            // حصر التوثيق ومعرف الهوية هنا فقط حيث يحتاجه البوت لإتمام الإرسال بالشات
             async dispatchDownloadRequest(btn) {
                 if (btn.classList.contains("working")) return;
 
-                const userId = this.getTelegramUser();
+                const userId = this.tg?.initDataUnsafe?.user?.id;
                 if (!userId) {
                     if (this.tg && this.tg.showPopup) {
                         this.tg.showPopup({ title: "تعذّر التحقق", message: "لم نتمكن من التحقق من هويتك داخل تيليجرام.", buttons: [{ type: "ok", text: "حسنًا" }] });
@@ -381,12 +353,9 @@
 
                 const fileId = btn.dataset.id;
                 const originalHtml = `<i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>`;
-                const rawInit = this.getTelegramRawData();
 
                 try {
-                    const data = await this.api.fetchJson(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${encodeURIComponent(userId)}`, {
-                        headers: { 'X-Telegram-Init-Data': rawInit }
-                    });
+                    const data = await this.api.fetchJson(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${encodeURIComponent(userId)}`);
 
                     if (data && data.success === false) {
                         throw new Error(data.message || "SEND_FAILED");
@@ -415,4 +384,5 @@
                     }
                     
                     setTimeout(() => {
-                        if (btn.classList.
+                        if (btn.classList.contains("failed")) {
+                            btn.className = "
