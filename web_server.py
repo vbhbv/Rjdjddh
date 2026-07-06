@@ -27,23 +27,31 @@ def init_web_server(app):
 # 🛠️ نظام الفحص المنفصل والاستباقي المربوط بمعرف القناة الثابت
 # =========================================================================
 
+async def _enforce_access(user_id: int, action: str):
+    """
+    🔧 دالة مساعدة موحّدة تستدعي check_user_limits الحقيقية (المُضافة الآن في main.py).
+    لم نعد نعتمد على hasattr بصمت؛ إن كانت الدالة غائبة لأي سبب، نرفض الطلب
+    بدل السماح للجميع بالمرور كما كان يحدث سابقاً (fail-closed بدل fail-open).
+    """
+    if bot_application is None:
+        raise HTTPException(status_code=503, detail={"message": "السيرفر قيد التهيئة، حاول بعد لحظات."})
+
+    if not hasattr(bot_application, "check_user_limits"):
+        # 🚨 fail-closed: لو غابت الدالة لأي سبب مستقبلاً، نمنع الوصول بدل فتحه للجميع
+        logger.error("🚨 check_user_limits غير معرّفة على كائن التطبيق! يتم رفض الطلب احتياطاً.")
+        raise HTTPException(status_code=503, detail={"message": "الخدمة غير مهيأة بشكل صحيح حالياً."})
+
+    allowed, reason = await bot_application.check_user_limits(user_id=user_id, action=action)
+    if not allowed:
+        channel_url = "https://t.me/iiollr"
+        raise HTTPException(status_code=403, detail={"message": reason, "channel_url": channel_url})
+
+
 @web_app.get("/api/check-access")
 async def api_check_access(user_id: int):
     """يفحص الاشتراك ويجلب رابط القناة iiollr ديناميكياً من السيرفر"""
-    
-    # بناء رابط القناة المطلوب مباشرة
     channel_url = "https://t.me/iiollr"
-
-    # استدعاء دالة الفحص الفعلي للاشتراك إذا كان محرك البوت متصلاً
-    if bot_application and hasattr(bot_application, "check_user_limits"):
-        allowed, reason = await bot_application.check_user_limits(user_id=user_id)
-        if not allowed:
-            # نرسل كود 403 ومعه رابط القناة لكي تفتح الواجهة عليه فوراً
-            raise HTTPException(
-                status_code=403, 
-                detail={"message": reason, "channel_url": channel_url}
-            )
-            
+    await _enforce_access(user_id, action="check")
     return {"success": True, "status": "access_granted", "channel_url": channel_url}
 
 # =========================================================================
@@ -61,28 +69,63 @@ async def get_miniapp():
 
 @web_app.get("/api/search")
 async def api_search(user_id: int, query: str = Query(..., min_length=2)):
-    if bot_application and hasattr(bot_application, "check_user_limits"):
-        allowed, _ = await bot_application.check_user_limits(user_id=user_id)
-        if not allowed: raise HTTPException(status_code=403, detail="مرفوض")
-        
+    # 🔧 action="search" — يخضع لفحص الاشتراك ولحد الـ10 عمليات بحث معاً
+    await _enforce_access(user_id, action="search")
+
     pool = bot_application.bot_data.get("db_conn") if bot_application else None
-    if not pool: return {"success": False, "message": "قاعدة البيانات غير متصلة"}
-    
+    if not pool:
+        return {"success": False, "message": "قاعدة البيانات غير متصلة"}
+
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT file_id, file_name FROM books WHERE file_name ILIKE $1 LIMIT 25;", f"%{query}%")
             return {"success": True, "results": [{"file_id": r["file_id"], "file_name": r["file_name"]} for r in rows]}
     except Exception as e:
+        logger.error(f"⚠️ خطأ في البحث عبر الـ API: {e}")
         return {"success": False, "message": "خطأ في البحث"}
+
+@web_app.get("/api/trending")
+async def api_trending():
+    """الأكثر تحميلاً — بلا حاجة لهوية المستخدم أو فحص اشتراك، فهي بيانات عامة فقط"""
+    if bot_application is None:
+        return {"success": False, "results": []}
+
+    pool = bot_application.bot_data.get("db_conn")
+    if not pool:
+        return {"success": False, "results": []}
+
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT b.file_id, b.file_name, COUNT(s.id) as downloads
+                FROM books b
+                JOIN download_stats s ON b.file_id = s.file_id
+                WHERE s.downloaded_at > NOW() - INTERVAL '7 days'
+                GROUP BY b.file_id, b.file_name
+                ORDER BY downloads DESC LIMIT 15;
+            """)
+            if not rows:
+                rows = await conn.fetch("SELECT file_id, file_name FROM books LIMIT 15;")
+            return {"success": True, "results": [{"file_id": r["file_id"], "file_name": r["file_name"]} for r in rows]}
+    except Exception as e:
+        logger.error(f"⚠️ خطأ في جلب الملفات الأكثر تحميلاً: {e}")
+        return {"success": False, "results": []}
 
 @web_app.get("/api/download")
 async def api_download(file_id: str, user_id: int):
-    if bot_application and hasattr(bot_application, "check_user_limits"):
-        allowed, _ = await bot_application.check_user_limits(user_id=user_id)
-        if not allowed: raise HTTPException(status_code=403, detail="مرفوض")
-            
+    # 🔧 action="download" — يخضع فقط لفحص الاشتراك، دون حد البحث (فليس بحثاً)
+    await _enforce_access(user_id, action="download")
+
+    pool = bot_application.bot_data.get("db_conn") if bot_application else None
+
     try:
         await bot_application.bot.send_document(chat_id=user_id, document=file_id, caption="📖 تم جلب كتابك بنجاح.")
+
+        if pool:
+            async with pool.acquire() as conn:
+                await conn.execute("INSERT INTO download_stats(file_id) VALUES($1)", file_id)
+
         return {"success": True, "message": "تم إرسال الكتاب!"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail="فشل إرسال الملف.")
+        logger.error(f"⚠️ خطأ أثناء إرسال الملف عبر الـ API: {e}")
+        raise HTTPException(status_code=500, detail="فشل إرسال الملف. تأكد من أنك قمت بعمل /start للبوت وتحدثت معه مسبقاً.")
