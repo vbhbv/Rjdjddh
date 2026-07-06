@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>خزانة الحكمة المعرفية - الإصدار المستقر</title>
+    <title>خزانة الحكمة المعرفية - التحديث المستقر</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* إجبار الهواتف على استخدام حزم خطوط Apple الصارمة للـ iOS */
+        /* إجبار النظام على دعم خطوط Apple الصارمة للـ iOS والأجهزة الذكية */
         @import url('https://fonts.cdnfonts.com/css/sf-pro-display-2');
 
         :root {
@@ -47,12 +47,12 @@
         .search-input-field:focus { border-color: var(--tg-link); }
         .search-area-box .search-icon { position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--tg-hint); }
 
-        /* الكلمات الأكثر بحثاً وتداولاً مسبقاً */
+        /* الكلمات الأكثر بحثاً وتداولاً */
         .trending-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; padding: 0 4px; align-items: center; }
         .trending-label { font-size: 11.5px; color: var(--tg-hint); }
         .tag-pill { font-size: 11.5px; background: var(--tg-sec-bg); padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border-color); color: var(--tg-link); cursor: pointer; }
 
-        /* لوحة الاقتراحات التلقائية (Autocomplete Suggestions) */
+        /* لوحة الاتابعة التلقائية والاقتراحات */
         .suggestions-panel {
             background: var(--tg-sec-bg); border: 1px solid var(--border-color); border-radius: 10px;
             margin-bottom: 16px; display: none; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,0.3);
@@ -65,7 +65,7 @@
         .suggestion-row:last-child { border-bottom: none; }
         .suggestion-row i { color: var(--tg-hint); }
 
-        /* شريط التنقل الأفقي للتصنيفات الفكرية */
+        /* شريط التصنيفات الفكرية */
         .chips-nav-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 24px; }
         .chips-nav-row::-webkit-scrollbar { display: none; }
         .nav-chip {
@@ -74,12 +74,12 @@
         }
         .nav-chip.active { background: var(--tg-link); color: #0d1117; border-color: var(--tg-link); font-weight: 600; }
 
-        /* بنية الـ Data-Dense Lists */
+        /* بنية القوائم الكثيفة الداتا */
         .dense-section { margin-bottom: 26px; }
         .dense-section-title { font-size: 13px; font-weight: 700; color: var(--tg-hint); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
         .dense-list { display: flex; flex-direction: column; }
         
-        /* السطر المعرفي المدمج مع الأغلفة الزجاجية الجديدة */
+        /* السطر المعرفي المطور كلياً بالأغلفة العميقة والفاخرة */
         .book-dense-row {
             display: flex; align-items: center; justify-content: space-between; gap: 12px;
             padding: 12px 6px; border-bottom: 1px solid rgba(48, 54, 61, 0.5); 
@@ -113,16 +113,16 @@
         .data-separator { color: var(--border-color); }
         .rating-block { font-size: 10px; color: var(--rating-gold); display: flex; align-items: center; gap: 2px; }
         
-        /* زر الإجراء الواضح والموسع الصريح للتحميل */
-        .btn-action-trigger {
+        /* زر التحميل الفوري الواضح والمصلح */
+        .btn-dense-download {
             background-color: rgba(88, 166, 255, 0.1); border: 1px solid rgba(88, 166, 255, 0.25); color: var(--tg-link);
             padding: 8px 14px; border-radius: 8px; display: flex; align-items: center; gap: 6px;
             cursor: pointer; flex-shrink: 0; font-size: 12px; font-weight: 700; font-family: var(--ios-font);
             transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .btn-action-trigger:active { transform: scale(0.95); background-color: rgba(88, 166, 255, 0.2); }
-        .btn-action-trigger.selected { border-color: #ffb703; color: #ffb703; background: rgba(255, 183, 3, 0.08); }
-        .btn-action-trigger.success { border-color: #2ea44f; color: #2ea44f; background: rgba(46, 164, 79, 0.1); }
+        .btn-dense-download:active { transform: scale(0.95); background-color: rgba(88, 166, 255, 0.2); }
+        .btn-dense-download.loading { border-color: var(--tg-hint); color: var(--tg-hint); background: transparent; cursor: not-allowed; }
+        .btn-dense-download.success { border-color: #2ea44f; color: #2ea44f; background: rgba(46, 164, 79, 0.1); }
 
         .skeleton-row-dense { height: 54px; border-bottom: 1px solid var(--border-color); animation: shimmer 1.5s infinite linear; background: linear-gradient(90deg, var(--tg-bg) 25%, var(--tg-sec-bg) 50%, var(--tg-bg) 75%); background-size: 200% 100%; }
         @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
@@ -131,7 +131,6 @@
 </head>
 <body>
 
-    <!-- كتل إحصاءات ضخامة الفهارس -->
     <div class="library-stats-bar">
         <div class="stat-item">
             <div class="stat-num">1,534,821</div>
@@ -147,7 +146,6 @@
         </div>
     </div>
 
-    <!-- فضاء الاستعلام المعرفي الفوري -->
     <div class="search-area-box">
         <input type="text" id="dbSearch" class="search-input-field" placeholder="ادخل اسم الكتاب، المصنف، أو المحقق..." autocomplete="off">
         <i class="fa-solid fa-magnifying-glass search-icon"></i>
@@ -166,7 +164,6 @@
         <div class="nav-chip active" data-category="all">خزانة الاكتشاف</div>
     </div>
 
-    <!-- لوحة العرض الرئيسية (Discovery Mode) -->
     <div id="discoveryContainer">
         <div class="dense-section" id="recommendationSection" style="display: none;">
             <div class="dense-section-title">مقترحات فكرية مخصصة</div>
@@ -189,7 +186,6 @@
         </div>
     </div>
 
-    <!-- لوحة نتائج البحث المكثف (Search Mode) -->
     <div id="searchContainer" style="display: none;" class="dense-section">
         <div class="dense-section-title" id="searchResultTitle">نتائج الفحص والتحقيق المطابقة</div>
         <div class="empty-state" id="emptyStateView">
@@ -201,7 +197,7 @@
 
     <script>
         // =========================================================================
-        // 1. الأنوية المعمارية وهندسة الـ HTTP Client
+        // 1. الأنوية المعمارية والربط عبر بروتوكول HTTP API المباشر (الأكواد الأولية)
         // =========================================================================
         class HttpClient {
             async request(url, options = {}) {
@@ -227,15 +223,14 @@
         ];
 
         // =========================================================================
-        // 2. مدير كفاءة الواجهة وبث البيانات الفوري للشات
+        // 2. مدير كفاءة الواجهة ومعالجة الطلبات الفورية
         // =========================================================================
         class InformationUIManager {
             constructor(client, tg) {
                 this.http = client; this.tg = tg;
                 this.query = ""; this.nextCursor = ""; this.isPageLoading = false; this.searchDebounce = null;
                 
-                // تمكين وتهيئة الواجهة وتوسيعها بالكامل داخل تطبيق تيليجرام
-                if (this.tg) {
+                if (this.tg && this.tg.ready) {
                     this.tg.ready();
                     this.tg.expand();
                 }
@@ -267,8 +262,8 @@
                 this.dom.input.addEventListener("input", () => this.handleSearchInput());
                 
                 document.body.addEventListener("click", (e) => {
-                    const btn = e.target.closest('.btn-action-trigger');
-                    if (btn) this.interceptDownloadPipeline(btn);
+                    const btn = e.target.closest('.btn-dense-download');
+                    if (btn) this.fireDirectDownload(btn);
 
                     const chip = e.target.closest('.nav-chip');
                     if (chip) this.selectCategory(chip);
@@ -317,13 +312,13 @@
                                 <span class="data-separator">•</span>
                                 <span>${book.extension || 'PDF'}</span>
                                 <span class="data-separator">•</span>
-                                <span>${book.size || '3.8 MB'}</span>
+                                <span>${book.size || '4.2 MB'}</span>
                                 <span class="data-separator">•</span>
                                 <span class="rating-block"><i class="fa-solid fa-star"></i> ${book.rating || '5.0'}</span>
                             </div>
                         </div>
                     </div>
-                    <button class="btn-action-trigger" data-file-id="${book.file_id}" data-title="${book.title || book.file_name}">
+                    <button class="btn-dense-download" data-file-id="${book.file_id}">
                         <i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>
                     </button>
                 `;
@@ -398,118 +393,4 @@
 
             async executeSearchPipeline() {
                 this.dom.suggestions.style.display = "none";
-                this.dom.discoveryView.style.display = "none";
-                this.dom.trendingTags.style.display = "none";
-                this.dom.searchView.style.display = "block";
-                this.dom.empty.style.display = "none";
-                this.dom.searchArea.replaceChildren();
-
-                try {
-                    const res = await this.http.request(`/api/search?query=${encodeURIComponent(this.query)}`);
-                    const results = res.results || (Array.isArray(res) ? res : []);
-                    if (results.length > 0) {
-                        this.nextCursor = res.next_cursor || "";
-                        results.forEach((b, idx) => this.dom.searchArea.appendChild(this.createDenseRow(b, idx)));
-                    } else { this.dom.empty.style.display = "block"; }
-                } catch (e) { this.dom.empty.style.display = "block"; }
-            }
-
-            async fetchNextSearchBatch() {
-                this.isPageLoading = true;
-                const skeleton = document.createElement("div"); skeleton.className = "skeleton-row-dense";
-                this.dom.searchArea.appendChild(skeleton);
-
-                try {
-                    const res = await this.http.request(`/api/search?query=${encodeURIComponent(this.query)}&cursor=${encodeURIComponent(this.nextCursor)}`);
-                    skeleton.remove();
-                    const results = res.results || (Array.isArray(res) ? res : []);
-                    if (results.length > 0) {
-                        this.nextCursor = res.next_cursor || "";
-                        results.forEach((b, idx) => this.dom.searchArea.appendChild(this.createDenseRow(b, idx)));
-                    } else { this.nextCursor = ""; }
-                } catch (e) { skeleton.remove(); } finally { this.isPageLoading = false; }
-            }
-
-            // =========================================================================
-            // حل مشكلة الإرسال: ربط معالجة البيانات ببروتوكول البوت والـ MainButton الأصلي
-            // =========================================================================
-            interceptDownloadPipeline(btn) {
-                if (!this.tg || !this.tg.MainButton) {
-                    // Fallback في حال التصفح الخارجي خارج تيليجرام
-                    btn.className = "btn-action-trigger success";
-                    btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>تم الطلب</span>`;
-                    return;
-                }
-
-                const fileId = btn.dataset.fileId;
-                const title = btn.dataset.title;
-
-                // تحديث مظهر الأزرار محلياً لتأكيد التحديد البصري الرشيق
-                document.querySelectorAll('.btn-action-trigger').forEach(b => {
-                    b.classList.remove('selected');
-                    b.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>`;
-                });
-                btn.className = "btn-action-trigger selected";
-                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>تأكيد...</span>`;
-
-                // استدعاء وتكوين الزر الرئيسي أسفل واجهة التليجرام لضمان الإرسال الصارم والآمن
-                this.tg.MainButton.setText(`إرسال كتاب: ${title}`);
-                this.tg.MainButton.show();
-                
-                // حظر تكرار الأحداث عبر تنظيف المستمعات السابقة والربط الفوري الجديد
-                this.tg.MainButton.offClick();
-                this.tg.MainButton.onClick(() => {
-                    try {
-                        // إرسال حمولة البيانات المنظمة بالكامل إلى كود السيرفر (البوت) بالخلفية
-                        this.tg.sendData(JSON.stringify({
-                            action: "download",
-                            file_id: fileId,
-                            title: title
-                        }));
-                        
-                        this.tg.MainButton.hide();
-                        btn.className = "btn-action-trigger success";
-                        btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>جاري البث</span>`;
-                        
-                        this.tg.showPopup({
-                            title: "تم استلام طلب التحميل",
-                            message: "يقوم معالج الفهارس بإعداد نسختك حالياً، ستظهر الملفات فوراً في شات البوت.",
-                            buttons: [{ type: "ok", text: "حسناً" }]
-                        });
-                    } catch (err) {
-                        this.tg.MainButton.hide();
-                        this.resetBtn(btn);
-                    }
-                });
-            }
-
-            resetBtn(btn) { 
-                btn.className = "btn-action-trigger"; 
-                btn.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>`; 
-            }
-
-            selectCategory(chip) {
-                document.querySelectorAll('.nav-chip').forEach(c => c.classList.remove('active'));
-                chip.classList.add('active');
-                if (chip.dataset.category === 'all') { this.resetToHomeView(); } 
-                else { this.dom.input.value = chip.textContent.trim(); this.handleSearchInput(); }
-            }
-
-            resetToHomeView() {
-                this.dom.input.value = ""; this.query = ""; this.nextCursor = "";
-                this.dom.suggestions.style.display = "none";
-                this.dom.searchView.style.display = "none";
-                this.dom.discoveryView.style.display = "block";
-                this.dom.trendingTags.style.display = "flex";
-                document.querySelectorAll('.nav-chip').forEach(c => c.classList.remove('active'));
-                document.querySelector('.nav-chip[data-category="all"]').classList.add('active');
-                if (this.tg && this.tg.MainButton) this.tg.MainButton.hide();
-                this.loadDashboard();
-            }
-        }
-
-        const ui = new InformationUIManager(http, window.Telegram.WebApp);
-        ui.loadDashboard();
-    </script>
-</body>
-</html>
+                this.dom.discoveryView.
