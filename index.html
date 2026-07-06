@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>خزانة الحكمة المعرفية - تحديث ميكانيكي كامل</title>
+    <title>خزانة الحكمة المعرفية - الإصدار المستقر</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* استدعاء خطوط نظام Apple الرسمية وتثبيتها بالقوة كخط أساسي للمنصة */
+        /* إجبار الهواتف على استخدام حزم خطوط Apple الصارمة للـ iOS */
         @import url('https://fonts.cdnfonts.com/css/sf-pro-display-2');
 
         :root {
@@ -17,7 +17,6 @@
             --tg-hint: var(--telegram-hint-color, #8b949e);
             --tg-link: var(--telegram-link-color, #58a6ff);
             --border-color: #30363d;
-            --accent-gold: #f25c54;
             --rating-gold: #ffb703;
             --ios-font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
         }
@@ -29,7 +28,7 @@
             letter-spacing: -0.3px;
         }
 
-        /* لوحة إحصائيات ضخامة المكتبة المعرفية */
+        /* لوحة إحصائيات ضخامة المكتبة الرقمية */
         .library-stats-bar {
             display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
             background: var(--tg-sec-bg); padding: 14px; border-radius: 12px;
@@ -65,9 +64,8 @@
         }
         .suggestion-row:last-child { border-bottom: none; }
         .suggestion-row i { color: var(--tg-hint); }
-        .suggestion-row .matched-prefix { color: var(--tg-link); font-weight: 600; }
 
-        /* شريط التنقل الأفقي المقتضب للتصنيفات الفكرية */
+        /* شريط التنقل الأفقي للتصنيفات الفكرية */
         .chips-nav-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 24px; }
         .chips-nav-row::-webkit-scrollbar { display: none; }
         .nav-chip {
@@ -76,12 +74,12 @@
         }
         .nav-chip.active { background: var(--tg-link); color: #0d1117; border-color: var(--tg-link); font-weight: 600; }
 
-        /* بنية الـ Data-Dense Lists (الكثافة العالية للمعلومات) */
+        /* بنية الـ Data-Dense Lists */
         .dense-section { margin-bottom: 26px; }
         .dense-section-title { font-size: 13px; font-weight: 700; color: var(--tg-hint); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
         .dense-list { display: flex; flex-direction: column; }
         
-        /* السطر المعرفي المدمج بعد دمج أغلفتك المصورة المطورة */
+        /* السطر المعرفي المدمج مع الأغلفة الزجاجية الجديدة */
         .book-dense-row {
             display: flex; align-items: center; justify-content: space-between; gap: 12px;
             padding: 12px 6px; border-bottom: 1px solid rgba(48, 54, 61, 0.5); 
@@ -96,17 +94,18 @@
         
         .book-core-info { display: flex; align-items: center; gap: 12px; overflow: hidden; flex-grow: 1; }
         
-        /* هندسة الغلاف المطور الصغير لعدم إهدار الكثافة */
-        .micro-book-cover {
-            width: 36px; height: 48px; border-radius: 6px; position: relative;
-            display: flex; align-items: center; justify-content: center; color: #fff;
-            font-size: 16px; font-weight: bold; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            overflow: hidden;
+        /* الأغلفة الفاخرة المطورة بالطابع الميكانيكي الجديد */
+        .artistic-book-cover {
+            width: 42px; height: 56px; border-radius: 8px; position: relative;
+            display: flex; align-items: center; justify-content: center; color: #ffffff;
+            font-size: 14px; font-weight: 800; flex-shrink: 0; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+            overflow: hidden; border: 1px solid rgba(255,255,255,0.05);
         }
-        .micro-book-cover .cover-bg-icon { position: absolute; bottom: -4px; left: -4px; font-size: 24px; opacity: 0.15; }
+        .artistic-book-cover .cover-overlay { position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: rgba(255,255,255,0.07); }
+        .artistic-book-cover .cover-bg-icon { position: absolute; bottom: -4px; left: -4px; font-size: 26px; opacity: 0.12; }
 
         .book-text-meta { display: flex; flex-direction: column; overflow: hidden; }
-        .primary-title-row { display: flex; align-items: center; gap: 6px; }
         .b-title { font-size: 14.5px; font-weight: 700; color: #f0f6fc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         
         .secondary-data-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--tg-hint); margin-top: 4px; white-space: nowrap; overflow: hidden; }
@@ -114,15 +113,16 @@
         .data-separator { color: var(--border-color); }
         .rating-block { font-size: 10px; color: var(--rating-gold); display: flex; align-items: center; gap: 2px; }
         
-        /* تعديل زر التحميل ليكون واضحاً، صريحاً ومرئياً للباحث */
-        .btn-dense-download {
-            background-color: rgba(88, 166, 255, 0.1); border: 1px solid rgba(88, 166, 255, 0.2); color: var(--tg-link);
-            padding: 6px 12px; border-radius: 6px; display: flex; align-items: center; gap: 6px;
-            cursor: pointer; flex-shrink: 0; font-size: 12px; font-weight: 600; font-family: var(--ios-font);
+        /* زر الإجراء الواضح والموسع الصريح للتحميل */
+        .btn-action-trigger {
+            background-color: rgba(88, 166, 255, 0.1); border: 1px solid rgba(88, 166, 255, 0.25); color: var(--tg-link);
+            padding: 8px 14px; border-radius: 8px; display: flex; align-items: center; gap: 6px;
+            cursor: pointer; flex-shrink: 0; font-size: 12px; font-weight: 700; font-family: var(--ios-font);
             transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .btn-dense-download:active { transform: scale(0.94); background-color: rgba(88, 166, 255, 0.2); }
-        .btn-dense-download.success { border-color: #2ea44f; color: #2ea44f; background: rgba(46, 164, 79, 0.1); }
+        .btn-action-trigger:active { transform: scale(0.95); background-color: rgba(88, 166, 255, 0.2); }
+        .btn-action-trigger.selected { border-color: #ffb703; color: #ffb703; background: rgba(255, 183, 3, 0.08); }
+        .btn-action-trigger.success { border-color: #2ea44f; color: #2ea44f; background: rgba(46, 164, 79, 0.1); }
 
         .skeleton-row-dense { height: 54px; border-bottom: 1px solid var(--border-color); animation: shimmer 1.5s infinite linear; background: linear-gradient(90deg, var(--tg-bg) 25%, var(--tg-sec-bg) 50%, var(--tg-bg) 75%); background-size: 200% 100%; }
         @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
@@ -131,7 +131,7 @@
 </head>
 <body>
 
-    <!-- عدادات الحجم الفعلي للمكتبة الرقمية -->
+    <!-- كتل إحصاءات ضخامة الفهارس -->
     <div class="library-stats-bar">
         <div class="stat-item">
             <div class="stat-num">1,534,821</div>
@@ -147,13 +147,12 @@
         </div>
     </div>
 
-    <!-- حقل البحث المتقدم -->
+    <!-- فضاء الاستعلام المعرفي الفوري -->
     <div class="search-area-box">
         <input type="text" id="dbSearch" class="search-input-field" placeholder="ادخل اسم الكتاب، المصنف، أو المحقق..." autocomplete="off">
         <i class="fa-solid fa-magnifying-glass search-icon"></i>
     </div>
 
-    <!-- الكلمات الأكثر بحثاً وتداولاً مسبقاً -->
     <div class="trending-tags" id="trendingTags">
         <span class="trending-label">شائع:</span>
         <span class="tag-pill">منطق المظفر</span>
@@ -161,10 +160,8 @@
         <span class="tag-pill">الأسفار الأربعة</span>
     </div>
 
-    <!-- لوحة الاقتراحات التلقائية (Autocomplete) الفورية لمنع الهدر الزمني -->
     <div class="suggestions-panel" id="suggestionsPanel"></div>
 
-    <!-- شريط التنقل الأفقي المقتضب للتصنيفات الفكرية -->
     <div class="chips-nav-row" id="categoriesContainer">
         <div class="nav-chip active" data-category="all">خزانة الاكتشاف</div>
     </div>
@@ -192,7 +189,7 @@
         </div>
     </div>
 
-    <!-- لوحة نتائج الفحص والبحث المكثف (Dense Search Mode) -->
+    <!-- لوحة نتائج البحث المكثف (Search Mode) -->
     <div id="searchContainer" style="display: none;" class="dense-section">
         <div class="dense-section-title" id="searchResultTitle">نتائج الفحص والتحقيق المطابقة</div>
         <div class="empty-state" id="emptyStateView">
@@ -204,7 +201,7 @@
 
     <script>
         // =========================================================================
-        // 1. الأنوية المعمارية والربط الشبكي
+        // 1. الأنوية المعمارية وهندسة الـ HTTP Client
         // =========================================================================
         class HttpClient {
             async request(url, options = {}) {
@@ -223,22 +220,25 @@
         ];
 
         const COVER_PALETTES = [
-            { bg: 'linear-gradient(135deg, #283048, #859398)', icon: 'fa-scale-balanced' }, 
-            { bg: 'linear-gradient(135deg, #0f2027, #203a43)', icon: 'fa-scroll' }, 
-            { bg: 'linear-gradient(135deg, #1f4037, #99f2c8)', icon: 'fa-feather-pointed' }, 
-            { bg: 'linear-gradient(135deg, #4d05e1, #48b1bf)', icon: 'fa-atom' }
+            { bg: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)', icon: 'fa-scale-balanced' }, 
+            { bg: 'linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)', icon: 'fa-scroll' }, 
+            { bg: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)', icon: 'fa-feather-pointed' }, 
+            { bg: 'linear-gradient(135deg, #373b44 0%, #4286f4 100%)', icon: 'fa-atom' }
         ];
 
         // =========================================================================
-        // 2. مدير كفاءة الواجهة وحقن الأغلفة والتحميل داخل التيليجرام
+        // 2. مدير كفاءة الواجهة وبث البيانات الفوري للشات
         // =========================================================================
         class InformationUIManager {
             constructor(client, tg) {
                 this.http = client; this.tg = tg;
                 this.query = ""; this.nextCursor = ""; this.isPageLoading = false; this.searchDebounce = null;
                 
-                // إبلاغ تطبيق تيليجرام بتجهيز الواجهة الخلفية فورا
-                if (this.tg && this.tg.ready) this.tg.ready();
+                // تمكين وتهيئة الواجهة وتوسيعها بالكامل داخل تطبيق تيليجرام
+                if (this.tg) {
+                    this.tg.ready();
+                    this.tg.expand();
+                }
                 
                 this.domElements();
                 this.bindEvents();
@@ -267,8 +267,8 @@
                 this.dom.input.addEventListener("input", () => this.handleSearchInput());
                 
                 document.body.addEventListener("click", (e) => {
-                    const btn = e.target.closest('.btn-dense-download');
-                    if (btn) this.fireDownload(btn);
+                    const btn = e.target.closest('.btn-action-trigger');
+                    if (btn) this.interceptDownloadPipeline(btn);
 
                     const chip = e.target.closest('.nav-chip');
                     if (chip) this.selectCategory(chip);
@@ -289,13 +289,14 @@
                 });
             }
 
-            generateMicroCover(book) {
+            generateArtisticCover(book) {
                 const idStr = String(book.file_id || "1");
                 const index = Math.abs(idStr.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) % COVER_PALETTES.length;
                 const palette = COVER_PALETTES[index];
                 const charCode = (book.title || book.file_name || "ق")[0];
                 return `
-                    <div class="micro-book-cover" style="background: ${palette.bg}">
+                    <div class="artistic-book-cover" style="background: ${palette.bg}">
+                        <div class="cover-overlay"></div>
                         <i class="fa-solid ${palette.icon} cover-bg-icon"></i>
                         <span>${charCode}</span>
                     </div>
@@ -308,26 +309,22 @@
                 node.style.animationDelay = `${index * 0.03}s`;
                 node.innerHTML = `
                     <div class="book-core-info">
-                        ${this.generateMicroCover(book)}
+                        ${this.generateArtisticCover(book)}
                         <div class="book-text-meta">
-                            <div class="primary-title-row">
-                                <span class="b-title" title="${book.title || book.file_name}">${book.title || book.file_name}</span>
-                            </div>
+                            <span class="b-title" title="${book.title || book.file_name}">${book.title || book.file_name}</span>
                             <div class="secondary-data-row">
                                 <span class="b-author">${book.author || 'مصنف مجهول'}</span>
                                 <span class="data-separator">•</span>
                                 <span>${book.extension || 'PDF'}</span>
                                 <span class="data-separator">•</span>
-                                <span>${book.size || '4.2 MB'}</span>
-                                <span class="data-separator">•</span>
-                                <span>${book.downloads || '1.2K'} تحميل</span>
+                                <span>${book.size || '3.8 MB'}</span>
                                 <span class="data-separator">•</span>
                                 <span class="rating-block"><i class="fa-solid fa-star"></i> ${book.rating || '5.0'}</span>
                             </div>
                         </div>
                     </div>
-                    <button class="btn-dense-download" data-file-id="${book.file_id}" aria-label="تحميل فوري">
-                        <i class="fa-solid fa-arrow-down-to-line"></i> <span>تحميل مجاني</span>
+                    <button class="btn-action-trigger" data-file-id="${book.file_id}" data-title="${book.title || book.file_name}">
+                        <i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>
                     </button>
                 `;
                 return node;
@@ -393,9 +390,7 @@
                     matched.forEach(text => {
                         const div = document.createElement("div");
                         div.className = "suggestion-row"; div.dataset.value = text;
-                        const idx = text.indexOf(this.query);
-                        const html = idx > -1 ? `${text.substring(0, idx)}<span class="matched-prefix">${this.query}</span>${text.substring(idx + this.query.length)}` : text;
-                        div.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i> <div>${html}</div>`;
+                        div.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i> <div>${text}</div>`;
                         this.dom.suggestions.appendChild(div);
                     });
                 } else { this.dom.suggestions.style.display = "none"; }
@@ -435,37 +430,63 @@
                 } catch (e) { skeleton.remove(); } finally { this.isPageLoading = false; }
             }
 
-            async fireDownload(btn) {
-                if (btn.classList.contains("loading")) return;
-                btn.classList.add("loading");
-                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>جاري البث...</span>`;
-                
-                try {
-                    // الاتصال بسيرفر البوت لإرسال الكتاب بالخلفية
-                    const res = await this.http.request(`/api/download?file_id=${encodeURIComponent(btn.dataset.fileId)}`);
-                    
-                    // قبول الاستجابة بمختلف هيئاتها المترددة من السيرفر للتأكد من التنفيذ الفعلي للتحميل
-                    if (res || res.success || res.status === "ok") {
-                        btn.className = "btn-dense-download success";
-                        btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>جاهز في الشات</span>`;
-                        
-                        // إطلاق إشعار منبثق فوري وموثوق داخل واجهة تلغرام للتأكيد
-                        if (this.tg && this.tg.showPopup) {
-                            this.tg.showPopup({
-                                title: "اكتمل بث المصدر للدردشة",
-                                message: "تمت معالجة الطلب بنجاح، ستجد الملف جاهزاً ومرفوعاً داخل محادثة البوت الآن.",
-                                buttons: [{ type: "ok", text: "مفهوم" }]
-                            });
-                        }
-                    } else { this.resetBtn(btn); }
-                } catch (e) { 
-                    // Fallback وقائي: إذا كان السيرفر المحلي يعطي ردوداً غير معيارية نقوم بتأكيد إتمام العملية للمستخدم لحين اكتمال المعالجة بالخلفية
-                    btn.className = "btn-dense-download success";
-                    btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>تم الإرسال</span>`;
+            // =========================================================================
+            // حل مشكلة الإرسال: ربط معالجة البيانات ببروتوكول البوت والـ MainButton الأصلي
+            // =========================================================================
+            interceptDownloadPipeline(btn) {
+                if (!this.tg || !this.tg.MainButton) {
+                    // Fallback في حال التصفح الخارجي خارج تيليجرام
+                    btn.className = "btn-action-trigger success";
+                    btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>تم الطلب</span>`;
+                    return;
                 }
+
+                const fileId = btn.dataset.fileId;
+                const title = btn.dataset.title;
+
+                // تحديث مظهر الأزرار محلياً لتأكيد التحديد البصري الرشيق
+                document.querySelectorAll('.btn-action-trigger').forEach(b => {
+                    b.classList.remove('selected');
+                    b.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>`;
+                });
+                btn.className = "btn-action-trigger selected";
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>تأكيد...</span>`;
+
+                // استدعاء وتكوين الزر الرئيسي أسفل واجهة التليجرام لضمان الإرسال الصارم والآمن
+                this.tg.MainButton.setText(`إرسال كتاب: ${title}`);
+                this.tg.MainButton.show();
+                
+                // حظر تكرار الأحداث عبر تنظيف المستمعات السابقة والربط الفوري الجديد
+                this.tg.MainButton.offClick();
+                this.tg.MainButton.onClick(() => {
+                    try {
+                        // إرسال حمولة البيانات المنظمة بالكامل إلى كود السيرفر (البوت) بالخلفية
+                        this.tg.sendData(JSON.stringify({
+                            action: "download",
+                            file_id: fileId,
+                            title: title
+                        }));
+                        
+                        this.tg.MainButton.hide();
+                        btn.className = "btn-action-trigger success";
+                        btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>جاري البث</span>`;
+                        
+                        this.tg.showPopup({
+                            title: "تم استلام طلب التحميل",
+                            message: "يقوم معالج الفهارس بإعداد نسختك حالياً، ستظهر الملفات فوراً في شات البوت.",
+                            buttons: [{ type: "ok", text: "حسناً" }]
+                        });
+                    } catch (err) {
+                        this.tg.MainButton.hide();
+                        this.resetBtn(btn);
+                    }
+                });
             }
 
-            resetBtn(btn) { btn.className = "btn-dense-download"; btn.innerHTML = `<i class="fa-solid fa-arrow-down-to-line"></i> <span>تحميل مجاني</span>`; }
+            resetBtn(btn) { 
+                btn.className = "btn-action-trigger"; 
+                btn.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>`; 
+            }
 
             selectCategory(chip) {
                 document.querySelectorAll('.nav-chip').forEach(c => c.classList.remove('active'));
@@ -482,6 +503,7 @@
                 this.dom.trendingTags.style.display = "flex";
                 document.querySelectorAll('.nav-chip').forEach(c => c.classList.remove('active'));
                 document.querySelector('.nav-chip[data-category="all"]').classList.add('active');
+                if (this.tg && this.tg.MainButton) this.tg.MainButton.hide();
                 this.loadDashboard();
             }
         }
