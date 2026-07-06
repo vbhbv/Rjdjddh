@@ -29,19 +29,21 @@ def init_web_server(app):
 
 async def _enforce_access(user_id: int, action: str):
     """
-    🔧 دالة مساعدة موحّدة تستدعي check_user_limits الحقيقية (المُضافة الآن في main.py).
-    لم نعد نعتمد على hasattr بصمت؛ إن كانت الدالة غائبة لأي سبب، نرفض الطلب
-    بدل السماح للجميع بالمرور كما كان يحدث سابقاً (fail-closed بدل fail-open).
+    🔧 دالة مساعدة موحّدة تستدعي check_user_limits الحقيقية المخزّنة في bot_data
+    (وليس كخاصية على كائن Application نفسه، لأنه يستخدم __slots__ ولا يقبل ذلك).
+    إن كانت الدالة غائبة لأي سبب، نرفض الطلب بدل السماح للجميع بالمرور
+    (fail-closed بدل fail-open كما كان يحدث سابقاً).
     """
     if bot_application is None:
         raise HTTPException(status_code=503, detail={"message": "السيرفر قيد التهيئة، حاول بعد لحظات."})
 
-    if not hasattr(bot_application, "check_user_limits"):
+    limits_checker = bot_application.bot_data.get("check_user_limits")
+    if limits_checker is None:
         # 🚨 fail-closed: لو غابت الدالة لأي سبب مستقبلاً، نمنع الوصول بدل فتحه للجميع
-        logger.error("🚨 check_user_limits غير معرّفة على كائن التطبيق! يتم رفض الطلب احتياطاً.")
+        logger.error("🚨 check_user_limits غير موجودة في bot_data! يتم رفض الطلب احتياطاً.")
         raise HTTPException(status_code=503, detail={"message": "الخدمة غير مهيأة بشكل صحيح حالياً."})
 
-    allowed, reason = await bot_application.check_user_limits(user_id=user_id, action=action)
+    allowed, reason = await limits_checker(user_id=user_id, action=action)
     if not allowed:
         channel_url = "https://t.me/iiollr"
         raise HTTPException(status_code=403, detail={"message": reason, "channel_url": channel_url})
