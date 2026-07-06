@@ -8,7 +8,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
-        /* حقن وتثبيت الخطوط القياسية لأنظمة iOS / Apple */
         @import url('https://fonts.cdnfonts.com/css/sf-pro-display-2');
 
         :root {
@@ -34,7 +33,6 @@
             overflow-x: hidden;
         }
 
-        /* شريط إحصاءات حجم الخزانة المعرفية */
         .stats-grid {
             display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
             background: var(--tg-sec-bg); padding: 14px; border-radius: 12px;
@@ -43,7 +41,6 @@
         .stats-item .num { font-size: 16px; font-weight: 700; color: #f0f6fc; }
         .stats-item .lbl { font-size: 11px; color: var(--tg-hint); margin-top: 3px; }
 
-        /* منطقة المحرك والبحث */
         .search-wrapper { position: relative; margin-bottom: 12px; }
         .search-input {
             width: 100%; padding: 14px 44px 14px 16px; background-color: var(--tg-sec-bg);
@@ -53,12 +50,10 @@
         .search-input:focus { border-color: var(--tg-link); }
         .search-wrapper .search-icon { position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--tg-hint); }
 
-        /* أوسمة الفرز السريع المتداولة */
         .tags-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; padding: 0 4px; align-items: center; }
         .tags-lbl { font-size: 11.5px; color: var(--tg-hint); }
         .tag-item { font-size: 11.5px; background: var(--tg-sec-bg); padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border-color); color: var(--tg-link); cursor: pointer; }
 
-        /* قائمة التصنيفات العلمية */
         .cats-scroll { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 20px; }
         .cats-scroll::-webkit-scrollbar { display: none; }
         .cat-chip {
@@ -67,12 +62,10 @@
         }
         .cat-chip.active { background: var(--tg-link); color: #0d1117; border-color: var(--tg-link); font-weight: 600; }
 
-        /* كتل القوائم وعرض الداتا المكثفة */
         .section-box { margin-bottom: 24px; }
         .section-headline { font-size: 12.5px; font-weight: 700; color: var(--tg-hint); margin-bottom: 12px; letter-spacing: 0.3px; }
         .books-list { display: flex; flex-direction: column; }
         
-        /* هيكلية السطر المعرفي والأغلفة المطورة جمالياً */
         .book-row {
             display: flex; align-items: center; justify-content: space-between; gap: 12px;
             padding: 12px 4px; border-bottom: 1px solid rgba(48, 54, 61, 0.4);
@@ -87,7 +80,6 @@
         
         .book-meta-core { display: flex; align-items: center; gap: 12px; overflow: hidden; flex-grow: 1; }
         
-        /* التصميم الجمالي المطور للأغلفة (Gradient Covers) */
         .premium-cover {
             width: 40px; height: 54px; border-radius: 7px; position: relative;
             display: flex; align-items: center; justify-content: center; color: #ffffff;
@@ -106,7 +98,6 @@
         .bullet-spacer { color: var(--border-color); }
         .star-rating { font-size: 10px; color: var(--accent-gold); display: flex; align-items: center; gap: 2px; }
         
-        /* أزرار التحميل الصريحة والمستقرة بصرياً */
         .btn-download-trigger {
             background-color: rgba(88, 166, 255, 0.1); border: 1px solid rgba(88, 166, 255, 0.2); color: var(--tg-link);
             padding: 8px 14px; border-radius: 8px; display: flex; align-items: center; gap: 6px;
@@ -117,7 +108,6 @@
         .btn-download-trigger.working { border-color: var(--tg-hint); color: var(--tg-hint); background: transparent; cursor: not-allowed; }
         .btn-download-trigger.success { border-color: #2ea44f; color: #2ea44f; background: rgba(46, 164, 79, 0.1); }
 
-        /* هياكل التحميل التخيلي (Skeleton) */
         .shimmer-bar { height: 52px; border-bottom: 1px solid var(--border-color); animation: pulseLoader 1.4s infinite linear; background: linear-gradient(90deg, var(--tg-bg) 25%, var(--tg-sec-bg) 50%, var(--tg-bg) 75%); background-size: 200% 100%; }
         @keyframes pulseLoader { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         .no-data-view { display: none; text-align: center; padding: 40px; color: var(--tg-hint); font-size: 13px; }
@@ -174,9 +164,6 @@
     </div>
 
     <script>
-        // =========================================================================
-        // 1. مدير اتصالات الشبكة المستقر (Direct Network Client)
-        // =========================================================================
         class ServerClient {
             async fetchJson(url, options = {}) {
                 const response = await fetch(url, options);
@@ -186,7 +173,6 @@
         }
         const client = new ServerClient();
 
-        // لوحة تدرج الأغلفة الجمالية المطورة لسرعة الفرز البصري
         const PALETTES = [
             { gradient: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)', icon: 'fa-scale-balanced' },
             { gradient: 'linear-gradient(135deg, #232526 0%, #414345 100%)', icon: 'fa-scroll' },
@@ -194,9 +180,6 @@
             { gradient: 'linear-gradient(135deg, #4568dc 0%, #b06ab3 100%)', icon: 'fa-atom' }
         ];
 
-        // =========================================================================
-        // 2. هندسة واجهة المستخدم وإطلاق عمليات البث (Core UI Engine)
-        // =========================================================================
         class CentralLibraryEngine {
             constructor(apiClient, telegramInstance) {
                 this.api = apiClient;
@@ -240,166 +223,4 @@
                     if (chip) this.onCategorySelect(chip);
 
                     const tag = e.target.closest('.tag-item');
-                    if (tag) { this.dom.input.value = tag.textContent.trim(); this.onSearchInput(); }
-                });
-            }
-
-            generateCoverHtml(book) {
-                const uniqueStr = String(book.file_id || "9");
-                const sum = uniqueStr.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                const choice = PALETTES[Math.abs(sum) % PALETTES.length];
-                const letter = (book.title || book.file_name || "ق")[0];
-                
-                return `
-                    <div class="premium-cover" style="background: ${choice.gradient}">
-                        <div class="inner-spine"></div>
-                        <i class="fa-solid ${choice.icon} watermark"></i>
-                        <span>${letter}</span>
-                    </div>
-                `;
-            }
-
-            buildRowNode(book, index) {
-                const el = document.createElement("div");
-                el.className = "book-row";
-                el.style.animationDelay = `${index * 0.02}s`;
-                el.innerHTML = `
-                    <div class="book-meta-core">
-                        ${this.generateCoverHtml(book)}
-                        <div class="book-details">
-                            <span class="title-text" title="${book.title || book.file_name}">${book.title || book.file_name}</span>
-                            <div class="sub-data-row">
-                                <span class="author-text">${book.author || 'مصنف مجهول'}</span>
-                                <span class="bullet-spacer">•</span>
-                                <span>${book.extension || 'PDF'}</span>
-                                <span class="bullet-spacer">•</span>
-                                <span>${book.size || '3.5 MB'}</span>
-                                <span class="bullet-spacer">•</span>
-                                <span class="star-rating"><i class="fa-solid fa-star"></i> ${book.rating || '5.0'}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <button class="btn-download-trigger" data-id="${book.file_id}">
-                        <i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>
-                    </button>
-                `;
-                return el;
-            }
-
-            async syncDashboard() {
-                this.dom.loader.style.display = "flex";
-                try {
-                    const response = await this.api.fetchJson('/api/trending');
-                    this.dom.loader.style.display = "none";
-                    this.renderDashboard(response.results ? response.results : response);
-                } catch (err) {
-                    this.dom.loader.style.display = "none";
-                    const fallback = localStorage.getItem("lib_dashboard_cache");
-                    if (fallback) this.renderDashboard(JSON.parse(fallback));
-                }
-            }
-
-            renderDashboard(data) {
-                if (!data) return;
-                localStorage.setItem("lib_dashboard_cache", JSON.stringify(data));
-
-                this.dom.trendingArea.replaceChildren();
-                const trending = data.trending || (Array.isArray(data) ? data : []);
-                trending.forEach((b, i) => this.dom.trendingArea.appendChild(this.buildRowNode(b, i)));
-
-                if (data.recommendations && data.recommendations.length > 0) {
-                    this.dom.recommendBox.style.display = "block";
-                    this.dom.recommendArea.replaceChildren();
-                    data.recommendations.forEach((b, i) => this.dom.recommendArea.appendChild(this.buildRowNode(b, i)));
-                }
-
-                if (this.dom.catsBar.children.length <= 1 && data.categories) {
-                    data.categories.forEach(c => {
-                        const chip = document.createElement("div");
-                        chip.className = "cat-chip"; chip.textContent = c; chip.dataset.cat = c;
-                        this.dom.catsBar.appendChild(chip);
-                    });
-                }
-            }
-
-            onSearchInput() {
-                this.currentQuery = this.dom.input.value.trim();
-                clearTimeout(this.debounceTimer);
-
-                if (this.currentQuery.length === 0) { this.switchToDiscoveryMode(); return; }
-                if (this.currentQuery.length < 2) return;
-
-                this.debounceTimer = setTimeout(() => this.runSearchPipeline(), 250);
-            }
-
-            async runSearchPipeline() {
-                this.dom.discoveryView.style.display = "none";
-                this.dom.quickTags.style.display = "none";
-                this.dom.searchView.style.display = "block";
-                this.dom.viewNoData.style.display = "none";
-                this.dom.searchArea.replaceChildren();
-
-                try {
-                    const data = await this.api.fetchJson(`/api/search?query=${encodeURIComponent(this.currentQuery)}`);
-                    const items = data.results || (Array.isArray(data) ? data : []);
-                    if (items.length > 0) {
-                        items.forEach((b, i) => this.dom.searchArea.appendChild(this.buildRowNode(b, i)));
-                    } else { this.dom.viewNoData.style.display = "block"; }
-                } catch (e) { this.dom.viewNoData.style.display = "block"; }
-            }
-
-            // =========================================================================
-            // آلية البث المعماري النقي والمضمون (Direct API Stream Delivery)
-            // =========================================================================
-            async dispatchDownloadRequest(btn) {
-                if (btn.classList.contains("working")) return;
-                
-                btn.className = "btn-download-trigger working";
-                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>جاري البث...</span>`;
-
-                const fileId = btn.dataset.id;
-
-                try {
-                    // المسار المباشر المصلح: نرسل الطلب عبر المعاملات القياسية لضمان الفرز من جانب البوت
-                    await this.api.fetchJson(`/api/download?file_id=${encodeURIComponent(fileId)}`);
-                    
-                    btn.className = "btn-download-trigger success";
-                    btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>في الشات</span>`;
-
-                    if (this.tg && this.tg.showPopup) {
-                        this.tg.showPopup({
-                            title: "اكتمل البث الرقمي",
-                            message: "تم تسليم الطلب بنجاح، ستجد الكتاب مرفوعاً وجاهزاً داخل شات البوت الآن.",
-                            buttons: [{ type: "ok", text: "تم" }]
-                        });
-                    }
-                } catch (err) {
-                    // مسار الحماية التلقائي (Auto-Fallback)
-                    btn.className = "btn-download-trigger success";
-                    btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>تم الإرسال</span>`;
-                }
-            }
-
-            onCategorySelect(chip) {
-                document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
-                chip.classList.add('active');
-                if (chip.dataset.cat === 'all') { this.switchToDiscoveryMode(); } 
-                else { this.dom.input.value = chip.textContent.trim(); this.onSearchInput(); }
-            }
-
-            switchToDiscoveryMode() {
-                this.dom.input.value = ""; this.currentQuery = "";
-                this.dom.searchView.style.display = "none";
-                this.dom.discoveryView.style.display = "block";
-                this.dom.quickTags.style.display = "flex";
-                document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
-                document.querySelector('.cat-chip[data-cat="all"]').classList.add('active');
-                this.syncDashboard();
-            }
-        }
-
-        const engine = new CentralLibraryEngine(client, window.Telegram.WebApp);
-        engine.syncDashboard();
-    </script>
-</body>
-</html>
+                    i
