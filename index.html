@@ -16,6 +16,7 @@
             --text-muted: #8b949e;
             --accent-blue: #58a6ff;
             --accent-green: #2ea44f;
+            --accent-error: #f85149;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -69,6 +70,7 @@
         }
         .btn-action.loading { opacity: 0.6; cursor: not-allowed; }
         .btn-action.success { background-color: var(--accent-green) !important; border-color: var(--accent-green) !important; color: #ffffff !important; }
+        .btn-action.error { background-color: var(--accent-error) !important; border-color: var(--accent-error) !important; color: #ffffff !important; }
 
         .skeleton-row {
             background-color: var(--bg-card); border: 1px solid var(--border-color); height: 72px; border-radius: 12px;
@@ -79,10 +81,32 @@
         .clear-search-btn { background: none; border: 1px solid var(--border-color); color: var(--text-main); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-top: 8px; }
         .offline-badge { background-color: #7a2e2e; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-size: 11px; display: none; margin-right: auto; }
 
+        /* نافذة حجب الاشتراك القياسي الإجباري ونظام الإحالات الإجباري */
+        .lock-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(13, 17, 23, 0.95);
+            display: none; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; z-index: 9999;
+        }
+        .lock-card { background-color: var(--bg-card); border: 1px solid var(--border-color); padding: 30px 20px; border-radius: 16px; max-width: 90%; width: 400px; }
+        .lock-card i { font-size: 48px; color: var(--accent-error); margin-bottom: 16px; }
+        .lock-card h2 { font-size: 18px; font-weight: 700; color: #f0f6fc; margin-bottom: 12px; }
+        .lock-card p { font-size: 14px; color: var(--text-muted); margin-bottom: 24px; line-height: 1.6; }
+        .btn-lock-action { background-color: var(--accent-blue); color: #0d1117; border: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
+
         @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     </style>
 </head>
 <body>
+
+    <div id="lockOverlay" class="lock-overlay">
+        <div class="lock-card">
+            <i class="fa-solid fa-triangle-exclamation" id="lockIcon"></i>
+            <h2 id="lockTitle">يجب الاشتراك في القناة أولاً</h2>
+            <p id="lockMessage">عذراً، لم يتم تفعيل الاشتراك الإجباري أو أنك تجاوزت حد الـ 10 محاولات المتاحة لك قبل دعوة الأصدقاء عبر نظام الإحالات.</p>
+            <a href="#" id="lockActionButton" class="btn-lock-action">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i> <span id="lockButtonText">اشترك الآن ليعمل التطبيق</span>
+            </a>
+        </div>
+    </div>
 
     <div class="app-header">
         <i class="fa-solid fa-book-bookmark" aria-hidden="true"></i>
@@ -282,7 +306,6 @@
             async getHistory(userId, trace) { return this.sched.schedule(`/api/history?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
             
             async search(query, cursor, limit, filters, signal, trace) {
-                // منع التصادم المعماري عبر تجميع كافة المعايير الحركية في بناء مفتاح التوحيد
                 const filterKey = btoa(JSON.stringify(filters || {}));
                 const url = `/api/search?query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}&limit=${limit}&filters=${filterKey}`;
                 return this.sched.schedule(url, { signal, headers: { 'X-Trace-Id': trace.traceId } }, 2); // البحث أولوية أعلى
@@ -318,11 +341,10 @@
                             categories: results[3].status === 'fulfilled' ? results[3].value.categories : []
                         };
                         this.timestamp = Date.now();
-                        // حفظ لسيناريو الأوفلاين الطارئ لتوفير مرونة الصمود
                         localStorage.setItem("offline_home_cache", JSON.stringify(this.cache));
                         return { fromCache: false, results: this.cache };
                     } finally {
-                        this.stampedePromise = null; // تأمين تصفير قفل حماية الـ Stampede داخل كتلة الـ finally معصومة الخطأ
+                        this.stampedePromise = null;
                     }
                 })();
                 return this.stampedePromise;
@@ -340,7 +362,6 @@
                 if (this.abortCtrl) this.abortCtrl.abort();
                 this.abortCtrl = new AbortController();
                 
-                // Backpressure Handling: إسقاط وإلغاء الطلب المعلق الجاري واستبداله بـ Promise الجديد الأحدث
                 this.activePromise = this.repo.search(query, cursor, 20, filters, this.abortCtrl.signal, trace);
                 return this.activePromise;
             }
@@ -358,9 +379,13 @@
                 this.nextCursor = null; this.query = ""; this.isLoadedAll = false; this.isPageLoading = false;
                 this.searchDebounce = null;
                 
+                // تتبع عداد الـ 10 محاولات لعمليات البحث على مستوى الواجهة والتحقق الآمن
+                this.searchCounter = parseInt(localStorage.getItem("local_search_limit_count") || "0", 10);
+                
                 this.domElements();
                 this.bindAbsoluteEvents();
                 this.initScrollBoundaryScanner();
+                this.checkInitialTelegramContext();
             }
 
             domElements() {
@@ -375,7 +400,14 @@
                     title: document.getElementById("sectionTitle"),
                     clear: document.getElementById("clearSearchBtn"),
                     cats: document.getElementById("categoriesContainer"),
-                    badge: document.getElementById("offlineBadge")
+                    badge: document.getElementById("offlineBadge"),
+                    // عناصر شاشة الحظر الجديدة
+                    lockOverlay: document.getElementById("lockOverlay"),
+                    lockTitle: document.getElementById("lockTitle"),
+                    lockMessage: document.getElementById("lockMessage"),
+                    lockBtn: document.getElementById("lockActionButton"),
+                    lockBtnText: document.getElementById("lockButtonText"),
+                    lockIcon: document.getElementById("lockIcon")
                 };
             }
 
@@ -383,7 +415,6 @@
                 this.dom.input.addEventListener("input", () => this.triggerDebouncedSearch());
                 this.dom.clear.addEventListener("click", () => this.clearSearch());
                 
-                // تفويض كامل لـ Body لإلغاء الـ Listeners تماماً وحظر تسريب المستمعين
                 document.body.addEventListener("click", (e) => {
                     const btn = e.target.closest('.btn-action');
                     if (btn) this.fireDownload(btn);
@@ -393,7 +424,6 @@
             }
 
             initScrollBoundaryScanner() {
-                // استبدال الـ Virtual Scroll المضلل بفحص حافة التمرير الاعتيادية المستقرة مع كرسر التصفح
                 window.addEventListener("scroll", () => {
                     if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 200) {
                         if (this.query && !this.isLoadedAll && !this.isPageLoading && this.nextCursor) {
@@ -403,10 +433,42 @@
                 });
             }
 
+            // فحص السياق وربط الإحالات برابط البوت الرسمي ديناميكياً
+            checkInitialTelegramContext() {
+                if (this.tg) {
+                    this.tg.ready();
+                    this.tg.expand();
+                    
+                    // جلب معرف البوت واسمه تلقائياً لبناء رابط الإحالة من البيانات الجاهزة
+                    const botUsername = this.tg.initDataUnsafe?.receiver?.username || "KnowledgeLibraryBot"; 
+                    const userId = this.tg.initDataUnsafe?.user?.id || "0";
+                    
+                    // تعيين رابط التوجيه الأساسي لنظام الإحالات واشتراك القناة
+                    this.botInviteLink = `https://t.me/${botUsername}?start=ref_${userId}`;
+                    this.dom.lockBtn.href = this.botInviteLink;
+                }
+            }
+
+            // إظهار نافذة الحجب لشروط الاشتراك الإجباري ونظام الإحالة المتوقف
+            triggerLockScreen(type, customReason = "") {
+                this.dom.lockOverlay.style.display = "flex";
+                if (type === "search_limit") {
+                    this.dom.lockIcon.className = "fa-solid fa-circle-nodes";
+                    this.dom.lockTitle.textContent = "تنبيه: تم الوصول للحد الأقصى للبحث مجاناً";
+                    this.dom.lockMessage.textContent = "لقد استهلكت 10 عمليات بحث متاحة لك. لفتح قفل التطبيق ومتابعة القراءة والاستفادة، يرجى مشاركة رابط الإحالة الخاص بك مع الأصدقاء لتفعيل الحساب.";
+                    this.dom.lockBtnText.textContent = "نسخ رابط الإحالة الخاص بك وتفعيل البوت";
+                } else {
+                    this.dom.lockIcon.className = "fa-solid fa-triangle-exclamation";
+                    this.dom.lockTitle.textContent = "يجب الاشتراك في القناة أولاً";
+                    this.dom.lockMessage.textContent = customReason || "عذراً، يجب عليك الاشتراك في قناة المكتبة أولاً وتفعيل البوت لتتمكن من تحميل الكتب والمخطوطات بحرية.";
+                    this.dom.lockBtnText.textContent = "اشترك الآن في القناة ليعمل التطبيق";
+                }
+            }
+
             createCard(book, tag) {
                 const node = document.createElement("div");
                 node.className = "book-card";
-                node.dataset.fileId = book.file_id; // معرف مخصص لتقليم الـ DOM لاحقاً
+                node.dataset.fileId = book.file_id;
                 node.innerHTML = `
                     <div class="book-info-block">
                         <div class="book-cover-placeholder"><i class="fa-solid fa-file-pdf"></i></div>
@@ -435,7 +497,6 @@
                     this.dom.loader.style.display = "none";
                     telemetry.logError("DashboardLoad", err, globalTrace);
                     
-                    // استدعاء الاستراتيجية الـ Offline في حال انهيار الاتصال بالكامل
                     const offlineData = this.homeServ.getOfflineFallback();
                     if (offlineData) {
                         this.dom.badge.style.display = "inline-block";
@@ -470,6 +531,13 @@
                 clearTimeout(this.searchDebounce);
                 this.query = this.dom.input.value.trim();
                 if (this.query.length < 2) { if (this.query.length === 0) this.clearSearch(); return; }
+                
+                // التحقق الفوري والذكي من قفل عداد الـ 10 عمليات المتاحين في الواجهة لتفعيل نظام الإحالات
+                if (this.searchCounter >= 10) {
+                    this.triggerLockScreen("search_limit");
+                    return;
+                }
+                
                 this.searchDebounce = setTimeout(() => this.executeSearchPipeline(), 250);
             }
 
@@ -483,11 +551,20 @@
                     const res = await this.searchServ.executeSearch(this.query, "", {}, globalTrace);
                     this.dom.loader.style.display = "none";
                     if (res.success && res.results.length > 0) {
+                        // تحديث العداد وحفظه في الذاكرة المحلية عند جلب نتائج ناجحة
+                        this.searchCounter++;
+                        localStorage.setItem("local_search_limit_count", this.searchCounter.toString());
+                        
                         this.nextCursor = res.next_cursor;
                         this.isLoadedAll = !res.next_cursor;
                         res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
                     } else {
-                        this.dom.empty.style.display = "block";
+                        // التحقق مما إذا كان السيرفر هو من أوقف العملية بسبب شروط الاشتراك الإجباري أو الإحالات في الخلفية
+                        if (res.success === false && res.message) {
+                            this.triggerLockScreen("subscription", res.message);
+                        } else {
+                            this.dom.empty.style.display = "block";
+                        }
                     }
                 } catch (err) {
                     if (err.name !== "AbortError") this.dom.loader.style.display = "none";
@@ -495,6 +572,11 @@
             }
 
             async fetchNextSearchBatch() {
+                if (this.searchCounter >= 10) {
+                    this.triggerLockScreen("search_limit");
+                    return;
+                }
+                
                 this.isPageLoading = true;
                 const row = document.createElement("div"); row.className = "skeleton-row";
                 this.dom.display.appendChild(row);
@@ -507,8 +589,6 @@
                         this.isLoadedAll = !res.next_cursor;
                         res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
                         
-                        // DOM Pruning Algorithm (المعيار الهندسي للأنظمة الإنتاجية الكبرى)
-                        // عند تجاوز عناصر القائمة لـ 60 بطاقة، قم بتقليم وحذف أول 20 عنصرًا للحفاظ على ذاكرة الهاتف ثابتة
                         if (this.dom.display.children.length > 60) {
                             for (let i = 0; i < 20; i++) {
                                 this.dom.display.removeChild(this.dom.display.firstChild);
@@ -531,10 +611,14 @@
                     if (res.success) {
                         btn.className = "btn-action success"; btn.textContent = "تم الإرسال";
                     } else {
+                        // في حال رفض الـ Backend التحميل بسبب خلل الاشتراك الإجباري أو نظام الإحالات، يتم تنشيط الحظر فوراً
                         this.resetBtn(btn);
+                        this.triggerLockScreen("subscription", res.message || "⚠️ يجب عليك الاشتراك في القناة وتفعيل البوت أولاً ليفتح التطبيق.");
                     }
                 } catch (err) {
                     this.resetBtn(btn);
+                    btn.className = "btn-action error"; btn.textContent = "خطأ بالحظر";
+                    this.triggerLockScreen("subscription", "فشل التحقق الرقمي، تأكد من اشتراكك في القناة الرسمية وتحديث حسابك عبر الإحالات.");
                     telemetry.logError("DownloadAction", err, globalTrace);
                 }
             }
