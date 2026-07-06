@@ -26,13 +26,36 @@ def init_web_server(app):
     bot_application = app
     logger.info("📡 تم ربط خادم الويب بمحرك البوت بنجاح وتم تفعيل قنوات الاتصال.")
 
-# ===============================================
-# مسارات الـ API والواجهة المكتبية الذكية
-# ===============================================
+# =========================================================================
+# 🛠️ نظام الفحص المنفصل والاستباقي (Pre-flight Access Control System)
+# =========================================================================
+
+async def enforce_strict_limits(user_id: int):
+    """دالة داخلية مركزية لفرض القيود وقطع الاتصال فوراً برمي استثناء 403 لو رُفض المستخدم"""
+    if bot_application is None:
+        raise HTTPException(status_code=503, detail="السيرفر قيد التهيئة وتمرير البيانات...")
+        
+    # استدعاء دالة الفحص الذكية الحقيقية من ملفك الرئيسي (main.py)
+    if hasattr(bot_application, "check_user_limits"):
+        allowed, reason = await bot_application.check_user_limits(user_id=user_id)
+        if not allowed:
+            # قطع العملية فوراً وإرجاع استجابة حظر صريحة (403) تمنع المتصفح من العرض
+            raise HTTPException(status_code=403, detail=reason)
+    return True
+
+@web_app.get("/api/check-access")
+async def api_check_access(user_id: int):
+    """مسار منفصل تماماً يستدعيه الـ Mini App قبل أي خطوة أو ضغطة للتأكد من اشتراك الحساب"""
+    await enforce_strict_limits(user_id)
+    return {"success": True, "status": "access_granted", "message": "تم التحقق، الحساب نشط وملتزم بالشروط."}
+
+# =========================================================================
+# 📡 مسارات الـ API والواجهة المكتبية المحمية
+# =========================================================================
 
 @web_app.get("/miniapp")
 async def get_miniapp():
-    """بث واجهة الويب الفاخرة المحدثة index.html عند طلبها من تيليجرام"""
+    """بث واجهة الويب الفاخرة index.html عند طلبها من تيليجرام"""
     file_path = os.path.join(os.path.dirname(__file__), "index.html")
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8") as file:
@@ -42,10 +65,10 @@ async def get_miniapp():
 
 
 @web_app.get("/api/search")
-async def api_search(query: str = Query(..., min_length=2)):
-    """محرك بحث حي فوري يستعلم من قاعدة البيانات ويعيد النتيجة للواجهة مباشرة"""
-    if bot_application is None:
-        return {"success": False, "message": "السيرفر قيد التهيئة، يرجى الانتظار..."}
+async def api_search(user_id: int, query: str = Query(..., min_length=2)):
+    """محرك بحث فوري مشروط ومحمي بفحص الهوية والاشتراك قبل استعلام قاعدة البيانات"""
+    # تفعيل نظام الفحص الاستباقي للبحث أيضاً لمنع أي محاولة تخطي بالرابط المباشر
+    await enforce_strict_limits(user_id)
         
     pool = bot_application.bot_data.get("db_conn")
     if not pool:
@@ -69,7 +92,7 @@ async def api_search(query: str = Query(..., min_length=2)):
 
 @web_app.get("/api/trending")
 async def api_trending():
-    """جلب الكتب الأكثر تحميلاً بناءً على جدول الإحصائيات الأسبوعي"""
+    """جلب الكتب الأكثر تحميلاً (متاح للجميع كعرض واجهة أولي)"""
     if bot_application is None:
         return {"success": False, "results": []}
         
@@ -98,16 +121,9 @@ async def api_trending():
 
 @web_app.get("/api/download")
 async def api_download(file_id: str, user_id: int):
-    """إرسال ملف الكتاب مباشرة إلى شات المستخدم بعد فرض قيود الاشتراك والإحالات بصرامة"""
-    if bot_application is None:
-        raise HTTPException(status_code=503, detail="السيرفر قيد التهيئة وتمرير البيانات...")
-        
-    # [تأمين صارم] استدعاء فحص القيود الفعلي من ملفك الرئيسي وإجبار السيرفر على الحظر فوراً
-    if hasattr(bot_application, "check_user_limits"):
-        allowed, reason = await bot_application.check_user_limits(user_id=user_id)
-        if not allowed:
-            # إرجاع استجابة حظر صريحة (403) لتلتقطها واجهة الـ Mini App وتظهر شاشة القفل
-            raise HTTPException(status_code=403, detail=reason)
+    """إرسال ملف الكتاب مباشرة إلى شات المستخدم بعد فرض قيود الاشتراك والإحالات بصرامة قطعية"""
+    # إجبار الفحص الصارم؛ لو رُفض المستخدم ينقطع التنفيذ هنا فوراً عبر الـ HTTPException
+    await enforce_strict_limits(user_id)
             
     pool = bot_application.bot_data.get("db_conn")
     
@@ -116,7 +132,7 @@ async def api_download(file_id: str, user_id: int):
         await bot_application.bot.send_document(
             chat_id=user_id,
             document=file_id,
-            caption=" تم جلب كتابك بواسطة @boooksfree1bot."
+            caption="📖 تم جلب كتابك بنجاح من واجهة مكتبة المعرفة الذكية."
         )
         
         # تسجيل عملية التحميل لدعم خوارزمية التريند
