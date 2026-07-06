@@ -422,7 +422,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             "⭐ **باقات العضوية المميزة (Premium)**\n\n"
             "افتح ميزة البحث اللامحدود والتحميل السريع بدون قيود أو فترات انتظار:\n\n"
-            "📅 **الخططة المتاحة:**\n"
+            "📅 **الخطط المتاحة:**\n"
             "• الاشتراك الشهري: **5$** شهرياً.\n"
             "• الاشتراك نصف السنوي: **25$** (توفير بقيمة شهر).\n"
             "• الاشتراك السنوي الكلي: **45$** (العرض الأقوى).\n\n"
@@ -514,7 +514,21 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
+    # 🔧 الإصلاح: كان الكود يخرج بصمت (return) دون إخبار المستخدم بضرورة الاشتراك،
+    # فيبدو الأمر وكأن البوت لا يرد إطلاقًا. الآن نرسل له رسالة الاشتراك مع رابط القناة وزر التحقق.
     if not await check_subscription(update.effective_user.id, context.bot):
+        target_link = await get_channel_invite_link(context.bot)
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك في القناة", url=target_link)],
+            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+        ])
+        await update.message.reply_text(
+            text=(
+                "⚠️ يجب الاشتراك أولاً في القناة الداعمة لتتمكن من البحث واستخدام خدمات البوت:\n"
+                f"{target_link}"
+            ),
+            reply_markup=keyboard
+        )
         return
 
     # معالجة إشارات القادمة من الـ Web App التفاعلي إن وجدت وتحويلها لـ Callbacks آمنة أو ملفات مباشرة
