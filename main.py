@@ -158,24 +158,66 @@ async def handle_pdf(update, context: ContextTypes.DEFAULT_TYPE):
             """, document.file_id, document.file_name)
 
 # ===============================================
-# الاشتراك الإجباري الديناميكي والمستمر عبر الـ Persistence
+# 🔐 نظام التحقق الديناميكي الصارم المرتبط بملف الأدمن
 # ===============================================
+
+async def check_user_limits(user_id: int) -> tuple[bool, str]:
+    """
+    الدالة المركزية للـ WebApp: تقرأ القناة المحددة من لوحة الأدمن ديناميكياً.
+    إذا لم يتم تحديد قناة، أو كان المستخدم غير مشترك، يتم حظره فوراً.
+    """
+    global app
+    
+    # 1. فحص الحظر الإداري العام
+    if app and app.user_data and user_id in app.user_data:
+        if app.user_data[user_id].get("is_banned"):
+            return False, "عذراً، لقد تم حظر حسابك من استخدام خدمات المنصة نهائياً."
+
+    # 2. جلب معرف القناة ديناميكياً من bot_data (الذي تحدده أنت من ملف الأدمن)
+    channel_id = app.bot_data.get("required_channel_id") if app else None
+    
+    # إذا ألغيت الاشتراك الإجباري من اللوحة (جعلته None)، يسمح بالدخول تلقائياً
+    if channel_id is None:
+        return True, "access_granted"
+
+    try:
+        # فحص حالة العضو في تليجرام
+        member = await app.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+        if member.status in ("member", "administrator", "creator"):
+            return True, "access_granted"
+        else:
+            return False, "يجب عليك الاشتراك في قناة المكتبة الرسمية لتتمكن من استخدام الواجهة الذكية."
+    except Exception as e:
+        logger.warning(f"🚨 فشل فحص العضوية في القناة المستلمة {channel_id} للمستخدم {user_id}: {e}")
+        # خط الدفاع الحاسم: إذا حصل خطأ في الفحص (آيدي خاطئ أو البوت ليس مشرفاً)، يحجب فوراً للحماية
+        return False, "تنبيه أمني: يرجى التأكد من الاشتراك في القناة الرسمية وتفعيل البوت لتتمكن من الدخول."
+
+
 async def check_subscription(user_id: int, bot) -> bool:
+    """دالة الفحص الخاصة برسائل وأزرار البوت النصية (متوافقة ديناميكياً مع ملف الأدمن)"""
     try:
         from __main__ import app
+        if app and app.user_data and user_id in app.user_data:
+            if app.user_data[user_id].get("is_banned"):
+                return False
         channel_id = app.bot_data.get("required_channel_id")
     except:
         channel_id = None
 
     if channel_id is None: 
         return True
+
     try:
         member = await bot.get_chat_member(channel_id, user_id)
         return member.status in ("member", "administrator", "creator")
-    except:
+    except Exception as e:
+        logger.error(f"خطأ أثناء فحص اشتراك الرسائل للقناة {channel_id}: {e}")
+        # سد ثغرة التجاوز الصامت القديمة بالعودة بـ False عند حدوث أي استثناء
         return False
 
+
 async def get_channel_invite_link(bot) -> str:
+    """جلب رابط القناة ديناميكياً بناءً على القناة المحددة في ملف الأدمن"""
     try:
         from __main__ import app
         channel_id = app.bot_data.get("required_channel_id")
@@ -190,11 +232,12 @@ async def get_channel_invite_link(bot) -> str:
             return f"https://t.me/{chat.username}"
         elif chat.invite_link:
             return chat.invite_link
-    except: pass
+    except: 
+        pass
     return "https://t.me/"
 
 # ===============================================
-# تسجيل المستخدم ومعالجة الإحالة (تم إصلاحها بشكل شامل)
+# تسجيل المستخدم ومعالجة الإحالة
 # ===============================================
 async def register_user(update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -378,7 +421,6 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
         if await check_subscription(query.from_user.id, context.bot):
             
             webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
-            # 📋 ترتيب رأسي منظم للأزرار مع إضافة زر التطبيق المصغر في المقدمة
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
@@ -469,7 +511,6 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start مع ميزة الـ WebApp
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
@@ -514,8 +555,6 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
-    # 🔧 الإصلاح: كان الكود يخرج بصمت (return) دون إخبار المستخدم بضرورة الاشتراك،
-    # فيبدو الأمر وكأن البوت لا يرد إطلاقًا. الآن نرسل له رسالة الاشتراك مع رابط القناة وزر التحقق.
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
@@ -578,6 +617,9 @@ async def run_combined_app(application: Application):
     
     # 🔥 ربط كائن الـ application بملف الـ web_server المنفصل ديناميكياً لتفعيل الـ APIs الحية
     init_web_server(application)
+    
+    # 🧪 حقن دالة الفحص الديناميكية في كائن الـ application لتصل إليها واجهة الـ API والـ WebApp مباشرة
+    application.check_user_limits = check_user_limits
     
     await application.start()
     await application.updater.start_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
