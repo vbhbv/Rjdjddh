@@ -107,6 +107,7 @@
         .btn-download-trigger:active { transform: scale(0.95); background-color: rgba(88, 166, 255, 0.18); }
         .btn-download-trigger.working { border-color: var(--tg-hint); color: var(--tg-hint); background: transparent; cursor: not-allowed; }
         .btn-download-trigger.success { border-color: #2ea44f; color: #2ea44f; background: rgba(46, 164, 79, 0.1); }
+        .btn-download-trigger.failed { border-color: #ea4a5a; color: #ea4a5a; background: rgba(234, 74, 90, 0.1); }
 
         .shimmer-bar { height: 52px; border-bottom: 1px solid var(--border-color); animation: pulseLoader 1.4s infinite linear; background: linear-gradient(90deg, var(--tg-bg) 25%, var(--tg-sec-bg) 50%, var(--tg-bg) 75%); background-size: 200% 100%; }
         @keyframes pulseLoader { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
@@ -223,4 +224,168 @@
                     if (chip) this.onCategorySelect(chip);
 
                     const tag = e.target.closest('.tag-item');
-                    i
+                    if (tag) { this.dom.input.value = tag.textContent.trim(); this.onSearchInput(); }
+                });
+            }
+
+            generateCoverHtml(book) {
+                const uniqueStr = String(book.file_id || "9");
+                const sum = uniqueStr.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                const choice = PALETTES[Math.abs(sum) % PALETTES.length];
+                const letter = (book.title || book.file_name || "ق")[0];
+                
+                return `
+                    <div class="premium-cover" style="background: ${choice.gradient}">
+                        <div class="inner-spine"></div>
+                        <i class="fa-solid ${choice.icon} watermark"></i>
+                        <span>${letter}</span>
+                    </div>
+                `;
+            }
+
+            buildRowNode(book, index) {
+                const el = document.createElement("div");
+                el.className = "book-row";
+                el.style.animationDelay = `${index * 0.02}s`;
+                el.innerHTML = `
+                    <div class="book-meta-core">
+                        ${this.generateCoverHtml(book)}
+                        <div class="book-details">
+                            <span class="title-text" title="${book.title || book.file_name}">${book.title || book.file_name}</span>
+                            <div class="sub-data-row">
+                                <span class="author-text">${book.author || 'مصنف مجهول'}</span>
+                                <span class="bullet-spacer">•</span>
+                                <span>${book.extension || 'PDF'}</span>
+                                <span class="bullet-spacer">•</span>
+                                <span>${book.size || '3.5 MB'}</span>
+                                <span class="bullet-spacer">•</span>
+                                <span class="star-rating"><i class="fa-solid fa-star"></i> ${book.rating || '5.0'}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn-download-trigger" data-id="${book.file_id}">
+                        <i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>
+                    </button>
+                `;
+                return el;
+            }
+
+            async syncDashboard() {
+                this.dom.loader.style.display = "flex";
+                try {
+                    const response = await this.api.fetchJson('/api/trending');
+                    this.dom.loader.style.display = "none";
+                    this.renderDashboard(response.results ? response.results : response);
+                } catch (err) {
+                    this.dom.loader.style.display = "none";
+                    const fallback = localStorage.getItem("lib_dashboard_cache");
+                    if (fallback) this.renderDashboard(JSON.parse(fallback));
+                }
+            }
+
+            renderDashboard(data) {
+                if (!data) return;
+                localStorage.setItem("lib_dashboard_cache", JSON.stringify(data));
+
+                this.dom.trendingArea.replaceChildren();
+                const trending = data.trending || (Array.isArray(data) ? data : []);
+                trending.forEach((b, i) => this.dom.trendingArea.appendChild(this.buildRowNode(b, i)));
+
+                if (data.recommendations && data.recommendations.length > 0) {
+                    this.dom.recommendBox.style.display = "block";
+                    this.dom.recommendArea.replaceChildren();
+                    data.recommendations.forEach((b, i) => this.dom.recommendArea.appendChild(this.buildRowNode(b, i)));
+                }
+
+                if (this.dom.catsBar.children.length <= 1 && data.categories) {
+                    data.categories.forEach(c => {
+                        const chip = document.createElement("div");
+                        chip.className = "cat-chip"; chip.textContent = c; chip.dataset.cat = c;
+                        this.dom.catsBar.appendChild(chip);
+                    });
+                }
+            }
+
+            onSearchInput() {
+                this.currentQuery = this.dom.input.value.trim();
+                clearTimeout(this.debounceTimer);
+
+                if (this.currentQuery.length === 0) { this.switchToDiscoveryMode(); return; }
+                if (this.currentQuery.length < 2) return;
+
+                this.debounceTimer = setTimeout(() => this.runSearchPipeline(), 250);
+            }
+
+            async runSearchPipeline() {
+                this.dom.discoveryView.style.display = "none";
+                this.dom.quickTags.style.display = "none";
+                this.dom.searchView.style.display = "block";
+                this.dom.viewNoData.style.display = "none";
+                this.dom.searchArea.replaceChildren();
+
+                try {
+                    const data = await this.api.fetchJson(`/api/search?query=${encodeURIComponent(this.currentQuery)}`);
+                    const items = data.results || (Array.isArray(data) ? data : []);
+                    if (items.length > 0) {
+                        items.forEach((b, i) => this.dom.searchArea.appendChild(this.buildRowNode(b, i)));
+                    } else { this.dom.viewNoData.style.display = "block"; }
+                } catch (e) { this.dom.viewNoData.style.display = "block"; }
+            }
+
+            async dispatchDownloadRequest(btn) {
+                if (btn.classList.contains("working")) return;
+
+                const userId = this.tg?.initDataUnsafe?.user?.id;
+                if (!userId) {
+                    if (this.tg && this.tg.showPopup) {
+                        this.tg.showPopup({ title: "تعذّر التحقق", message: "لم نتمكن من التحقق من هويتك داخل تيليجرام.", buttons: [{ type: "ok", text: "حسنًا" }] });
+                    } else {
+                        alert("تعذّر التحقق من هويتك داخل تيليجرام.");
+                    }
+                    return;
+                }
+
+                btn.className = "btn-download-trigger working";
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>جاري البث...</span>`;
+
+                const fileId = btn.dataset.id;
+                const originalHtml = `<i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>`;
+
+                try {
+                    const data = await this.api.fetchJson(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${encodeURIComponent(userId)}`);
+
+                    if (data && data.success === false) {
+                        throw new Error(data.message || "SEND_FAILED");
+                    }
+
+                    btn.className = "btn-download-trigger success";
+                    btn.innerHTML = `<i class="fa-solid fa-check"></i> <span>في الشات</span>`;
+
+                    if (this.tg && this.tg.showPopup) {
+                        this.tg.showPopup({
+                            title: "اكتمل البث الرقمي",
+                            message: "تم تسليم الطلب بنجاح، ستجد الكتاب مرفوعاً وجاهزاً داخل شات البوت الآن.",
+                            buttons: [{ type: "ok", text: "تم" }]
+                        });
+                    }
+                } catch (err) {
+                    // تأمين الـ catch وإرجاع الزر لحالته الأصلية مع التنبيه الفعلي بالفشل
+                    btn.className = "btn-download-trigger failed";
+                    btn.innerHTML = `<i class="fa-solid fa-circle-exclamation"></i> <span>فشل الإرسال</span>`;
+                    
+                    if (this.tg && this.tg.showPopup) {
+                        this.tg.showPopup({
+                            title: "خلل في المعالجة",
+                            message: `لم يتمكن السيرفر من بث الملف. خطأ: ${err.message || 'Unknown'}`,
+                            buttons: [{ type: "ok", text: "إغلاق" }]
+                        });
+                    }
+                    
+                    // إعادة تهيئة الزر بعد ثانيتين لإتاحة إعادة المحاولة
+                    setTimeout(() => {
+                        if (btn.classList.contains("failed")) {
+                            btn.className = "btn-download-trigger";
+                            btn.innerHTML = originalHtml;
+                        }
+                    }, 2500);
+                }
