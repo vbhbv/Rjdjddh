@@ -83,14 +83,16 @@
 
         /* نافذة حجب الاشتراك القياسي الإجباري ونظام الإحالات الإجباري */
         .lock-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(13, 17, 23, 0.95);
-            display: none; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; z-index: 9999;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(13, 17, 23, 0.96);
+            display: none; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; z-index: 99999;
         }
-        .lock-card { background-color: var(--bg-card); border: 1px solid var(--border-color); padding: 30px 20px; border-radius: 16px; max-width: 90%; width: 400px; }
-        .lock-card i { font-size: 48px; color: var(--accent-error); margin-bottom: 16px; }
-        .lock-card h2 { font-size: 18px; font-weight: 700; color: #f0f6fc; margin-bottom: 12px; }
-        .lock-card p { font-size: 14px; color: var(--text-muted); margin-bottom: 24px; line-height: 1.6; }
-        .btn-lock-action { background-color: var(--accent-blue); color: #0d1117; border: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
+        .lock-card { background-color: var(--bg-card); border: 1px solid var(--border-color); padding: 35px 24px; border-radius: 16px; max-width: 90%; width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .lock-card i { font-size: 52px; color: var(--accent-error); margin-bottom: 18px; }
+        .lock-card h2 { font-size: 19px; font-weight: 700; color: #f0f6fc; margin-bottom: 14px; }
+        .lock-card p { font-size: 14px; color: var(--text-muted); margin-bottom: 26px; line-height: 1.6; }
+        .btn-lock-action { background-color: var(--accent-blue); color: #0d1117; border: none; padding: 13px 24px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; margin-bottom: 12px; }
+        .btn-lock-retry { background-color: transparent; color: var(--text-muted); border: 1px solid var(--border-color); padding: 8px 16px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+        .btn-lock-retry:hover { color: #ffffff; border-color: var(--text-main); }
 
         @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     </style>
@@ -102,9 +104,10 @@
             <i class="fa-solid fa-triangle-exclamation" id="lockIcon"></i>
             <h2 id="lockTitle">يجب الاشتراك في القناة أولاً</h2>
             <p id="lockMessage">عذراً، لم يتم تفعيل الاشتراك الإجباري أو أنك تجاوزت حد الـ 10 محاولات المتاحة لك قبل دعوة الأصدقاء عبر نظام الإحالات.</p>
-            <a href="#" id="lockActionButton" class="btn-lock-action">
+            <a href="#" id="lockActionButton" class="btn-lock-action" target="_blank">
                 <i class="fa-solid fa-arrow-up-right-from-square"></i> <span id="lockButtonText">اشترك الآن ليعمل التطبيق</span>
             </a>
+            <button class="btn-lock-retry" onclick="window.location.reload();">لقد اشتركت، تحديث الحساب 🔄</button>
         </div>
     </div>
 
@@ -200,7 +203,7 @@
 
         class HttpClient {
             constructor() {
-                this.breakers = new Map(); // Per-Endpoint Circuit Breakers
+                this.breakers = new Map();
             }
 
             getBreaker(endpoint) {
@@ -234,13 +237,20 @@
                                     continue;
                                 }
                             }
-                            if ([400, 401, 403, 404, 422].includes(response.status)) throw new Error(`ClientError:${response.status}`);
+                            if ([400, 401, 403, 404, 422].includes(response.status)) {
+                                // تمرير رمز الخطأ 403 متضمناً تفاصيل الـ Backend المرجعة لفك الحظر
+                                const errorPayload = await response.json().catch(() => ({}));
+                                const err = new Error(errorPayload.detail || `ClientError:${response.status}`);
+                                err.status = response.status;
+                                throw err;
+                            }
                             throw new Error(`ServerError:${response.status}`);
                         }
                         const data = await response.json();
                         breaker.success();
                         return data;
                     } catch (err) {
+                        if (err.status === 403) throw err; // منع إهدار المحاولات عند الحظر الصريح
                         const isAbort = err.name === 'AbortError' || options.signal?.aborted;
                         const isClient = err.message.includes("ClientError");
                         if (isAbort || isClient || (i === retries - 1)) {
@@ -255,68 +265,36 @@
             }
         }
 
-        // =========================================================================
-        // 3. طبقة الجدولة المتقدمة للطلبات حسب الأهمية (Priority Scheduler)
-        // =========================================================================
-        class RequestScheduler {
-            constructor(client) {
-                this.client = client;
-                this.queue = [];
-                this.running = 0;
-                this.maxConcurrent = 3;
-            }
-
-            schedule(url, options = {}, priority = 1) {
-                return new Promise((resolve, reject) => {
-                    this.queue.push({ url, options, priority, resolve, reject });
-                    this.queue.sort((a, b) => b.priority - a.priority); // الأولوية الأعلى أولاً
-                    this.processQueue();
-                });
-            }
-
-            async processQueue() {
-                if (this.running >= this.maxConcurrent || this.queue.length === 0) return;
-                this.running++;
-                const item = this.queue.shift();
-
-                try {
-                    const data = await this.client.request(item.url, item.options);
-                    item.resolve(data);
-                } catch (err) {
-                    item.reject(err);
-                } finally {
-                    this.running--;
-                    this.processQueue();
-                }
-            }
-        }
-
         const httpClient = new HttpClient();
-        const scheduler = new RequestScheduler(httpClient);
 
         // =========================================================================
         // 4. طبقة الـ Repositories (Pure Architectural Repositories)
         // =========================================================================
         class BookRepository {
-            constructor(sched) { this.sched = sched; }
+            constructor(client) { this.client = client; }
 
-            async getTrending(trace) { return this.sched.schedule('/api/trending', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getRecommendations(userId, trace) { return this.sched.schedule(`/api/recommendations?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getCategories(trace) { return this.sched.schedule('/api/categories', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
-            async getHistory(userId, trace) { return this.sched.schedule(`/api/history?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+            // نظام الفحص الاستباقي الصارم قبل أي حركة في التطبيق المصغر
+            async checkAccess(userId) {
+                return this.client.request(`/api/check-access?user_id=${userId}`, {}, 1, 0);
+            }
+
+            async getTrending(trace) { return this.client.request('/api/trending', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+            async getRecommendations(userId, trace) { return this.client.request(`/api/recommendations?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+            async getCategories(trace) { return this.client.request('/api/categories', { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
+            async getHistory(userId, trace) { return this.client.request(`/api/history?user_id=${userId}`, { headers: { 'X-Trace-Id': trace.traceId } }, 1); }
             
-            async search(query, cursor, limit, filters, signal, trace) {
+            async search(query, cursor, limit, filters, userId, signal, trace) {
                 const filterKey = btoa(JSON.stringify(filters || {}));
-                const url = `/api/search?query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}&limit=${limit}&filters=${filterKey}`;
-                return this.sched.schedule(url, { signal, headers: { 'X-Trace-Id': trace.traceId } }, 2); // البحث أولوية أعلى
+                const url = `/api/search?user_id=${userId}&query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}&limit=${limit}&filters=${filterKey}`;
+                return this.client.request(url, { signal, headers: { 'X-Trace-Id': trace.traceId } }, 1, 0);
             }
 
             async download(fileId, userId, trace) {
-                return this.sched.schedule(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${userId}`, {}, 3); // أولوية قصوى للتنزيل
+                return this.client.request(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${userId}`, {}, 1, 0);
             }
         }
 
-        const bookRepo = new BookRepository(scheduler);
+        const bookRepo = new BookRepository(httpClient);
 
         // =========================================================================
         // 5. طبقة الخدمات المفككة والمستقلة (Decoupled Micro-Services)
@@ -358,11 +336,11 @@
         class SearchService {
             constructor(repo) { this.repo = repo; this.abortCtrl = null; this.activePromise = null; }
             
-            async executeSearch(query, cursor = "", filters = {}, trace) {
+            async executeSearch(query, cursor = "", filters = {}, userId, trace) {
                 if (this.abortCtrl) this.abortCtrl.abort();
                 this.abortCtrl = new AbortController();
                 
-                this.activePromise = this.repo.search(query, cursor, 20, filters, this.abortCtrl.signal, trace);
+                this.activePromise = this.repo.search(query, cursor, 20, filters, userId, this.abortCtrl.signal, trace);
                 return this.activePromise;
             }
         }
@@ -379,7 +357,6 @@
                 this.nextCursor = null; this.query = ""; this.isLoadedAll = false; this.isPageLoading = false;
                 this.searchDebounce = null;
                 
-                // تتبع عداد الـ 10 محاولات لعمليات البحث على مستوى الواجهة والتحقق الآمن
                 this.searchCounter = parseInt(localStorage.getItem("local_search_limit_count") || "0", 10);
                 
                 this.domElements();
@@ -401,7 +378,6 @@
                     clear: document.getElementById("clearSearchBtn"),
                     cats: document.getElementById("categoriesContainer"),
                     badge: document.getElementById("offlineBadge"),
-                    // عناصر شاشة الحظر الجديدة
                     lockOverlay: document.getElementById("lockOverlay"),
                     lockTitle: document.getElementById("lockTitle"),
                     lockMessage: document.getElementById("lockMessage"),
@@ -433,23 +409,38 @@
                 });
             }
 
-            // فحص السياق وربط الإحالات برابط البوت الرسمي ديناميكياً
             checkInitialTelegramContext() {
                 if (this.tg) {
                     this.tg.ready();
                     this.tg.expand();
-                    
-                    // جلب معرف البوت واسمه تلقائياً لبناء رابط الإحالة من البيانات الجاهزة
+                    this.userId = this.tg.initDataUnsafe?.user?.id || 138980074;
                     const botUsername = this.tg.initDataUnsafe?.receiver?.username || "KnowledgeLibraryBot"; 
-                    const userId = this.tg.initDataUnsafe?.user?.id || "0";
-                    
-                    // تعيين رابط التوجيه الأساسي لنظام الإحالات واشتراك القناة
-                    this.botInviteLink = `https://t.me/${botUsername}?start=ref_${userId}`;
-                    this.dom.lockBtn.href = this.botInviteLink;
+                    this.botInviteLink = `https://t.me/${botUsername}?start=ref_${this.userId}`;
+                } else {
+                    this.userId = 138980074;
+                    this.botInviteLink = "#";
                 }
             }
 
-            // إظهار نافذة الحجب لشروط الاشتراك الإجباري ونظام الإحالة المتوقف
+            // نظام الفحص الاستباقي المركزي لحجب الواجهة بالكامل
+            async checkStrictPreflightAccess() {
+                if (this.searchCounter >= 10) {
+                    this.triggerLockScreen("search_limit");
+                    return false;
+                }
+                try {
+                    await bookRepo.checkAccess(this.userId);
+                    this.dom.lockOverlay.style.display = "none";
+                    return true;
+                } catch (err) {
+                    if (err.status === 403) {
+                        this.triggerLockScreen("subscription", err.message);
+                        return false;
+                    }
+                    return true; // تجاوز أخطاء الشبكة المؤقتة لضمان استمرارية التشغيل
+                }
+            }
+
             triggerLockScreen(type, customReason = "") {
                 this.dom.lockOverlay.style.display = "flex";
                 if (type === "search_limit") {
@@ -457,11 +448,13 @@
                     this.dom.lockTitle.textContent = "تنبيه: تم الوصول للحد الأقصى للبحث مجاناً";
                     this.dom.lockMessage.textContent = "لقد استهلكت 10 عمليات بحث متاحة لك. لفتح قفل التطبيق ومتابعة القراءة والاستفادة، يرجى مشاركة رابط الإحالة الخاص بك مع الأصدقاء لتفعيل الحساب.";
                     this.dom.lockBtnText.textContent = "نسخ رابط الإحالة الخاص بك وتفعيل البوت";
+                    this.dom.lockBtn.href = this.botInviteLink;
                 } else {
                     this.dom.lockIcon.className = "fa-solid fa-triangle-exclamation";
                     this.dom.lockTitle.textContent = "يجب الاشتراك في القناة أولاً";
                     this.dom.lockMessage.textContent = customReason || "عذراً، يجب عليك الاشتراك في قناة المكتبة أولاً وتفعيل البوت لتتمكن من تحميل الكتب والمخطوطات بحرية.";
                     this.dom.lockBtnText.textContent = "اشترك الآن في القناة ليعمل التطبيق";
+                    this.dom.lockBtn.href = "https://t.me/YourChannelUsername"; // ضع رابط قناتك العام هنا
                 }
             }
 
@@ -474,7 +467,7 @@
                         <div class="book-cover-placeholder"><i class="fa-solid fa-file-pdf"></i></div>
                         <div class="book-text">
                             <div class="book-title" title="${book.title || book.file_name}">${book.title || book.file_name}</div>
-                            <div class="book-meta-data">امتداد: ${book.extension || 'PDF'} | تصنيف: ${tag}</div>
+                            <div class="book-meta-data">امتداد: PDF | تصنيف: ${tag}</div>
                         </div>
                     </div>
                     <button class="btn-action" data-file-id="${book.file_id}">إرسال للشات</button>
@@ -483,12 +476,15 @@
             }
 
             async renderDashboard() {
+                // تفعيل الفحص الاستباقي قبل عرض الصفحة الرئيسية
+                const hasAccess = await this.checkStrictPreflightAccess();
+                if (!hasAccess) return;
+
                 this.dom.loader.style.display = "flex";
-                const userId = this.tg.initDataUnsafe?.user?.id || 0;
                 const startTime = performance.now();
 
                 try {
-                    const data = await this.homeServ.getDashboardData(userId, globalTrace);
+                    const data = await this.homeServ.getDashboardData(this.userId, globalTrace);
                     this.dom.loader.style.display = "none";
                     this.dom.badge.style.display = "none";
                     this.populateHome(data.results);
@@ -507,18 +503,18 @@
 
             populateHome(data) {
                 this.dom.display.replaceChildren();
-                data.trending.forEach(b => this.dom.display.appendChild(this.createCard(b, "مصلحة عامة")));
-                if (data.recommendations.length > 0) {
+                if(data.trending) data.trending.forEach(b => this.dom.display.appendChild(this.createCard(b, "مصلحة عامة")));
+                if (data.recommendations && data.recommendations.length > 0) {
                     document.getElementById("recommendationSection").style.display = "block";
                     this.dom.recArea.replaceChildren();
                     data.recommendations.forEach(b => this.dom.recArea.appendChild(this.createCard(b, "مقترح لك")));
                 }
-                if (data.history.length > 0) {
+                if (data.history && data.history.length > 0) {
                     this.dom.histSection.style.display = "block";
                     this.dom.histArea.replaceChildren();
                     data.history.forEach(b => this.dom.histArea.appendChild(this.createCard(b, "سجل سابق")));
                 }
-                if (this.dom.cats.children.length <= 1) {
+                if (this.dom.cats.children.length <= 1 && data.categories) {
                     data.categories.forEach(c => {
                         const chip = document.createElement("div");
                         chip.className = "category-chip"; chip.textContent = c; chip.dataset.category = c;
@@ -532,26 +528,22 @@
                 this.query = this.dom.input.value.trim();
                 if (this.query.length < 2) { if (this.query.length === 0) this.clearSearch(); return; }
                 
-                // التحقق الفوري والذكي من قفل عداد الـ 10 عمليات المتاحين في الواجهة لتفعيل نظام الإحالات
-                if (this.searchCounter >= 10) {
-                    this.triggerLockScreen("search_limit");
-                    return;
-                }
-                
                 this.searchDebounce = setTimeout(() => this.executeSearchPipeline(), 250);
             }
 
             async executeSearchPipeline() {
+                const hasAccess = await this.checkStrictPreflightAccess();
+                if (!hasAccess) return;
+
                 this.dom.title.textContent = "نتائج الفحص الفوري والمطابقة";
                 this.dom.empty.style.display = "none";
                 this.dom.loader.style.display = "flex";
                 this.dom.display.replaceChildren();
 
                 try {
-                    const res = await this.searchServ.executeSearch(this.query, "", {}, globalTrace);
+                    const res = await this.searchServ.executeSearch(this.query, "", {}, this.userId, globalTrace);
                     this.dom.loader.style.display = "none";
                     if (res.success && res.results.length > 0) {
-                        // تحديث العداد وحفظه في الذاكرة المحلية عند جلب نتائج ناجحة
                         this.searchCounter++;
                         localStorage.setItem("local_search_limit_count", this.searchCounter.toString());
                         
@@ -559,44 +551,33 @@
                         this.isLoadedAll = !res.next_cursor;
                         res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
                     } else {
-                        // التحقق مما إذا كان السيرفر هو من أوقف العملية بسبب شروط الاشتراك الإجباري أو الإحالات في الخلفية
-                        if (res.success === false && res.message) {
-                            this.triggerLockScreen("subscription", res.message);
-                        } else {
-                            this.dom.empty.style.display = "block";
-                        }
+                        this.dom.empty.style.display = "block";
                     }
                 } catch (err) {
                     if (err.name !== "AbortError") this.dom.loader.style.display = "none";
+                    if (err.status === 403) this.triggerLockScreen("subscription", err.message);
                 }
             }
 
             async fetchNextSearchBatch() {
-                if (this.searchCounter >= 10) {
-                    this.triggerLockScreen("search_limit");
-                    return;
-                }
+                const hasAccess = await this.checkStrictPreflightAccess();
+                if (!hasAccess) return;
                 
                 this.isPageLoading = true;
                 const row = document.createElement("div"); row.className = "skeleton-row";
                 this.dom.display.appendChild(row);
 
                 try {
-                    const res = await this.searchServ.executeSearch(this.query, this.nextCursor, {}, globalTrace);
+                    const res = await this.searchServ.executeSearch(this.query, this.nextCursor, {}, this.userId, globalTrace);
                     row.remove();
                     if (res.success && res.results.length > 0) {
                         this.nextCursor = res.next_cursor;
                         this.isLoadedAll = !res.next_cursor;
                         res.results.forEach(b => this.dom.display.appendChild(this.createCard(b, "مخطوطة مطابقة")));
-                        
-                        if (this.dom.display.children.length > 60) {
-                            for (let i = 0; i < 20; i++) {
-                                this.dom.display.removeChild(this.dom.display.firstChild);
-                            }
-                        }
                     }
                 } catch (err) {
                     row.remove();
+                    if (err.status === 403) this.triggerLockScreen("subscription", err.message);
                 } finally {
                     this.isPageLoading = false;
                 }
@@ -604,31 +585,38 @@
 
             async fireDownload(btn) {
                 if (btn.classList.contains("loading")) return;
+                
+                const hasAccess = await this.checkStrictPreflightAccess();
+                if (!hasAccess) return;
+
                 btn.classList.add("loading"); btn.disabled = true; btn.textContent = "جاري الحجز...";
                 
                 try {
-                    const res = await bookRepo.download(btn.dataset.fileId, this.tg.initDataUnsafe?.user?.id || 0, globalTrace);
+                    const res = await bookRepo.download(btn.dataset.fileId, this.userId, globalTrace);
                     if (res.success) {
                         btn.className = "btn-action success"; btn.textContent = "تم الإرسال";
                     } else {
-                        // في حال رفض الـ Backend التحميل بسبب خلل الاشتراك الإجباري أو نظام الإحالات، يتم تنشيط الحظر فوراً
                         this.resetBtn(btn);
-                        this.triggerLockScreen("subscription", res.message || "⚠️ يجب عليك الاشتراك في القناة وتفعيل البوت أولاً ليفتح التطبيق.");
+                        this.triggerLockScreen("subscription", res.message);
                     }
                 } catch (err) {
                     this.resetBtn(btn);
                     btn.className = "btn-action error"; btn.textContent = "خطأ بالحظر";
-                    this.triggerLockScreen("subscription", "فشل التحقق الرقمي، تأكد من اشتراكك في القناة الرسمية وتحديث حسابك عبر الإحالات.");
+                    if (err.status === 403) {
+                        this.triggerLockScreen("subscription", err.message);
+                    }
                     telemetry.logError("DownloadAction", err, globalTrace);
                 }
             }
 
             resetBtn(btn) { btn.className = "btn-action"; btn.disabled = false; btn.textContent = "إرسال للشات"; }
+            
             selectCategory(chip) {
                 document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
                 chip.classList.add('active'); this.dom.input.value = chip.dataset.category;
                 this.triggerDebouncedSearch();
             }
+            
             clearSearch() {
                 this.dom.input.value = ""; this.query = ""; this.nextCursor = null; this.isLoadedAll = false;
                 this.dom.title.textContent = "الإصدارات الأكثر رواجاً هذا الأسبوع";
