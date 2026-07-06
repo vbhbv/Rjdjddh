@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>خزانة الحكمة المعرفية</title>
+    <title>خزانة الحكمة المعرفية - مصلح الفهارس</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -228,6 +228,15 @@
                 });
             }
 
+            // استخراج الهوية بصيغة آمنة وموحدة لاستخدامها في كافة الطلبات
+            getTelegramUser() {
+                return this.tg?.initDataUnsafe?.user?.id || null;
+            }
+
+            getTelegramRawData() {
+                return this.tg?.initData || "";
+            }
+
             generateCoverHtml(book) {
                 const uniqueStr = String(book.file_id || "9");
                 const sum = uniqueStr.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
@@ -272,12 +281,28 @@
 
             async syncDashboard() {
                 this.dom.loader.style.display = "flex";
+                const userId = this.getTelegramUser();
+                const rawInit = this.getTelegramRawData();
+
                 try {
-                    const response = await this.api.fetchJson('/api/trending');
+                    // 🔧 تمرير الهوية في الـ Headers والـ Query لضمان تخطي جدار الحماية والتحقق بالخادم
+                    const response = await this.api.fetchJson(`/api/trending?user_id=${encodeURIComponent(userId || '')}`, {
+                        headers: { 'X-Telegram-Init-Data': rawInit }
+                    });
                     this.dom.loader.style.display = "none";
                     this.renderDashboard(response.results ? response.results : response);
                 } catch (err) {
                     this.dom.loader.style.display = "none";
+                    
+                    // كشف صريح لسبب فشل جلب الكتب لئلا يختفي الخطأ بالخلفية
+                    if (this.tg && this.tg.showPopup) {
+                        this.tg.showPopup({ 
+                            title: "فشل تحديث الفهارس", 
+                            message: `السيرفر لم يرسل الكتب الموصى بها. السبب: ${err.message}`, 
+                            buttons: [{ type: "ok", text: "حسناً" }] 
+                        });
+                    }
+                    
                     const fallback = localStorage.getItem("lib_dashboard_cache");
                     if (fallback) this.renderDashboard(JSON.parse(fallback));
                 }
@@ -323,25 +348,31 @@
                 this.dom.viewNoData.style.display = "none";
                 this.dom.searchArea.replaceChildren();
 
+                const userId = this.getTelegramUser();
+                const rawInit = this.getTelegramRawData();
+
                 try {
-                    const data = await this.api.fetchJson(`/api/search?query=${encodeURIComponent(this.currentQuery)}`);
+                    // 🔧 تأمين طلب البحث أيضاً بالمعاملات اللازمة لهوية المستخدم للفلترة الجوهرية
+                    const data = await this.api.fetchJson(`/api/search?query=${encodeURIComponent(this.currentQuery)}&user_id=${encodeURIComponent(userId || '')}`, {
+                        headers: { 'X-Telegram-Init-Data': rawInit }
+                    });
                     const items = data.results || (Array.isArray(data) ? data : []);
                     if (items.length > 0) {
                         items.forEach((b, i) => this.dom.searchArea.appendChild(this.buildRowNode(b, i)));
                     } else { this.dom.viewNoData.style.display = "block"; }
-                } catch (e) { this.dom.viewNoData.style.display = "block"; }
+                } catch (e) { 
+                    this.dom.viewNoData.style.display = "block"; 
+                }
             }
 
             async dispatchDownloadRequest(btn) {
                 if (btn.classList.contains("working")) return;
 
-                const userId = this.tg?.initDataUnsafe?.user?.id;
+                const userId = this.getTelegramUser();
                 if (!userId) {
                     if (this.tg && this.tg.showPopup) {
                         this.tg.showPopup({ title: "تعذّر التحقق", message: "لم نتمكن من التحقق من هويتك داخل تيليجرام.", buttons: [{ type: "ok", text: "حسنًا" }] });
-                    } else {
-                        alert("تعذّر التحقق من هويتك داخل تيليجرام.");
-                    }
+                    } else { alert("تعذّر التحقق من هويتك داخل تيليجرام."); }
                     return;
                 }
 
@@ -350,9 +381,12 @@
 
                 const fileId = btn.dataset.id;
                 const originalHtml = `<i class="fa-solid fa-cloud-arrow-down"></i> <span>تحميل</span>`;
+                const rawInit = this.getTelegramRawData();
 
                 try {
-                    const data = await this.api.fetchJson(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${encodeURIComponent(userId)}`);
+                    const data = await this.api.fetchJson(`/api/download?file_id=${encodeURIComponent(fileId)}&user_id=${encodeURIComponent(userId)}`, {
+                        headers: { 'X-Telegram-Init-Data': rawInit }
+                    });
 
                     if (data && data.success === false) {
                         throw new Error(data.message || "SEND_FAILED");
@@ -369,7 +403,6 @@
                         });
                     }
                 } catch (err) {
-                    // تأمين الـ catch وإرجاع الزر لحالته الأصلية مع التنبيه الفعلي بالفشل
                     btn.className = "btn-download-trigger failed";
                     btn.innerHTML = `<i class="fa-solid fa-circle-exclamation"></i> <span>فشل الإرسال</span>`;
                     
@@ -381,11 +414,5 @@
                         });
                     }
                     
-                    // إعادة تهيئة الزر بعد ثانيتين لإتاحة إعادة المحاولة
                     setTimeout(() => {
-                        if (btn.classList.contains("failed")) {
-                            btn.className = "btn-download-trigger";
-                            btn.innerHTML = originalHtml;
-                        }
-                    }, 2500);
-                }
+                        if (btn.classList.
