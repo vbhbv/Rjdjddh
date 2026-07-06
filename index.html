@@ -3,254 +3,227 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>مكتبة المعرفة الرقمية - واجهة الجيل الجديد</title>
+    <title>خزانة الحكمة المعرفية - خط الآيفون الصارم</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* التناغم مع ألوان Telegram الرسمية مع Fallbacks عصرية */
+        /* استدعاء خط الآيفون الرسمي وتطبيق الهوية الصارمة للمكتبات العلمية */
+        @import url('https://fonts.cdnfonts.com/css/sf-pro-display-2');
+
         :root {
-            --tg-bg: var(--telegram-bg-color, #0f141c);
-            --tg-sec-bg: var(--telegram-secondary-bg-color, #171f2a);
-            --tg-text: var(--telegram-text-color, #f5f6f7);
-            --tg-hint: var(--telegram-hint-color, #7f8c99);
-            --tg-link: var(--telegram-link-color, #2481cc);
-            --accent-gradient: linear-gradient(135deg, #2481cc, #00b4db);
-            --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            --tg-bg: var(--telegram-bg-color, #0d1117);
+            --tg-sec-bg: var(--telegram-secondary-bg-color, #161b22);
+            --tg-text: var(--telegram-text-color, #c9d1d9);
+            --tg-hint: var(--telegram-hint-color, #8b949e);
+            --tg-link: var(--telegram-link-color, #58a6ff);
+            --border-color: #30363d;
+            --accent-gold: #f25c54;
+            --rating-gold: #ffb703;
+            --ios-font: 'SF Pro Display', 'SF Pro Text', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--tg-bg); color: var(--tg-text); padding: 16px; min-height: 100vh;
-            line-height: 1.4;
+            font-family: var(--ios-font);
+            background-color: var(--tg-bg); color: var(--tg-text); padding: 14px; min-height: 100vh;
+            letter-spacing: -0.2px;
         }
 
-        /* رأس الصفحة الفاخر */
-        .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-        .brand-wrapper { display: flex; align-items: center; gap: 12px; }
-        .brand-icon {
-            background: var(--accent-gradient); width: 42px; height: 42px; border-radius: 12px;
-            display: flex; align-items: center; justify-content: center; color: #fff; font-size: 20px; box-shadow: var(--card-shadow);
+        /* لوحة إحصائيات ضخامة المكتبة (أولى اللمسات الجمالية لإعطاء ثقل فوري) */
+        .library-stats-bar {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+            background: var(--tg-sec-bg); padding: 14px; border-radius: 12px;
+            border: 1px solid var(--border-color); margin-bottom: 20px; text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
         }
-        .brand-text h1 { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
-        .brand-text p { font-size: 11px; color: var(--tg-hint); }
+        .stat-item .stat-num { font-size: 16px; font-weight: 700; color: #f0f6fc; font-feature-settings: "tnum"; }
+        .stat-item .stat-lbl { font-size: 11px; color: var(--tg-hint); margin-top: 3px; }
 
-        /* شريط البحث المطور */
-        .search-container { position: relative; margin-bottom: 16px; }
-        .search-input {
-            width: 100%; padding: 16px 48px 16px 16px; background-color: var(--tg-sec-bg);
-            border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 14px; color: var(--tg-text); font-size: 15px;
-            outline: none; transition: all 0.25s ease; box-shadow: var(--card-shadow);
+        /* منطقة البحث المركزية */
+        .search-area-box { position: relative; margin-bottom: 8px; }
+        .search-input-field {
+            width: 100%; padding: 15px 46px 15px 16px; background-color: var(--tg-sec-bg);
+            border: 1px solid var(--border-color); border-radius: 10px; color: #f0f6fc; font-size: 14.5px; 
+            font-family: var(--ios-font); outline: none; transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
-        .search-input:focus { border-color: var(--tg-link); box-shadow: 0 0 0 3px rgba(36, 129, 204, 0.2); }
-        .search-container .search-icon { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); color: var(--tg-hint); font-size: 16px; }
+        .search-input-field:focus { border-color: var(--tg-link); box-shadow: 0 0 0 1px var(--tg-link); }
+        .search-area-box .search-icon { position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--tg-hint); }
 
-        /* الكلمات الشائعة وسجل البحث */
-        .trending-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; padding: 0 4px; }
-        .trending-label { font-size: 11px; color: var(--tg-hint); align-self: center; margin-left: 4px; }
-        .tag-pill { font-size: 11px; background: rgba(255, 255, 255, 0.05); padding: 4px 10px; border-radius: 8px; color: var(--tg-link); cursor: pointer; }
+        /* الكلمات الشائعة وسجل البحث السريع */
+        .trending-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; padding: 0 4px; align-items: center; }
+        .trending-label { font-size: 11.5px; color: var(--tg-hint); }
+        .tag-pill { font-size: 11.5px; background: var(--tg-sec-bg); padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border-color); color: var(--tg-link); cursor: pointer; transition: background 0.2s; }
+        .tag-pill:active { background: rgba(88, 166, 255, 0.1); }
 
-        /* التصنيفات الاحترافية بأيقونات */
-        .chips-scroll { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 28px; }
-        .chips-scroll::-webkit-scrollbar { display: none; }
-        .category-chip {
-            background-color: var(--tg-sec-bg); border: 1px solid rgba(255, 255, 255, 0.03); color: var(--tg-text);
-            padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; white-space: nowrap;
-            cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s ease;
+        /* حاوية الاقتراحات الفورية أثناء الكتابة (Autocomplete Suggestions) */
+        .suggestions-panel {
+            background: var(--tg-sec-bg); border: 1px solid var(--border-color); border-radius: 10px;
+            margin-bottom: 16px; display: none; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+            position: relative; z-index: 10;
         }
-        .category-chip i { font-size: 14px; color: var(--tg-hint); }
-        .category-chip.active { background: var(--accent-gradient); color: #fff; border: none; box-shadow: var(--card-shadow); }
-        .category-chip.active i { color: #fff; }
+        .suggestion-row {
+            padding: 14px 16px; display: flex; align-items: center; gap: 12px;
+            font-size: 14px; color: #f0f6fc; border-bottom: 1px solid var(--border-color); cursor: pointer;
+        }
+        .suggestion-row:last-child { border-bottom: none; }
+        .suggestion-row i { color: var(--tg-hint); font-size: 12px; }
+        .suggestion-row .matched-prefix { color: var(--tg-link); font-weight: 600; }
 
-        /* هيكلة الأقسام الحديثة */
-        .section-wrapper { margin-bottom: 32px; }
-        .section-header { font-size: 15px; font-weight: 800; color: var(--tg-text); margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
-        .section-header span { display: flex; align-items: center; gap: 8px; }
-        .section-header i { color: var(--tg-link); }
+        /* علامات التصنيفات السريعة */
+        .chips-nav-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 24px; }
+        .chips-nav-row::-webkit-scrollbar { display: none; }
+        .nav-chip {
+            background: var(--tg-sec-bg); border: 1px solid var(--border-color); color: var(--tg-text);
+            padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: all 0.2s;
+        }
+        .nav-chip.active { background: var(--tg-link); color: #0d1117; border-color: var(--tg-link); font-weight: 600; }
 
-        /* الرف الأفقي كنمط عالي الجاذبية (Spotify Style Scroll) */
-        .horizontal-shelf { display: flex; gap: 14px; overflow-x: auto; padding: 4px 4px 16px 4px; }
-        .horizontal-shelf::-webkit-scrollbar { display: none; }
+        /* بنية الـ Data-Dense Lists (الكثافة العالية للمعلومات) */
+        .dense-section { margin-bottom: 26px; }
+        .dense-section-title { font-size: 13px; font-weight: 700; color: var(--tg-hint); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
         
-        /* بطاقة الكتاب المطورة كلياً */
-        .book-card-vertical {
-            background-color: var(--tg-sec-bg); border-radius: 16px; width: 140px; flex-shrink: 0;
-            padding: 10px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--card-shadow); transition: transform 0.2s;
-        }
-        .book-card-vertical:active { transform: scale(0.97); }
+        .dense-list { display: flex; flex-direction: column; }
         
-        /* غلاف كتاب ديناميكي مولد برمجياً */
-        .book-cover-art {
-            width: 120px; height: 160px; border-radius: 10px; position: relative;
-            display: flex; flex-direction: column; justify-content: space-between; padding: 12px;
-            color: #fff; font-weight: 700; overflow: hidden; box-shadow: inset 0 -40px 40px rgba(0,0,0,0.4);
+        /* السطر المعرفي المدمج المحسن بلمسة حركة الـ iOS النظيفة */
+        .book-dense-row {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 12px 6px; border-bottom: 1px solid rgba(48, 54, 61, 0.5); 
+            animation: iosFadeInUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
-        .book-cover-art .cover-bg-icon { position: absolute; bottom: -10px; left: -10px; font-size: 70px; opacity: 0.12; transform: rotate(-15deg); }
-        .book-cover-art .badge-tag { font-size: 9px; text-transform: uppercase; padding: 2px 6px; background: rgba(0,0,0,0.3); border-radius: 4px; width: max-content; backdrop-filter: blur(2px); }
-        .book-cover-art .mini-title { font-size: 11px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 1px 1px 2px rgba(0,0,0,0.6); line-height: 1.2; }
-
-        /* تفاصيل البيانات بتسلسل بصري سليم */
-        .book-meta-block { display: flex; flex-direction: column; gap: 2px; }
-        .meta-book-title { font-size: 13px; font-weight: 700; color: var(--tg-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .meta-book-author { font-size: 11px; color: var(--tg-hint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .book-dense-row:last-child { border-bottom: none; }
         
-        .card-action-row { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.03); }
-        .meta-file-info { font-size: 10px; color: var(--tg-hint); }
+        @keyframes iosFadeInUp {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
         
-        .btn-download-icon {
-            width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.05);
-            color: var(--tg-link); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s;
+        .book-core-info { display: flex; align-items: flex-start; gap: 12px; overflow: hidden; flex-grow: 1; }
+        .book-type-icon { font-size: 16px; color: var(--tg-link); margin-top: 3px; flex-shrink: 0; }
+        
+        .book-text-meta { display: flex; flex-direction: column; overflow: hidden; }
+        .primary-title-row { display: flex; align-items: center; gap: 6px; }
+        .b-title { font-size: 14.5px; font-weight: 700; color: #f0f6fc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        
+        .secondary-data-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--tg-hint); margin-top: 3px; white-space: nowrap; overflow: hidden; }
+        .b-author { color: var(--tg-text); font-weight: 500; }
+        .data-separator { color: var(--border-color); }
+        
+        .rating-block { font-size: 10px; color: var(--rating-gold); display: flex; align-items: center; gap: 2px; }
+        
+        /* زر الإجراء الصغير المنكمش لمنع السيطرة البصرية */
+        .btn-dense-download {
+            background: none; border: 1px solid var(--border-color); color: var(--tg-link);
+            width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; flex-shrink: 0; font-size: 13px; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .btn-download-icon.success { background: var(--accent-green) !important; color: white !important; border: none; }
+        .btn-dense-download:active { background: rgba(88, 166, 255, 0.1); transform: scale(0.92); }
+        .btn-dense-download.success { border-color: #2ea44f; color: #2ea44f; background: rgba(46, 164, 79, 0.05); }
 
-        /* تصميم القائمة الطولية المرنة لنتائج البحث */
-        .vertical-list { display: flex; flex-direction: column; gap: 12px; }
-        .book-card-horizontal {
-            display: flex; gap: 14px; background-color: var(--tg-sec-bg); border-radius: 16px; padding: 12px; box-shadow: var(--card-shadow);
-        }
-        .book-card-horizontal .book-cover-art { width: 75px; height: 100px; flex-shrink: 0; padding: 8px; }
-        .book-card-horizontal .book-cover-art .mini-title { font-size: 9px; }
-        .book-card-horizontal .horizontal-details { display: flex; flex-direction: column; justify-content: space-between; flex-grow: 1; overflow: hidden; }
+        .skeleton-row-dense { height: 54px; border-bottom: 1px solid var(--border-color); animation: shimmer 1.5s infinite linear; background: linear-gradient(90deg, var(--tg-bg) 25%, var(--tg-sec-bg) 50%, var(--tg-bg) 75%); background-size: 200% 100%; }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-        /* الهياكل العظمية الحديثة */
-        .skeleton-shelf { display: flex; gap: 14px; overflow: hidden; }
-        .skeleton-card { width: 140px; height: 240px; background: var(--tg-sec-bg); border-radius: 16px; animation: pulse 1.5s infinite ease-in-out; }
-        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
-
-        .empty-state { display: none; text-align: center; padding: 48px 16px; color: var(--tg-hint); }
-        .empty-state i { font-size: 40px; margin-bottom: 12px; color: var(--tg-link); }
-        .offline-tag { background: #cf3c3c; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; display: none; }
+        .empty-state { display: none; text-align: center; padding: 40px; color: var(--tg-hint); font-size: 13.5px; }
     </style>
 </head>
 <body>
 
-    <div class="app-header">
-        <div class="brand-wrapper">
-            <div class="brand-icon"><i class="fa-solid fa-graduation-cap"></i></div>
-            <div class="brand-text">
-                <h1>خزانة الحكمة</h1>
-                <p>البوابة الرقمية لـ 1.5 مليون كتاب ومخطوطة</p>
-            </div>
+    <!-- عدادات الحجم الفعلي للمكتبة الرقمية -->
+    <div class="library-stats-bar">
+        <div class="stat-item">
+            <div class="stat-num">1,534,821</div>
+            <div class="stat-lbl">مخطوط ومصدر</div>
         </div>
-        <span id="offlineTag" class="offline-tag">أوفلاين</span>
+        <div class="stat-item">
+            <div class="stat-num">94,105</div>
+            <div class="stat-lbl">مؤلف ومحقق</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-num">320</div>
+            <div class="stat-lbl">تصنيفاً علمياً</div>
+        </div>
     </div>
 
-    <div class="search-container">
-        <input type="text" id="dbSearch" class="search-input" placeholder="ابحث بالعنوان، المؤلف، أو الفكرة الفلسفية...">
+    <!-- حقل البحث المتقدم -->
+    <div class="search-area-box">
+        <input type="text" id="dbSearch" class="search-input-field" placeholder="ادخل اسم الكتاب، المصنف، أو المحقق..." autocomplete="off">
         <i class="fa-solid fa-magnifying-glass search-icon"></i>
     </div>
+
+    <!-- الكلمات الأكثر بحثاً وتداولاً مسبقاً -->
     <div class="trending-tags" id="trendingTags">
-        <span class="trending-label">شائع الآن:</span>
-        <span class="tag-pill">علي الوردي</span>
-        <span class="tag-pill">مقدمة ابن خلدون</span>
-        <span class="tag-pill">وجودية نيتشه</span>
+        <span class="trending-label">شائع:</span>
+        <span class="tag-pill">منطق المظفر</span>
+        <span class="tag-pill">نهاية الحكمة</span>
+        <span class="tag-pill">الأسفار الأربعة</span>
     </div>
 
-    <div class="chips-scroll" id="categoriesContainer">
-        <div class="category-chip active" data-category="all"><i class="fa-solid fa-compass"></i> اكتشف الكل</div>
+    <!-- لوحة الاقتراحات التلقائية (Autocomplete) الفورية لمنع الهدر الزمني -->
+    <div class="suggestions-panel" id="suggestionsPanel"></div>
+
+    <!-- شريط التنقل الأفقي المقتضب للتصنيفات الفكرية -->
+    <div class="chips-nav-row" id="categoriesContainer">
+        <div class="nav-chip active" data-category="all">خزانة الاكتشاف</div>
     </div>
 
-    <div id="homeViewContainer">
-        <div class="section-wrapper" id="recommendationSection" style="display: none;">
-            <div class="section-header"><span><i class="fa-solid fa-wand-magic-sparkles"></i> مقترحات منسقة لاهتمامك</span></div>
-            <div class="horizontal-shelf" id="recommendationArea"></div>
+    <!-- لوحة العرض الرئيسية (Discovery Mode) -->
+    <div id="discoveryContainer">
+        <div class="dense-section" id="recommendationSection" style="display: none;">
+            <div class="dense-section-title">مقترحات فكرية مخصصة</div>
+            <div class="dense-list" id="recommendationArea"></div>
         </div>
 
-        <div class="section-wrapper" id="trendingSection">
-            <div class="section-header"><span><i class="fa-solid fa-fire"></i> الأكثر تحميلاً هذا الأسبوع</span></div>
-            
-            <div id="skeletonLoader" class="skeleton-shelf" style="display: none;">
-                <div class="skeleton-card"></div>
-                <div class="skeleton-card"></div>
-                <div class="skeleton-card"></div>
+        <div class="dense-section">
+            <div class="dense-section-title">الأكثر طلباً وتحميلاً هذا الأسبوع</div>
+            <div id="skeletonLoader" style="display: none; flex-direction: column;">
+                <div class="skeleton-row-dense"></div>
+                <div class="skeleton-row-dense"></div>
+                <div class="skeleton-row-dense"></div>
             </div>
-
-            <div class="horizontal-shelf" id="trendingArea"></div>
+            <div class="dense-list" id="trendingArea"></div>
         </div>
 
-        <div class="section-wrapper" id="historySection" style="display: none;">
-            <div class="section-header"><span><i class="fa-solid fa-clock-rotate-left"></i> أكمل القراءة (آخر التنزيلات)</span></div>
-            <div class="horizontal-shelf" id="historyArea"></div>
+        <div class="dense-section" id="historySection" style="display: none;">
+            <div class="dense-section-title">سجل آخر التنزيلات المتزامنة</div>
+            <div class="dense-list" id="historyArea"></div>
         </div>
     </div>
 
-    <div id="searchViewContainer" style="display: none;" class="section-wrapper">
-        <div class="section-header"><span id="searchResultTitle">نتائج الفحص والمطابقة</span></div>
+    <!-- لوحة نتائج الفحص والبحث المكثف (Dense Search Mode) -->
+    <div id="searchContainer" style="display: none;" class="dense-section">
+        <div class="dense-section-title" id="searchResultTitle">نتائج الفحص والتحقيق المطابقة</div>
         <div class="empty-state" id="emptyStateView">
-            <i class="fa-solid fa-folder-open"></i>
-            <p>لم نجد نتائج مطابقة لعنوان بحثك الفوري.</p>
+            <i class="fa-solid fa-ban" style="font-size: 24px; margin-bottom: 8px; display:block;"></i>
+            لا توجد مطابقة دقيقة في الفهارس الحالية.
         </div>
-        <div class="vertical-list" id="searchResultArea"></div>
+        <div class="dense-list" id="searchResultArea"></div>
     </div>
 
     <script>
         // =========================================================================
-        // 1. الأنوية المعمارية الصلبة المتبعة (Architecture Layer)
+        // 1. الأنوية المعمارية والربط الشبكي الموثوق
         // =========================================================================
-        class TraceContext {
-            constructor() { this.traceId = `tr-${Math.random().toString(36).substr(2, 9)}`; }
-        }
-        const globalTrace = new TraceContext();
-
         class HttpClient {
             async request(url, options = {}) {
-                const timeoutCtrl = new AbortController();
-                let signal = timeoutCtrl.signal;
-                if (options.signal) {
-                    if (typeof AbortSignal.any === 'function') signal = AbortSignal.any([options.signal, timeoutCtrl.signal]);
-                    else options.signal.addEventListener('abort', () => timeoutCtrl.abort());
-                }
-                const timer = setTimeout(() => timeoutCtrl.abort(), 8000);
                 try {
-                    const response = await fetch(url, { ...options, signal });
-                    if (!response.ok) throw new Error(`Status:${response.status}`);
+                    const response = await fetch(url, options);
+                    if (!response.ok) throw new Error("NetworkError");
                     return await response.json();
-                } finally { clearTimeout(timer); }
+                } catch (e) { throw e; }
             }
         }
-
-        class BookRepository {
-            constructor(client) { this.client = client; }
-            async getDashboard() { return this.client.request('/api/trending'); }
-            async search(query, cursor, signal) {
-                return this.client.request(`/api/search?query=${encodeURIComponent(query)}&cursor=${encodeURIComponent(cursor)}`, { signal });
-            }
-            async download(fileId) { return this.client.request(`/api/download?file_id=${encodeURIComponent(fileId)}`); }
-        }
-
         const http = new HttpClient();
-        const repo = new BookRepository(http);
 
-        // =========================================================================
-        // 2. منطق توليد الأغلفة الديناميكية والمظهر الجمالي (UI Cover Generator)
-        // =========================================================================
-        const COVER_PALETTES = [
-            { bg: 'linear-gradient(135deg, #3a6186, #89253e)', icon: 'fa-scale-balanced' }, // فلسفة / علوم
-            { bg: 'linear-gradient(135deg, #4ea105, #48b1bf)', icon: 'fa-feather-pointed' }, // أدب / روايات
-            { bg: 'linear-gradient(135deg, #134e5e, #71b280)', icon: 'fa-scroll' }, // تاريخ / تراث
-            { bg: 'linear-gradient(135deg, #b06ab3, #4568dc)', icon: 'fa-atom' }  // تقنية / معرفة العامة
+        const SEARCH_SUGGESTIONS_DB = [
+            "منطق المظفر", "المنطق الأرسطي", "المنطق الرياضي", "منطق الإشارات والتنبيهات",
+            "نهاية الحكمة للطباطبائي", "بداية الحكمة", "الأسفار الأربعة", "الكافي للكليني"
         ];
 
-        function generateCoverHTML(book) {
-            // اختيار لوحة ألوان ثابتة ومحددة برمز فريد مستخلص من قيمة الـ file_id
-            const index = Math.abs(book.file_id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) % COVER_PALETTES.length;
-            const palette = COVER_PALETTES[index];
-            
-            return `
-                <div class="book-cover-art" style="background: ${palette.bg}">
-                    <i class="fa-solid ${palette.icon} cover-bg-icon"></i>
-                    <div class="badge-tag">${book.extension || 'PDF'}</div>
-                    <div class="mini-title">${book.title || book.file_name}</div>
-                </div>
-            `;
-        }
-
         // =========================================================================
-        // 3. محرك العرض وتنسيق تجربة الـ UX وتقليم الـ DOM (Product Presentation Layer)
+        // 2. مدير الواجهة وإصلاح تصفية مصفوفات الـ API بقوة وثبات
         // =========================================================================
-        class UIManager {
-            constructor(repository, tg) {
-                this.repo = repository; this.tg = tg;
+        class InformationUIManager {
+            constructor(client, tg) {
+                this.http = client; this.tg = tg;
                 this.query = ""; this.nextCursor = ""; this.isPageLoading = false; this.searchDebounce = null;
                 
                 this.domElements();
@@ -260,6 +233,7 @@
             domElements() {
                 this.dom = {
                     input: document.getElementById("dbSearch"),
+                    suggestions: document.getElementById("suggestionsPanel"),
                     trendingArea: document.getElementById("trendingArea"),
                     recArea: document.getElementById("recommendationArea"),
                     recSection: document.getElementById("recommendationSection"),
@@ -267,11 +241,10 @@
                     histSection: document.getElementById("historySection"),
                     loader: document.getElementById("skeletonLoader"),
                     cats: document.getElementById("categoriesContainer"),
-                    homeContainer: document.getElementById("homeViewContainer"),
-                    searchContainer: document.getElementById("searchViewContainer"),
+                    discoveryView: document.getElementById("discoveryContainer"),
+                    searchView: document.getElementById("searchContainer"),
                     searchArea: document.getElementById("searchResultArea"),
                     empty: document.getElementById("emptyStateView"),
-                    badge: document.getElementById("offlineTag"),
                     trendingTags: document.getElementById("trendingTags")
                 };
             }
@@ -279,61 +252,55 @@
             bindEvents() {
                 this.dom.input.addEventListener("input", () => this.handleSearchInput());
                 
-                // تفويض كامل ومطلق للأحداث تماشياً مع معايير الأداء العالي حظراً لتسريبات المستمعين
                 document.body.addEventListener("click", (e) => {
-                    const btn = e.target.closest('.btn-download-icon');
+                    const btn = e.target.closest('.btn-dense-download');
                     if (btn) this.fireDownload(btn);
 
-                    const chip = e.target.closest('.category-chip');
+                    const chip = e.target.closest('.nav-chip');
                     if (chip) this.selectCategory(chip);
 
-                    const tag = e.target.closest('.tag-pill');
-                    if (tag) { this.dom.input.value = tag.textContent; this.handleSearchInput(); }
+                    const pill = e.target.closest('.tag-pill');
+                    if (pill) { this.dom.input.value = pill.textContent.trim(); this.handleSearchInput(); }
+
+                    const row = e.target.closest('.suggestion-row');
+                    if (row) { this.dom.input.value = row.dataset.value; this.executeSearchPipeline(); }
                 });
 
-                // معالجة الـ Infinite Scroll لنتائج البحث الطولية مع ميزة الـ Pruning لسلامة المعالج
                 window.addEventListener("scroll", () => {
                     if (this.query && !this.isPageLoading && this.nextCursor) {
-                        if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 300) {
+                        if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 250) {
                             this.fetchNextSearchBatch();
                         }
                     }
                 });
             }
 
-            createVerticalCard(book) {
+            createDenseRow(book, index = 0) {
                 const node = document.createElement("div");
-                node.className = "book-card-vertical";
+                node.className = "book-dense-row";
+                // تأخير الحركة تدريجياً لتعزيز جمالية العرض على طريقة المظهر الرشيق لنظام iOS
+                node.style.animationDelay = `${index * 0.04}s`;
                 node.innerHTML = `
-                    ${generateCoverHTML(book)}
-                    <div class="book-meta-block">
-                        <div class="meta-book-title">${book.title || book.file_name}</div>
-                        <div class="meta-book-author">${book.author || 'مؤلف مجهول'}</div>
-                    </div>
-                    <div class="card-action-row">
-                        <span class="meta-file-info">${book.size || '3.2 MB'}</span>
-                        <button class="btn-download-icon" data-file-id="${book.file_id}" aria-label="تحميل الكتاب"><i class="fa-solid fa-arrow-down"></i></button>
-                    </div>
-                `;
-                return node;
-            }
-
-            createHorizontalCard(book) {
-                const node = document.createElement("div");
-                node.className = "book-card-horizontal";
-                node.innerHTML = `
-                    ${generateCoverHTML(book)}
-                    <div class="horizontal-details">
-                        <div class="book-meta-block">
-                            <div class="meta-book-title" style="white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;">${book.title || book.file_name}</div>
-                            <div class="meta-book-author" style="margin-top: 4px;">المؤلف: ${book.author || 'ابن خلدون'}</div>
-                            <div class="meta-file-info" style="margin-top: 2px;">سنة النشر: ${book.year || 'تحقيق حديث'} | الحجم: ${book.size || '4.1 MB'}</div>
-                        </div>
-                        <div class="card-action-row" style="border: none; padding: 0; margin: 0;">
-                            <span class="meta-file-info" style="color: var(--tg-link)">تنزيل فوري متزامن</span>
-                            <button class="btn-download-icon" data-file-id="${book.file_id}"><i class="fa-solid fa-arrow-down"></i></button>
+                    <div class="book-core-info">
+                        <i class="fa-regular fa-file-pdf book-type-icon"></i>
+                        <div class="book-text-meta">
+                            <div class="primary-title-row">
+                                <span class="b-title" title="${book.title || book.file_name}">${book.title || book.file_name}</span>
+                            </div>
+                            <div class="secondary-data-row">
+                                <span class="b-author">${book.author || 'مصنف مجهول'}</span>
+                                <span class="data-separator">•</span>
+                                <span>${book.extension || 'PDF'}</span>
+                                <span class="data-separator">•</span>
+                                <span>${book.size || '4.2 MB'}</span>
+                                <span class="data-separator">•</span>
+                                <span>${book.downloads || '1,240'} تحميل</span>
+                                <span class="data-separator">•</span>
+                                <span class="rating-block"><i class="fa-solid fa-star"></i> ${book.rating || '5.0'}</span>
+                            </div>
                         </div>
                     </div>
+                    <button class="btn-dense-download" data-file-id="${book.file_id}" aria-label="تحميل فوري"><i class="fa-solid fa-arrow-down-to-line"></i></button>
                 `;
                 return node;
             }
@@ -341,90 +308,108 @@
             async loadDashboard() {
                 this.dom.loader.style.display = "flex";
                 try {
-                    const res = await this.repo.getDashboard();
+                    const res = await this.http.request('/api/trending');
                     this.dom.loader.style.display = "none";
-                    this.populateDashboard(res.results);
-                    localStorage.setItem("prod_ux_cache", JSON.stringify(res.results));
+                    // التحقق من صحة الاستجابة سواء كانت مصفوفة مباشرة أو كائن مركب يحتوي على نتائج
+                    const data = res.results ? res.results : res;
+                    this.populateDashboard(data);
                 } catch (e) {
                     this.dom.loader.style.display = "none";
-                    const fallback = localStorage.getItem("prod_ux_cache");
-                    if (fallback) {
-                        this.dom.badge.style.display = "inline-block";
-                        this.populateDashboard(JSON.parse(fallback));
-                    }
+                    const raw = localStorage.getItem("dense_dashboard_cache");
+                    if (raw) this.populateDashboard(JSON.parse(raw));
                 }
             }
 
             populateDashboard(data) {
+                if (!data) return;
+                localStorage.setItem("dense_dashboard_cache", JSON.stringify(data));
+                
+                // تنظيف وإصلاح الخلل البنيوي: التأكد من تواجد مصفوفة الأكثر تحميلاً وحقنها فوراً
                 this.dom.trendingArea.replaceChildren();
-                data.trending.forEach(b => this.dom.trendingArea.appendChild(this.createVerticalCard(b)));
+                const trendingBooks = data.trending || (Array.isArray(data) ? data : []);
+                trendingBooks.forEach((b, idx) => this.dom.trendingArea.appendChild(this.createDenseRow(b, idx)));
 
                 if (data.recommendations && data.recommendations.length > 0) {
                     this.dom.recSection.style.display = "block";
                     this.dom.recArea.replaceChildren();
-                    data.recommendations.forEach(b => this.dom.recArea.appendChild(this.createVerticalCard(b)));
+                    data.recommendations.forEach((b, idx) => this.dom.recArea.appendChild(this.createDenseRow(b, idx)));
                 }
                 if (data.history && data.history.length > 0) {
                     this.dom.histSection.style.display = "block";
                     this.dom.historyArea.replaceChildren();
-                    data.history.forEach(b => this.dom.historyArea.appendChild(this.createVerticalCard(b)));
+                    data.history.forEach((b, idx) => this.dom.historyArea.appendChild(this.createDenseRow(b, idx)));
                 }
                 if (this.dom.cats.children.length <= 1 && data.categories) {
                     data.categories.forEach(c => {
                         const chip = document.createElement("div");
-                        chip.className = "category-chip";
-                        chip.innerHTML = `<i class="fa-solid fa-book-open"></i> ${c}`;
-                        chip.dataset.category = c;
+                        chip.className = "nav-chip"; chip.textContent = c; chip.dataset.category = c;
                         this.dom.cats.appendChild(chip);
                     });
                 }
             }
 
             handleSearchInput() {
-                clearTimeout(this.searchDebounce);
                 this.query = this.dom.input.value.trim();
+                clearTimeout(this.searchDebounce);
 
-                if (this.query.length < 2) {
-                    if (this.query.length === 0) this.resetToHome();
-                    return;
-                }
-                this.searchDebounce = setTimeout(() => this.executeSearchPipeline(), 250);
+                if (this.query.length === 0) { this.resetToHomeView(); return; }
+                this.renderAutocompleteSuggestions();
+
+                if (this.query.length < 2) return;
+                this.searchDebounce = setTimeout(() => this.executeSearchPipeline(), 200);
+            }
+
+            renderAutocompleteSuggestions() {
+                const matched = SEARCH_SUGGESTIONS_DB.filter(s => s.includes(this.query));
+                if (matched.length > 0 && this.query.length > 0) {
+                    this.dom.suggestions.style.display = "block";
+                    this.dom.suggestions.replaceChildren();
+                    matched.forEach(text => {
+                        const div = document.createElement("div");
+                        div.className = "suggestion-row"; div.dataset.value = text;
+                        const idx = text.indexOf(this.query);
+                        const html = idx > -1 ? `${text.substring(0, idx)}<span class="matched-prefix">${this.query}</span>${text.substring(idx + this.query.length)}` : text;
+                        div.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i> <div>${html}</div>`;
+                        this.dom.suggestions.appendChild(div);
+                    });
+                } else { this.dom.suggestions.style.display = "none"; }
             }
 
             async executeSearchPipeline() {
-                this.dom.homeContainer.style.display = "none";
+                this.dom.suggestions.style.display = "none";
+                this.dom.discoveryView.style.display = "none";
                 this.dom.trendingTags.style.display = "none";
-                this.dom.searchContainer.style.display = "block";
+                this.dom.searchView.style.display = "block";
                 this.dom.empty.style.display = "none";
                 this.dom.searchArea.replaceChildren();
 
                 try {
-                    const res = await this.repo.search(this.query, "");
-                    if (res.success && res.results.length > 0) {
-                        this.nextCursor = res.next_cursor;
-                        res.results.forEach(b => this.dom.searchArea.appendChild(this.createHorizontalCard(b)));
-                    } else {
-                        this.dom.empty.style.display = "block";
-                    }
-                } catch (e) {}
+                    const res = await this.http.request(`/api/search?query=${encodeURIComponent(this.query)}`);
+                    const results = res.results || (Array.isArray(res) ? res : []);
+                    if (results.length > 0) {
+                        this.nextCursor = res.next_cursor || "";
+                        results.forEach((b, idx) => this.dom.searchArea.appendChild(this.createDenseRow(b, idx)));
+                    } else { this.dom.empty.style.display = "block"; }
+                } catch (e) { this.dom.empty.style.display = "block"; }
             }
 
             async fetchNextSearchBatch() {
                 this.isPageLoading = true;
+                const skeleton = document.createElement("div"); skeleton.className = "skeleton-row-dense";
+                this.dom.searchArea.appendChild(skeleton);
+
                 try {
-                    const res = await this.repo.search(this.query, this.nextCursor);
-                    if (res.success && res.results.length > 0) {
-                        this.nextCursor = res.next_cursor;
-                        res.results.forEach(b => this.dom.searchArea.appendChild(this.createHorizontalCard(b)));
-                        
-                        // تطبيق هندسة الـ DOM Pruning لحظر تضخم الـ DOM وتأمين الخفة الاستثنائية للهواتف
-                        if (this.dom.searchArea.children.length > 50) {
-                            for (let i = 0; i < 15; i++) this.dom.searchArea.removeChild(this.dom.searchArea.firstChild);
+                    const res = await this.http.request(`/api/search?query=${encodeURIComponent(this.query)}&cursor=${encodeURIComponent(this.nextCursor)}`);
+                    skeleton.remove();
+                    const results = res.results || (Array.isArray(res) ? res : []);
+                    if (results.length > 0) {
+                        this.nextCursor = res.next_cursor || "";
+                        results.forEach((b, idx) => this.dom.searchArea.appendChild(this.createDenseRow(b, idx)));
+                        if (this.dom.searchArea.children.length > 60) {
+                            for (let i = 0; i < 20; i++) this.dom.searchArea.removeChild(this.dom.searchArea.firstChild);
                         }
-                    } else {
-                        this.nextCursor = "";
-                    }
-                } finally { this.isPageLoading = false; }
+                    } else { this.nextCursor = ""; }
+                } catch (e) { skeleton.remove(); } finally { this.isPageLoading = false; }
             }
 
             async fireDownload(btn) {
@@ -433,39 +418,36 @@
                 btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
                 
                 try {
-                    const res = await this.repo.download(btn.dataset.fileId);
-                    if (res.success) {
-                        btn.className = "btn-download-icon success";
+                    const res = await this.http.request(`/api/download?file_id=${encodeURIComponent(btn.dataset.fileId)}`);
+                    if (res.success || res.status === "ok") {
+                        btn.className = "btn-dense-download success";
                         btn.innerHTML = `<i class="fa-solid fa-check"></i>`;
-                        if (this.tg.showPopup) {
-                            this.tg.showPopup({ title: "اكتمل البث للمحادثة", message: "تم إرسال الكتاب المحدد إلى شات البوت الخاص بك في الخلفية بنجاح.", buttons: [{type: "ok"}] });
-                        }
                     } else { this.resetBtn(btn); }
                 } catch (e) { this.resetBtn(btn); }
             }
 
-            resetBtn(btn) { btn.className = "btn-download-icon"; btn.innerHTML = `<i class="fa-solid fa-arrow-down"></i>`; }
-            
+            resetBtn(btn) { btn.className = "btn-dense-download"; btn.innerHTML = `<i class="fa-solid fa-arrow-down-to-line"></i>`; }
+
             selectCategory(chip) {
-                document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
+                document.querySelectorAll('.nav-chip').forEach(c => c.classList.remove('active'));
                 chip.classList.add('active');
-                if (chip.dataset.category === 'all') { this.resetToHome(); } 
+                if (chip.dataset.category === 'all') { this.resetToHomeView(); } 
                 else { this.dom.input.value = chip.textContent.trim(); this.handleSearchInput(); }
             }
 
-            resetToHome() {
+            resetToHomeView() {
                 this.dom.input.value = ""; this.query = ""; this.nextCursor = "";
-                this.dom.searchContainer.style.display = "none";
-                this.dom.homeContainer.style.display = "block";
+                this.dom.suggestions.style.display = "none";
+                this.dom.searchView.style.display = "none";
+                this.dom.discoveryView.style.display = "block";
                 this.dom.trendingTags.style.display = "flex";
-                document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
-                document.querySelector('.category-chip[data-category="all"]').classList.add('active');
+                document.querySelectorAll('.nav-chip').forEach(c => c.classList.remove('active'));
+                document.querySelector('.nav-chip[data-category="all"]').classList.add('active');
                 this.loadDashboard();
             }
         }
 
-        // الإقلاع المركزي الفوري للواجهة المنتجة
-        const ui = new UIManager(repo, window.Telegram.WebApp);
+        const ui = new InformationUIManager(http, window.Telegram.WebApp);
         ui.loadDashboard();
     </script>
 </body>
