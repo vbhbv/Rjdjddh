@@ -115,8 +115,22 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON download_stats (downloaded_at);
             """)
 
+            # 🆕 جدول جديد لتتبع عمليات البحث اليومية لتطبيق حد الـ 10 محاولات مجاناً
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS search_stats (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                searched_at TIMESTAMP DEFAULT NOW()
+            );
+            """)
+
+            await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_search_stats_user_date
+            ON search_stats (user_id, searched_at);
+            """)
+
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready with premium, credits and download stats columns.")
+        logger.info("✅ Database pool ready with premium, credits, download and search stats columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
@@ -192,6 +206,75 @@ async def get_channel_invite_link(bot) -> str:
             return chat.invite_link
     except: pass
     return "https://t.me/"
+
+# ===============================================
+# 🆕 دالة الفحص الموحّدة التي يستخدمها التطبيق المصغّر (Mini App) عبر web_server.py
+# 🛠 هذه هي الدالة التي كانت مفقودة تماماً، وبسبب غيابها كان فحص hasattr()
+#     في web_server.py يفشل صامتاً ويسمح للجميع بالمرور دون أي اشتراك أو حد بحث.
+# ===============================================
+async def check_user_limits(user_id: int, action: str = "search"):
+    """
+    يتحقق أولاً من الاشتراك الإجباري في القناة (لأي إجراء: بحث أو تحميل).
+    ثم، فقط في حال كان الإجراء بحثاً (action == "search")، يتحقق من حد الـ10
+    عمليات بحث مجانية كل 24 ساعة، مع خصم من search_credits إن استُهلك الحد
+    ولدى المستخدم رصيد إحالات، أو رفض الطلب إن لم يتبقَّ له شيء.
+
+    يُعيد Tuple: (allowed: bool, reason: str)
+    """
+    global app
+    bot = app.bot
+    pool = app.bot_data.get("db_conn")
+
+    # 1) فحص الاشتراك الإجباري أولاً وقبل أي شيء آخر — هذا هو أساس الثغرة المُصلحة
+    subscribed = await check_subscription(user_id, bot)
+    if not subscribed:
+        return False, "يجب الاشتراك في القناة أولاً لاستخدام هذه الخدمة."
+
+    # التحميل لا يخضع لحد البحث، فقط للاشتراك
+    if action != "search":
+        return True, ""
+
+    if not pool:
+        # تعذّر الوصول لقاعدة البيانات؛ لا نحجب المستخدم بسبب عطل تقني عرضي
+        return True, ""
+
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT is_premium, search_credits FROM users WHERE user_id = $1",
+                user_id
+            )
+            is_premium = row["is_premium"] if row else False
+            credits = row["search_credits"] if row else 0
+
+            # أعضاء البريميوم لا يخضعون لحد البحث إطلاقاً
+            if is_premium:
+                return True, ""
+
+            count_today = await conn.fetchval("""
+                SELECT COUNT(*) FROM search_stats
+                WHERE user_id = $1 AND searched_at > NOW() - INTERVAL '24 hours'
+            """, user_id)
+
+            if count_today >= 10:
+                if credits > 0:
+                    # استهلاك محاولة إضافية من رصيد الإحالات بدلاً من الرفض
+                    await conn.execute(
+                        "UPDATE users SET search_credits = search_credits - 1 WHERE user_id = $1",
+                        user_id
+                    )
+                else:
+                    return False, (
+                        "لقد استهلكت 10 عمليات بحث مجانية خلال 24 ساعة. "
+                        "ادعُ صديقًا عبر رابط الإحالة لكسب 10 محاولات إضافية، "
+                        "أو فعّل اشتراك البريميوم للبحث اللامحدود."
+                    )
+
+            await conn.execute("INSERT INTO search_stats(user_id) VALUES ($1)", user_id)
+            return True, ""
+    except Exception as e:
+        logger.error(f"⚠️ خطأ أثناء فحص حدود البحث: {e}")
+        return True, ""
 
 # ===============================================
 # تسجيل المستخدم ومعالجة الإحالة (تم إصلاحها بشكل شامل)
@@ -514,8 +597,6 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
-    # 🔧 الإصلاح: كان الكود يخرج بصمت (return) دون إخبار المستخدم بضرورة الاشتراك،
-    # فيبدو الأمر وكأن البوت لا يرد إطلاقًا. الآن نرسل له رسالة الاشتراك مع رابط القناة وزر التحقق.
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
@@ -606,6 +687,11 @@ def main():
     
     global app
     app = Application.builder().token(token).persistence(persistence).build()
+
+    # 🛠 الإصلاح الجوهري: ربط دالة check_user_limits الفعلية بكائن التطبيق،
+    # لأن web_server.py يعتمد على hasattr(bot_application, "check_user_limits")
+    # وكانت هذه الدالة غائبة تماماً، ما جعل فحص الاشتراك وحد البحث معطلين بصمت.
+    app.check_user_limits = check_user_limits
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
