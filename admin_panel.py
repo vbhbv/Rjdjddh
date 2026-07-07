@@ -8,19 +8,19 @@ from functools import wraps
 
 logger = logging.getLogger(__name__)
 
-# ===============================================
-# إعدادات المشرفين
-# ===============================================
+# ==============================================================================
+# 🛠️ الإعدادات والصلاحيات (Permissions & Config)
+# ==============================================================================
+
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_ID", "5493390715"))
 except ValueError:
     ADMIN_USER_ID = 0
     print("⚠️ ADMIN_ID environment variable is not valid.")
 
-# ===============================================
-# دوال مساعدة
-# ===============================================
+
 def admin_only(func):
+    """مطور ديكوريتور للتحقق من هوية المشرف قبل تنفيذ الأوامر"""
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         if update.effective_user and update.effective_user.id == ADMIN_USER_ID and ADMIN_USER_ID != 0:
@@ -30,9 +30,11 @@ def admin_only(func):
         return
     return wrapper
 
-# ===============================================
-# أوامر التفعيل ومنح البريميوم الزمني
-# ===============================================
+
+# ==============================================================================
+# ⭐ إدارة تفعيل البريميوم الزمني (Premium Membership)
+# ==============================================================================
+
 @admin_only
 async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or len(context.args) < 2:
@@ -76,11 +78,15 @@ async def set_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:  
             await context.bot.send_message(  
                 chat_id=user_id,   
-                text=f"🌟 **مبروك! تم تفعيل العضوية المميزة (Premium) لحسابك بنجاح.**\n\n⏳ المدة: **{duration_text}**\n🚀 يمكنك الآن الاستمتاع ببحث وتحميل غير محدود دون أي قيود!"  
+                text=f"🌟 **مبروك! تم تفعيل العضوية المميزة (Premium) لحسابك بنجاح.**\n\n"
+                     f"⏳ المدة: **{duration_text}**\n"
+                     f"🚀 يمكنك الآن الاستمتاع ببحث وتحميل غير محدود دون أي قيود!"  
             )  
-        except: pass  
+        except Exception: 
+            pass  
     except Exception as e:  
         await update.message.reply_text(f"❌ حدث خطأ في قاعدة البيانات: {e}")
+
 
 @admin_only
 async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,9 +109,11 @@ async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:  
         await update.message.reply_text(f"❌ حدث خطأ: {e}")
 
-# ===============================================
-# إدارة الحظر (Ban System)
-# ===============================================
+
+# ==============================================================================
+# 🔒 نظام الحظر الشامل (Ban System)
+# ==============================================================================
+
 @admin_only
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -125,6 +133,7 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:  
         await update.message.reply_text(f"❌ خطأ غير متوقع أثناء الحظر: {e}")
 
+
 @admin_only
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -143,36 +152,10 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:  
         await update.message.reply_text(f"❌ خطأ غير متوقع أثناء إلغاء الحظر: {e}")
 
-# ===============================================
-# بقية المهام والاشتراكات
-# ===============================================
-async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user and update.effective_user.id:
-        pool = context.bot_data.get('db_conn')
-        if pool:
-            try:
-                async with pool.acquire() as conn:
-                    await conn.execute("INSERT INTO users(user_id) VALUES($1) ON CONFLICT DO NOTHING", update.effective_user.id)
-            except: pass
 
-async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user and context.application.user_data:
-        u_id = update.effective_user.id
-        user_data_dict = dict(context.application.user_data)
-        if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
-            return False
-
-    required_channel = context.bot_data.get("required_channel_id")  
-    if required_channel is None:   
-        return True  
-    try:  
-        member = await context.bot.get_chat_member(required_channel, update.effective_user.id)  
-        if member.status in ["left", "kicked"]:  
-            await update.message.reply_text("❌ يجب الاشتراك في القناة أولاً قبل استخدام البوت.")  
-            return False  
-        return True  
-    except:   
-        return False
+# ==============================================================================
+# 📊 لوحة التحكم والإحصائيات (Admin Panel)
+# ==============================================================================
 
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,10 +164,13 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with pool.acquire() as conn:
             book_count = await conn.fetchval("SELECT COUNT(*) FROM books")
             total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-            premium_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_premium = TRUE AND (premium_expiry IS NULL OR premium_expiry > NOW())")
+            premium_users = await conn.fetchval("""
+                SELECT COUNT(*) FROM users 
+                WHERE is_premium = TRUE AND (premium_expiry IS NULL OR premium_expiry > NOW())
+            """)
 
         stats_text = (  
-            "📊 **لوحة تحكم المكتبة الكبرى v3.1**\n"  
+            "📊 **لوحة تحكم المكتبة الكبرى v3.2**\n"  
             "--------------------------------------\n"  
             f"📚 الكتب المفهرسة كلياً: **{book_count:,}**\n"  
             f"👥 المستخدمين الكلي: **{total_users:,}**\n"  
@@ -198,7 +184,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "--------------------------------------\n"  
             "📢 **إعدادات الاشتراك الإجباري:**\n"  
             "• تعيين/تغيير القناة: `/setchannel @username` أو `/setchannel ID`\n"  
-            "• إحصائيات القناة الإجبارية: `/channel_stats`\n"
+            "• إحصائيات الـ 24 ساعة: `/channel_stats`\n"
             "--------------------------------------\n"  
             "🚫 **أوامر الحظر والتحكم:**\n"  
             "• لحظر مستخدم كلياً: `/ban ID`\n"  
@@ -207,9 +193,11 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )  
         await update.message.reply_text(stats_text, parse_mode='Markdown')
 
-# ===============================================
-# ميزة الإذاعة الآمنة والذكية في الخلفية المصلحة تماماً
-# ===============================================
+
+# ==============================================================================
+# 📢 ميزة الإذاعة الآمنة والذكية في الخلفية (Background Broadcast)
+# ==============================================================================
+
 async def _background_broadcast(users, msg, context: ContextTypes.DEFAULT_TYPE, admin_chat_id: int):
     user_data_dict = dict(context.application.user_data) if context.application.user_data else {}
     success_count = 0
@@ -236,13 +224,13 @@ async def _background_broadcast(users, msg, context: ContextTypes.DEFAULT_TYPE, 
             if "retry after" in str(e).lower():
                 try:
                     retry_after = int(''.join(filter(str.isdigit, str(e))))
-                except:
+                except ValueError:
                     retry_after = 10
                 await asyncio.sleep(retry_after)
                 try:
                     await context.bot.send_message(chat_id=u_id, text=msg)
                     success_count += 1
-                except:
+                except Exception:
                     fail_count += 1
             else:
                 fail_count += 1
@@ -262,6 +250,7 @@ async def _background_broadcast(users, msg, context: ContextTypes.DEFAULT_TYPE, 
         )
     except Exception as e:
         logger.error(f"Could not send broadcast report to admin: {e}")
+
 
 @admin_only
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -289,6 +278,11 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _background_broadcast(users, msg, context, update.effective_chat.id)
     )
 
+
+# ==============================================================================
+# 📢 إدارة الاشتراك الإجباري والتحليل الزمني (Force Subscribe Stats)
+# ==============================================================================
+
 @admin_only
 async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -311,51 +305,48 @@ async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:  
         await update.message.reply_text("❌ لم يتم العثور على القناة. تأكد من رفع البوت مشرفاً أولاً.")
 
-# ===============================================
-# أمر إحصائيات وعدد مشتركي القناة الإجبارية
-# ===============================================
+
 @admin_only
 async def channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     required_channel = context.bot_data.get("required_channel_id")
+    pool = context.bot_data.get('db_conn')
+    
     if required_channel is None:
         await update.message.reply_text("❌ لم يتم تعيين قناة اشتراك إجباري للبوت حتى الآن.")
         return
 
     try:
-        # جلب بيانات الشات وعدد الأعضاء مباشرة من خوادم تيليجرام
         chat_info = await context.bot.get_chat(required_channel)
-        members_count = await context.bot.get_chat_member_count(required_channel)
-        
         channel_title = chat_info.title or "القناة المشتركة"
-        channel_username = f"@{chat_info.username}" if chat_info.username else "قناة خاصة"
+        
+        # دقة متناهية: الاستعلام عن المستخدمين الذين تخطوا الاشتراك بنجاح خلال الـ 24 ساعة الماضية
+        joined_last_24h = 0
+        if pool:
+            async with pool.acquire() as conn:
+                joined_last_24h = await conn.fetchval("""
+                    SELECT COUNT(*) FROM users 
+                    WHERE sub_verified_at >= NOW() - INTERVAL '24 hours'
+                """)
 
         stats_reply = (
-            "📢 **إحصائيات القناة الإجبارية الحالية:**\n"
+            "📢 **إحصائيات الاشتراك الإجباري عبر البوت:**\n"
             "--------------------------------------\n"
             f"📌 اسم القناة: **{channel_title}**\n"
-            f"🔗 المعرف/النوع: **{channel_username}**\n"
             f"🆔 معرف القناة الرقمي: `{required_channel}`\n"
-            f"👥 عدد المشتركين الفعلي: **{members_count:,}** عضو ✨"
+            "--------------------------------------\n"
+            f"📈 المشتركون الجدد (خلال آخر 24 ساعة): **{joined_last_24h:,}** عضو ✨"
         )
         await update.message.reply_text(stats_reply, parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ فشل جلب إحصائيات القناة.\nتأكد من أن البوت لا يزال مشرفاً داخل القناة بالصلاحيات اللازمة.\n\nالخطأ: {e}")
+        await update.message.reply_text(f"❌ فشل جلب الإحصائيات: {e}")
 
-# ===============================================
-# تسجيل المعالجات
-# ===============================================
+
+# ==============================================================================
+# 🔌 ربط وتسجيل المعالجات (Handlers Registration)
+# ==============================================================================
+
 def register_admin_handlers(application, original_start_handler):
-    async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user and application.user_data:
-            u_id = update.effective_user.id
-            user_data_dict = dict(application.user_data)
-            if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
-                return
-
-        if await check_subscription(update, context):  
-            await track_user(update, context)  
-            await original_start_handler(update, context)  
-
+    """ربط كافة الأوامر الإدارية بالتطبيق الرئيسي تلقائياً"""
     application.add_handler(CommandHandler("admin", admin_panel))  
     application.add_handler(CommandHandler("set_premium", set_premium))  
     application.add_handler(CommandHandler("rem_premium", remove_premium))  
@@ -363,4 +354,4 @@ def register_admin_handlers(application, original_start_handler):
     application.add_handler(CommandHandler("unban", unban_user))  
     application.add_handler(CommandHandler("broadcast", admin_broadcast))  
     application.add_handler(CommandHandler("setchannel", set_channel))
-    application.add_handler(CommandHandler("channel_stats", channel_stats)) # تسجيل أمر إحصائيات المشتركين
+    application.add_handler(CommandHandler("channel_stats", channel_stats))
