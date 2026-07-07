@@ -198,6 +198,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "--------------------------------------\n"  
             "📢 **إعدادات الاشتراك الإجباري:**\n"  
             "• تعيين/تغيير القناة: `/setchannel @username` أو `/setchannel ID`\n"  
+            "• إحصائيات القناة الإجبارية: `/channel_stats`\n"
             "--------------------------------------\n"  
             "🚫 **أوامر الحظر والتحكم:**\n"  
             "• لحظر مستخدم كلياً: `/ban ID`\n"  
@@ -232,7 +233,6 @@ async def _background_broadcast(users, msg, context: ContextTypes.DEFAULT_TYPE, 
         except BadRequest:
             fail_count += 1
         except TelegramError as e:
-            # صيد أخطاء التدفق (Flood / Rate Limits) ديناميكياً من نص الخطأ دون الحاجة لاستيراد مخصص تالف
             if "retry after" in str(e).lower():
                 try:
                     retry_after = int(''.join(filter(str.isdigit, str(e))))
@@ -311,6 +311,39 @@ async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:  
         await update.message.reply_text("❌ لم يتم العثور على القناة. تأكد من رفع البوت مشرفاً أولاً.")
 
+# ===============================================
+# أمر إحصائيات وعدد مشتركي القناة الإجبارية
+# ===============================================
+@admin_only
+async def channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    required_channel = context.bot_data.get("required_channel_id")
+    if required_channel is None:
+        await update.message.reply_text("❌ لم يتم تعيين قناة اشتراك إجباري للبوت حتى الآن.")
+        return
+
+    try:
+        # جلب بيانات الشات وعدد الأعضاء مباشرة من خوادم تيليجرام
+        chat_info = await context.bot.get_chat(required_channel)
+        members_count = await context.bot.get_chat_member_count(required_channel)
+        
+        channel_title = chat_info.title or "القناة المشتركة"
+        channel_username = f"@{chat_info.username}" if chat_info.username else "قناة خاصة"
+
+        stats_reply = (
+            "📢 **إحصائيات القناة الإجبارية الحالية:**\n"
+            "--------------------------------------\n"
+            f"📌 اسم القناة: **{channel_title}**\n"
+            f"🔗 المعرف/النوع: **{channel_username}**\n"
+            f"🆔 معرف القناة الرقمي: `{required_channel}`\n"
+            f"👥 عدد المشتركين الفعلي: **{members_count:,}** عضو ✨"
+        )
+        await update.message.reply_text(stats_reply, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ فشل جلب إحصائيات القناة.\nتأكد من أن البوت لا يزال مشرفاً داخل القناة بالصلاحيات اللازمة.\n\nالخطأ: {e}")
+
+# ===============================================
+# تسجيل المعالجات
+# ===============================================
 def register_admin_handlers(application, original_start_handler):
     async def start_with_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user and application.user_data:
@@ -330,3 +363,4 @@ def register_admin_handlers(application, original_start_handler):
     application.add_handler(CommandHandler("unban", unban_user))  
     application.add_handler(CommandHandler("broadcast", admin_broadcast))  
     application.add_handler(CommandHandler("setchannel", set_channel))
+    application.add_handler(CommandHandler("channel_stats", channel_stats)) # تسجيل أمر إحصائيات المشتركين
