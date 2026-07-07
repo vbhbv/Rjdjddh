@@ -96,6 +96,12 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS search_credits INT DEFAULT 0;
             """)
 
+            # إضافة عمود لتسجيل وقت تفعيل وتخطي الاشتراك الإجباري لحساب إحصائيات الـ 24 ساعة
+            await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS sub_verified_at TIMESTAMP;
+            """)
+
             # إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS download_stats (
@@ -111,7 +117,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             """)
 
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready with premium, credits and download stats columns.")
+        logger.info("✅ Database pool ready with premium, credits, sub_verified and download stats columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
@@ -371,6 +377,18 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "back_to_main" or query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
+            
+            # تحديث قاعدة البيانات بوقت تخطي الاشتراك بنجاح للمستخدم الحالي
+            pool = context.bot_data.get("db_conn")
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute("""
+                            UPDATE users 
+                            SET sub_verified_at = NOW() 
+                            WHERE user_id = $1 AND sub_verified_at IS NULL
+                        """, query.from_user.id)
+                except: pass
 
             # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
             keyboard = InlineKeyboardMarkup([
@@ -478,7 +496,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
             "🧭 *تعليمات البحث الصحيحة:*\n"
             "✔️ اكتب اسم الكتاب فقط\n"
-            "✔️ أو جزء واضح من العنوان\n\n"
+            "✔️ أو جزء واضح من عنوان\n\n"
             "❌ أمثلة بحث غير صحيحة:\n"
             "✖️ كلمات عشوائية\n"
             "✖️ جمل طويلة أو أوصاف\n\n"
