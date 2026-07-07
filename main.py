@@ -378,7 +378,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
             
-            # تحديث قاعدة البيانات بوقت تخطي الاشتراك بنجاح للمستخدم الحالي
+            # 🔥 [تم التعديل والتصليح هنا] تحديث الوقت فوراً عند كل ضغطة تحقق ناجحة دون شروط تعطل الحساب
             pool = context.bot_data.get("db_conn")
             if pool:
                 try:
@@ -386,7 +386,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
                         await conn.execute("""
                             UPDATE users 
                             SET sub_verified_at = NOW() 
-                            WHERE user_id = $1 AND sub_verified_at IS NULL
+                            WHERE user_id = $1
                         """, query.from_user.id)
                 except: pass
 
@@ -496,7 +496,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
             "🧭 *تعليمات البحث الصحيحة:*\n"
             "✔️ اكتب اسم الكتاب فقط\n"
-            "✔️ أو جزء واضح من عنوان\n\n"
+            "✔️ أو جزء واضح من العنوان\n\n"
             "❌ أمثلة بحث غير صحيحة:\n"
             "✖️ كلمات عشوائية\n"
             "✖️ جمل طويلة أو أوصاف\n\n"
