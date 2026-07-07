@@ -570,7 +570,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ===============================================
-# البحث
+# البحث (تم إصلاحها وإضافة رد تفاعلي للمستخدم غير المشترك)
 # ===============================================
 async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -581,9 +581,27 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
         if u_id in user_data_dict and user_data_dict[u_id].get("is_banned"):
             return
 
+    # 🚨 إذا كان المستخدم غير مشترك في القناة الإلزامية، أرسل له رسالة القفل والتحقق
     if not await check_subscription(update.effective_user.id, context.bot):
+        target_link = await get_channel_invite_link(context.bot)
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اشترك في القناة", url=target_link)],
+            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
+        ])
+        
+        if update.message:
+            await update.message.reply_text(
+                text=(
+                    "🔒 **عذرًا، للاستمرار في استخدام البوت والبحث عن الكتب:**\n\n"
+                    "يجب عليك الاشتراك في القناة الداعمة أولاً (الخدمة مجانية بالكامل).\n"
+                    "👇 اشترك في القناة ثم اضغط على زر التحقق بالأسفل:"
+                ),
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
         return
 
+    # إذا كان مشتركاً بالفعل، تابع عملية البحث تلقائياً
     await search_books(update, context)
 
 # ===============================================
