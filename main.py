@@ -2,8 +2,7 @@ import os
 import re
 import asyncpg
 import logging
-import asyncio
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler, CallbackQueryHandler,
     ChatMemberHandler, PicklePersistence, ContextTypes, filters
@@ -21,10 +20,6 @@ from radar_handler import (
 from english_index_handler import (
     show_english_index_menu, handle_english_index_selection
 )
-
-# 🌐 استيراد خادم الويب المطور ودالة الربط من الملف الخارجي الجديد
-from web_server import web_app, init_web_server
-import uvicorn
 
 # ===============================================
 # إعداد اللوج
@@ -115,22 +110,8 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ON download_stats (downloaded_at);
             """)
 
-            # 🆕 جدول جديد لتتبع عمليات البحث اليومية لتطبيق حد الـ 10 محاولات مجاناً
-            await conn.execute("""
-            CREATE TABLE IF NOT EXISTS search_stats (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                searched_at TIMESTAMP DEFAULT NOW()
-            );
-            """)
-
-            await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_search_stats_user_date
-            ON search_stats (user_id, searched_at);
-            """)
-
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready with premium, credits, download and search stats columns.")
+        logger.info("✅ Database pool ready with premium, credits and download stats columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
@@ -206,75 +187,6 @@ async def get_channel_invite_link(bot) -> str:
             return chat.invite_link
     except: pass
     return "https://t.me/"
-
-# ===============================================
-# 🆕 دالة الفحص الموحّدة التي يستخدمها التطبيق المصغّر (Mini App) عبر web_server.py
-# 🛠 هذه هي الدالة التي كانت مفقودة تماماً، وبسبب غيابها كان فحص hasattr()
-#     في web_server.py يفشل صامتاً ويسمح للجميع بالمرور دون أي اشتراك أو حد بحث.
-# ===============================================
-async def check_user_limits(user_id: int, action: str = "search"):
-    """
-    يتحقق أولاً من الاشتراك الإجباري في القناة (لأي إجراء: بحث أو تحميل).
-    ثم، فقط في حال كان الإجراء بحثاً (action == "search")، يتحقق من حد الـ10
-    عمليات بحث مجانية كل 24 ساعة، مع خصم من search_credits إن استُهلك الحد
-    ولدى المستخدم رصيد إحالات، أو رفض الطلب إن لم يتبقَّ له شيء.
-
-    يُعيد Tuple: (allowed: bool, reason: str)
-    """
-    global app
-    bot = app.bot
-    pool = app.bot_data.get("db_conn")
-
-    # 1) فحص الاشتراك الإجباري أولاً وقبل أي شيء آخر — هذا هو أساس الثغرة المُصلحة
-    subscribed = await check_subscription(user_id, bot)
-    if not subscribed:
-        return False, "يجب الاشتراك في القناة أولاً لاستخدام هذه الخدمة."
-
-    # التحميل لا يخضع لحد البحث، فقط للاشتراك
-    if action != "search":
-        return True, ""
-
-    if not pool:
-        # تعذّر الوصول لقاعدة البيانات؛ لا نحجب المستخدم بسبب عطل تقني عرضي
-        return True, ""
-
-    try:
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT is_premium, search_credits FROM users WHERE user_id = $1",
-                user_id
-            )
-            is_premium = row["is_premium"] if row else False
-            credits = row["search_credits"] if row else 0
-
-            # أعضاء البريميوم لا يخضعون لحد البحث إطلاقاً
-            if is_premium:
-                return True, ""
-
-            count_today = await conn.fetchval("""
-                SELECT COUNT(*) FROM search_stats
-                WHERE user_id = $1 AND searched_at > NOW() - INTERVAL '24 hours'
-            """, user_id)
-
-            if count_today >= 10:
-                if credits > 0:
-                    # استهلاك محاولة إضافية من رصيد الإحالات بدلاً من الرفض
-                    await conn.execute(
-                        "UPDATE users SET search_credits = search_credits - 1 WHERE user_id = $1",
-                        user_id
-                    )
-                else:
-                    return False, (
-                        "لقد استهلكت 10 عمليات بحث مجانية خلال 24 ساعة. "
-                        "ادعُ صديقًا عبر رابط الإحالة لكسب 10 محاولات إضافية، "
-                        "أو فعّل اشتراك البريميوم للبحث اللامحدود."
-                    )
-
-            await conn.execute("INSERT INTO search_stats(user_id) VALUES ($1)", user_id)
-            return True, ""
-    except Exception as e:
-        logger.error(f"⚠️ خطأ أثناء فحص حدود البحث: {e}")
-        return True, ""
 
 # ===============================================
 # تسجيل المستخدم ومعالجة الإحالة (تم إصلاحها بشكل شامل)
@@ -459,11 +371,9 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "back_to_main" or query.data == "check_subscription":
 
         if await check_subscription(query.from_user.id, context.bot):
-            
-            webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
-            # 📋 ترتيب رأسي منظم للأزرار مع إضافة زر التطبيق المصغر في المقدمة
+
+            # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
                 [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
                 [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
                 [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
@@ -551,10 +461,8 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    webapp_url = os.getenv("WEBAPP_URL", "https://worker-production-80c0.up.railway.app/miniapp")
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start مع ميزة الـ WebApp
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📱 تصفح الواجهة المكتبية الذكية", web_app=WebAppInfo(url=webapp_url))],
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
         [InlineKeyboardButton("💡 مستشارك القرائي", callback_data="radar_menu")],
@@ -565,7 +473,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         text=(
-            "🌟 *مرحبًا بك في بوت مكتبة الكتب الذكي*\n\n"
+            "🌟 *مرحبًا بك في بوت مكتبة الكتب*\n\n"
             "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
             "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
             "🧭 *تعليمات البحث الصحيحة:*\n"
@@ -598,99 +506,30 @@ async def search_books_with_subscription(update, context: ContextTypes.DEFAULT_T
             return
 
     if not await check_subscription(update.effective_user.id, context.bot):
-        target_link = await get_channel_invite_link(context.bot)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اشترك في القناة", url=target_link)],
-            [InlineKeyboardButton("🔍 تحقق من الاشتراك", callback_data="check_subscription")]
-        ])
-        await update.message.reply_text(
-            text=(
-                "⚠️ يجب الاشتراك أولاً في القناة الداعمة لتتمكن من البحث واستخدام خدمات البوت:\n"
-                f"{target_link}"
-            ),
-            reply_markup=keyboard
-        )
         return
-
-    # معالجة إشارات القادمة من الـ Web App التفاعلي إن وجدت وتحويلها لـ Callbacks آمنة أو ملفات مباشرة
-    if update.message and update.message.web_app_data:
-        raw_data = update.message.web_app_data.data
-        if raw_data.startswith("file:"):
-            file_id = raw_data.replace("file:", "")
-            try:
-                await context.bot.send_document(chat_id=update.effective_user.id, document=file_id, caption="📖 تم جلب كتابك بنجاح من مكتبة المعرفة.")
-                pool = context.bot_data.get("db_conn")
-                if pool:
-                    async with pool.acquire() as conn:
-                        await conn.execute("INSERT INTO download_stats(file_id) VALUES($1)", file_id)
-            except Exception as e:
-                await update.message.reply_text(f"❌ عذراً، فشل جلب الملف: {e}")
-            return
-        elif raw_data.startswith("idx:") or raw_data.startswith("eng_idx:") or raw_data in ["radar_menu", "buy_premium", "show_trending"]:
-            class MockCallbackQuery:
-                def __init__(self, message, data, from_user):
-                    self.message = message
-                    self.data = data
-                    self.from_user = from_user
-                async def answer(self, text=None, show_alert=False): pass
-            
-            mock_update = update
-            mock_update.callback_query = MockCallbackQuery(update.message, raw_data, update.effective_user)
-            await handle_start_callbacks(mock_update, context)
-            return
-        else:
-            update.message.text = raw_data
 
     await search_books(update, context)
 
 # ===============================================
-# دالة تشغيل البوت بالتوازي مع خادم الويب الخارجي
+# تشغيل البوت
 # ===============================================
-async def run_combined_app(application: Application):
-    """دالة لتشغيل البوت بالتوازي مع uvicorn بشكل غير متزامن وآمن"""
-    await application.initialize()
-    
-    class MockContext:
-        def __init__(self, app_obj):
-            self.bot_data = app_obj.bot_data
-            
-    logger.info("⏳ جاري تهيئة قواعد البيانات والاتصال بـ PostgreSQL أولاً وبأولوية مطلقة...")
-    await init_db(MockContext(application))
-    
-    # 🔥 ربط كائن الـ application بملف الـ web_server المنفصل ديناميكياً لتفعيل الـ APIs الحية
-    init_web_server(application)
-    
-    await application.start()
-    await application.updater.start_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
-    
-    port = int(os.environ.get("PORT", 8080))
-    config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="info")
-    server = uvicorn.Server(config)
-    
-    try:
-        await server.serve()
-    finally:
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
+def run_bot():
 
-# ===============================================
-# دالة التشغيل والانطلاق الرئيسية والتثبيت المستدام (Main)
-# ===============================================
-def main():
     token = os.getenv("BOT_TOKEN")
+
     if not token:
         logger.error("🚨 BOT_TOKEN not found.")
         return
 
-    persistence = PicklePersistence(filepath="bot_data.pickle")
-    
     global app
-    app = Application.builder().token(token).persistence(persistence).build()
-
-    # 🛠 الإصلاح الجوهري: Application يستخدم __slots__ ولا يقبل إضافة خصائص جديدة مباشرة،
-    # لذلك نخزّن الدالة داخل bot_data (وهو dict عادي قابل للتعديل) بدل تعليقها على الكائن نفسه.
-    app.bot_data["check_user_limits"] = check_user_limits
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(init_db)
+        .post_shutdown(close_db)
+        .persistence(PicklePersistence(filepath="bot_data.pickle"))
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search_books_with_subscription))
@@ -712,10 +551,9 @@ def main():
 
     register_admin_handlers(app, start)
 
-    logger.info("🚀 The cultural book library bot web server is launching and fully operational...")
+    logger.info("✅ Bot is running successfully...")
     
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run_combined_app(app))
+    app.run_polling(allowed_updates=["message", "channel_post", "callback_query", "chat_member", "my_chat_member"])
 
 if __name__ == "__main__":
-    main()
+    run_bot()
