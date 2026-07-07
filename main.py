@@ -102,6 +102,21 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             ADD COLUMN IF NOT EXISTS sub_verified_at TIMESTAMP;
             """)
 
+            # 📊 [إضافة الجدول والضبط التلقائي للعداد الرقمي المستقل]
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_counters (
+                counter_name TEXT PRIMARY KEY,
+                current_value INT DEFAULT 0,
+                reset_at TIMESTAMP DEFAULT NOW() + INTERVAL '24 hours'
+            );
+            """)
+            
+            await conn.execute("""
+            INSERT INTO bot_counters (counter_name, current_value, reset_at)
+            VALUES ('sub_verified_24h', 0, NOW() + INTERVAL '24 hours')
+            ON CONFLICT DO NOTHING;
+            """)
+
             # إضافة جدول إحصائيات التحميل الأسبوعي لحساب الأكثر تحميلاً (5 مرات فما فوق)
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS download_stats (
@@ -117,7 +132,7 @@ async def init_db(app_context: ContextTypes.DEFAULT_TYPE):
             """)
 
         app_context.bot_data["db_conn"] = pool
-        logger.info("✅ Database pool ready with premium, credits, sub_verified and download stats columns.")
+        logger.info("✅ Database pool ready with premium, credits, sub_verified, counters and download stats columns.")
 
     except Exception:
         logger.error("❌ Database setup error", exc_info=True)
@@ -378,17 +393,31 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
 
         if await check_subscription(query.from_user.id, context.bot):
             
-            # 🔥 [تم التعديل والتصليح هنا] تحديث الوقت فوراً عند كل ضغطة تحقق ناجحة دون شروط تعطل الحساب
+            # 🔥 [تحديث كود زيادة العداد بمقدار +1 بشكل رقمي مباشر وصحيح عند تخطي الاشتراك بنجاح عبر الأزرار]
             pool = context.bot_data.get("db_conn")
             if pool:
                 try:
                     async with pool.acquire() as conn:
+                        # جلب آخر وقت توثيق للتحقق مما إذا كان تم احتسابه اليوم بالفعل
+                        already_verified_today = await conn.fetchval("""
+                            SELECT (sub_verified_at IS NOT NULL AND sub_verified_at >= NOW() - INTERVAL '24 hours') 
+                            FROM users WHERE user_id = $1
+                        """, query.from_user.id)
+                        
                         await conn.execute("""
                             UPDATE users 
                             SET sub_verified_at = NOW() 
-                            WHERE user_id = $1
+                            WHERE user_id = $1;
                         """, query.from_user.id)
-                except: pass
+                        
+                        if not already_verified_today:
+                            await conn.execute("""
+                                UPDATE bot_counters 
+                                SET current_value = current_value + 1 
+                                WHERE counter_name = 'sub_verified_24h';
+                            """)
+                except Exception as e:
+                    logger.error(f"Error adjusting counter inside main callbacks: {e}")
 
             # 📋 ترتيب رأسي منظم للأزرار (كل زر في سطر منفصل)
             keyboard = InlineKeyboardMarkup([
@@ -460,6 +489,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
 
     await register_user(update, context)
 
+    # 1. إذا كان المستخدم غير مشترك في القناة الإلزامية، أظهر له رسالة القفل والتحقق
     if not await check_subscription(update.effective_user.id, context.bot):
         target_link = await get_channel_invite_link(context.bot)
         keyboard = InlineKeyboardMarkup([
@@ -479,7 +509,35 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start
+    # 2. 🔥 [هنا المعالجة الذكية]: المستخدم مشترك بالفعل وأرسل /start مباشرة للدخول
+    pool = context.bot_data.get("db_conn")
+    if pool and update.effective_user:
+        try:
+            async with pool.acquire() as conn:
+                # التحقق مما إذا كان قد تم احتسابه وتوثيقه خلال آخر 24 ساعة لضمان عدم تكرار العدد
+                already_verified_today = await conn.fetchval("""
+                    SELECT (sub_verified_at IS NOT NULL AND sub_verified_at >= NOW() - INTERVAL '24 hours') 
+                    FROM users WHERE user_id = $1
+                """, update.effective_user.id)
+                
+                # تحديث وقت التوثيق الحالي للمستخدم
+                await conn.execute("""
+                    UPDATE users 
+                    SET sub_verified_at = NOW() 
+                    WHERE user_id = $1;
+                """, update.effective_user.id)
+                
+                # إذا لم يتم احتسابه اليوم، قم بزيادة العداد الرقمي +1 فوراُ
+                if not already_verified_today:
+                    await conn.execute("""
+                        UPDATE bot_counters 
+                        SET current_value = current_value + 1 
+                        WHERE counter_name = 'sub_verified_24h';
+                    """)
+        except Exception as e:
+            logger.error(f"Error adjusting counter inside start command: {e}")
+
+    # 📋 ترتيب رأسي منظم للأزرار عند استخدام أمر /start وعرض القائمة الرئيسية
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇮🇶 فهرس المكتبة العربية ", callback_data="show_index")],
         [InlineKeyboardButton("🇬🇧 فهرس المكتبة الإنجليزية", callback_data="show_english_index")],
