@@ -319,22 +319,26 @@ async def channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_info = await context.bot.get_chat(required_channel)
         channel_title = chat_info.title or "القناة المشتركة"
         
-        # دقة متناهية: الاستعلام عن المستخدمين الذين تخطوا الاشتراك بنجاح خلال الـ 24 ساعة الماضية
         joined_last_24h = 0
         if pool:
             async with pool.acquire() as conn:
+                # حل جذري ومضمون لحساب الـ 24 ساعة بغض النظر عن فروقات توقيت السيرفر
                 joined_last_24h = await conn.fetchval("""
                     SELECT COUNT(*) FROM users 
-                    WHERE sub_verified_at >= NOW() - INTERVAL '24 hours'
+                    WHERE sub_verified_at IS NOT NULL 
+                    AND (
+                        sub_verified_at >= NOW() - INTERVAL '24 hours'
+                        OR sub_verified_at >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')
+                    )
                 """)
 
         stats_reply = (
-            "📢 **إحصائيات الاشتراك الإجباري عبر البوت:**\n"
+            "📢 **إحصائيات الاشتراك الإجبارية الحالية:**\n"
             "--------------------------------------\n"
             f"📌 اسم القناة: **{channel_title}**\n"
             f"🆔 معرف القناة الرقمي: `{required_channel}`\n"
             "--------------------------------------\n"
-            f"📈 المشتركون الجدد (خلال آخر 24 ساعة): **{joined_last_24h:,}** عضو ✨"
+            f"👥 المشتركون الذين تخطوا القناة عبر البوت (آخر 24 ساعة): **{joined_last_24h:,}** عضو ✨"
         )
         await update.message.reply_text(stats_reply, parse_mode="Markdown")
     except Exception as e:
