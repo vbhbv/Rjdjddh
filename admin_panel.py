@@ -1,6 +1,8 @@
 import os
 import asyncio
 import logging
+from datetime import datetime, time
+import pytz  # لضبط توقيت إرسال التقرير اليومي بدقة
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.error import TelegramError, Forbidden, BadRequest
@@ -20,7 +22,7 @@ except ValueError:
 
 
 def admin_only(func):
-    """مطور ديكوريتور للتحقق من هوية المشرف قبل تنفيذ الأوامر"""
+    """ديكوريتور للتحقق من هوية المشرف قبل تنفيذ الأوامر"""
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         if update.effective_user and update.effective_user.id == ADMIN_USER_ID and ADMIN_USER_ID != 0:
@@ -322,14 +324,22 @@ async def channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         joined_last_24h = 0
         if pool:
             async with pool.acquire() as conn:
-                # حل جذري ومضمون لحساب الـ 24 ساعة بغض النظر عن فروقات توقيت السيرفر
+                # 🔄 فحص ما إذا حان وقت تصفير العداد (مرت 24 ساعة)
+                reset_needed = await conn.fetchval("""
+                    SELECT (NOW() >= reset_at) FROM bot_counters WHERE counter_name = 'sub_verified_24h'
+                """)
+                
+                if reset_needed:
+                    # تصفير العداد الرقمي وإعادة جدولة الـ 24 ساعة القادمة تلقائياً
+                    await conn.execute("""
+                        UPDATE bot_counters 
+                        SET current_value = 0, reset_at = NOW() + INTERVAL '24 hours' 
+                        WHERE counter_name = 'sub_verified_24h';
+                    """)
+                
+                # جلب القيمة الصافية للعداد الرقمي المستقل
                 joined_last_24h = await conn.fetchval("""
-                    SELECT COUNT(*) FROM users 
-                    WHERE sub_verified_at IS NOT NULL 
-                    AND (
-                        sub_verified_at >= NOW() - INTERVAL '24 hours'
-                        OR sub_verified_at >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')
-                    )
+                    SELECT current_value FROM bot_counters WHERE counter_name = 'sub_verified_24h'
                 """)
 
         stats_reply = (
@@ -338,7 +348,7 @@ async def channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📌 اسم القناة: **{channel_title}**\n"
             f"🆔 معرف القناة الرقمي: `{required_channel}`\n"
             "--------------------------------------\n"
-            f"👥 المشتركون الذين تخطوا القناة عبر البوت (آخر 24 ساعة): **{joined_last_24h:,}** عضو ✨"
+            f"👥 العدد الحالي منذ آخر تصفير تلقائي: **{joined_last_24h:,}** عضو ✨"
         )
         await update.message.reply_text(stats_reply, parse_mode="Markdown")
     except Exception as e:
@@ -346,11 +356,66 @@ async def channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==============================================================================
+# ⏰ وظيفة الإرسال التلقائي والدوري كل 24 ساعة (Automated Daily Report)
+# ==============================================================================
+
+async def send_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """الوظيفة المجدولة التي تنطلق تلقائياً لإرسال الإحصائيات وتصفير العداد"""
+    pool = context.bot_data.get('db_conn')
+    required_channel = context.bot_data.get("required_channel_id")
+    
+    if not pool or ADMIN_USER_ID == 0:
+        return
+
+    try:
+        channel_title = "القناة المشتركة"
+        if required_channel:
+            try:
+                chat_info = await context.bot.get_chat(required_channel)
+                channel_title = chat_info.title or "القناة المشتركة"
+            except:
+                pass
+
+        async with pool.acquire() as conn:
+            # جلب العدد الأخير المتوفر قبل التصفير
+            joined_today = await conn.fetchval("""
+                SELECT current_value FROM bot_counters WHERE counter_name = 'sub_verified_24h'
+            """)
+            if joined_today is None:
+                joined_today = 0
+
+            # تصفير العداد لليوم الجديد فوراً وتحديث وقت التصفير القادم
+            await conn.execute("""
+                UPDATE bot_counters 
+                SET current_value = 0, reset_at = NOW() + INTERVAL '24 hours' 
+                WHERE counter_name = 'sub_verified_24h';
+            """)
+
+        # إرسال التقرير النهائي لك مباشرة
+        report_text = (
+            "📊 **التقرير اليومي التلقائي للإشتراك الإجباري:**\n"
+            "--------------------------------------\n"
+            f"📌 اسم القناة: **{channel_title}**\n"
+            "--------------------------------------\n"
+            f"👥 عدد الأعضاء الكلي الذين انضموا اليوم: **{joined_today:,}** عضو جديد ✨\n\n"
+            "🔄 تم تصفير العداد بنجاح وبدء الحساب لليوم الجديد تلقائياً."
+        )
+        
+        await context.bot.send_message(
+            chat_id=ADMIN_USER_ID,
+            text=report_text,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error executing daily report job: {e}")
+
+
+# ==============================================================================
 # 🔌 ربط وتسجيل المعالجات (Handlers Registration)
 # ==============================================================================
 
 def register_admin_handlers(application, original_start_handler):
-    """ربط كافة الأوامر الإدارية بالتطبيق الرئيسي تلقائياً"""
+    """ربط كافة الأوامر الإدارية وجدولة وظيفة التقرير اليومي"""
     application.add_handler(CommandHandler("admin", admin_panel))  
     application.add_handler(CommandHandler("set_premium", set_premium))  
     application.add_handler(CommandHandler("rem_premium", remove_premium))  
@@ -359,3 +424,16 @@ def register_admin_handlers(application, original_start_handler):
     application.add_handler(CommandHandler("broadcast", admin_broadcast))  
     application.add_handler(CommandHandler("setchannel", set_channel))
     application.add_handler(CommandHandler("channel_stats", channel_stats))
+
+    # ⏳ تفعيل الجدولة اليومية التلقائية عبر الـ Job Queue الخاص بالبوت
+    if application.job_queue:
+        # التقرير سيرسل لك يومياً الساعة 11:55 مساءً بتوقيت مكة المكرمة/العراق (Asia/Baghdad)
+        target_timezone = pytz.timezone("Asia/Baghdad")
+        report_time = time(hour=23, minute=55, second=0, tzinfo=target_timezone)
+        
+        application.job_queue.run_daily(
+            send_daily_report_job,
+            time=report_time,
+            name="daily_subscription_report"
+        )
+        logger.info("✅ Daily subscription report job successfully scheduled at 23:55 Baghdad time.")
