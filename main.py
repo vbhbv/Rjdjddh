@@ -384,7 +384,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             "ومن أجل ضمان استمرارية هذه الخدمة وتغطية هذه التكاليف، فتحنا باب الإعلان وفق شروط صارمة تناسب طابع هذه المكتبة؛ حيث **نروج للقنوات الثقافية والعلمية والتعليمية فقط**، نصرةً للمحتوى الهادف وحفاظاً على بيئة معرفية تليق بجمهورنا من القراء والباحثين.\n\n"
             "📬 **للاستفسار وحجز المساحات الإعلانية:**\n"
             "التواصل المباشر مع إدارة البوت ومعرفة التفاصيل، يرجى مراسلتنا عبر المعرف التالي:\n"
-            "📩 @UUUULU"
+            "📩 @vivvvv"
         )
         await query.message.reply_text(text=adv_text, parse_mode="Markdown")
         return
@@ -468,7 +468,7 @@ async def handle_start_callbacks(update, context: ContextTypes.DEFAULT_TYPE):
             "• الاشتراك السنوي الكلي: **45$** (العرض الأقوى).\n\n"
             "💳 **طريقة التفعيل:**\n"
             "يرجى التواصل المباشر معنا عبر المعرف أدناه لإرسال الأيدي وإتمام التفعيل الفوري:\n"
-            "📩 @UUUULU"
+            "📩 @vivvvv"
         )
         await query.message.reply_text(text=text, parse_mode="Markdown")
         return
